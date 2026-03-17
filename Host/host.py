@@ -1,3 +1,4 @@
+import sys
 import asyncio
 import websockets
 import json
@@ -7,16 +8,29 @@ from PIL import Image
 import base64
 import threading
 import time
-import tkinter as tk
-from tkinter import scrolledtext, messagebox
-from pynput.mouse import Button, Controller as MouseController
-from pynput.keyboard import Key, Controller as KeyboardController
 import platform
 import psutil
 import socket
+import os
+import PyQt5
 from datetime import datetime
 
+
+
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                            QHBoxLayout, QLabel, QLineEdit, QPushButton, 
+                            QTextEdit, QFrame, QMessageBox, QGroupBox,
+                            QGridLayout)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtGui import QFont, QTextCursor
+
+from pynput.mouse import Button, Controller as MouseController
+from pynput.keyboard import Key, Controller as KeyboardController
+
+
 class SystemInfoCollector:
+    """Сбор информации о системе"""
+    
     @staticmethod
     def get_basic_info():
         try:
@@ -87,11 +101,17 @@ class SystemInfoCollector:
             
             events = []
             if cpu_usage > 90:
-                events.append({"event_type": "warning", "event_source": "cpu", "description": f"Высокая загрузка CPU: {cpu_usage}%", "severity_level": "medium"})
+                events.append({"event_type": "warning", "event_source": "cpu", 
+                             "description": f"Высокая загрузка CPU: {cpu_usage}%", 
+                             "severity_level": "medium"})
             if ram_usage > 90:
-                events.append({"event_type": "warning", "event_source": "memory", "description": f"Высокое использование RAM: {ram_usage}%", "severity_level": "medium"})
+                events.append({"event_type": "warning", "event_source": "memory", 
+                             "description": f"Высокое использование RAM: {ram_usage}%", 
+                             "severity_level": "medium"})
             if disk_usage > 90:
-                events.append({"event_type": "warning", "event_source": "disk", "description": f"Мало места на диске: {disk_usage}% использовано", "severity_level": "medium"})
+                events.append({"event_type": "warning", "event_source": "disk", 
+                             "description": f"Мало места на диске: {disk_usage}% использовано", 
+                             "severity_level": "medium"})
             
             return {
                 "cpu_usage": cpu_usage,
@@ -107,20 +127,22 @@ class SystemInfoCollector:
         except:
             return {}
 
-class RemoteAccessHost:
-    def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("Удалённый доступ - Хост")
-        self.root.geometry("500x400")
-        self.root.configure(bg='#f0f0f0')
-        
-        self.relay_server = tk.StringVar(value="ws://130.49.149.152:9001")
-        self.host_id = tk.StringVar(value="PC_HOME")
-        self.screenshot_interval = tk.DoubleVar(value=0.1)
-        
-        self.is_running = False
+
+class RemoteHostThread(QThread):
+    """Поток для работы с WebSocket соединением"""
+    
+    log_message = pyqtSignal(str)
+    status_changed = pyqtSignal(bool, int)
+    
+    def __init__(self, relay_server, host_id, screenshot_interval):
+        super().__init__()
+        self.relay_server = relay_server
+        self.host_id = host_id
+        self.screenshot_interval = screenshot_interval
+        self.is_running = True
         self.is_connected = False
         self.connected_clients = 0
+        self.ws = None
         
         self.mouse = MouseController()
         self.keyboard = KeyboardController()
@@ -142,151 +164,48 @@ class RemoteAccessHost:
             'delete': Key.delete, 'home': Key.home, 'end': Key.end,
             'page_up': Key.page_up, 'page_down': Key.page_down,
         }
-        
-        self.ws = None
-        self.loop = None
-        self.create_ui()
     
-    def create_ui(self):
-        header_frame = tk.Frame(self.root, bg='#2c3e50', height=60)
-        header_frame.pack(fill=tk.X, padx=10, pady=10)
-        header_frame.pack_propagate(False)
-        
-        tk.Label(header_frame, text="ХОСТ УДАЛЕННОГО ДОСТУПА", 
-                font=("Arial", 14, "bold"), fg='white', bg='#2c3e50').pack(pady=15)
-        
-        main_frame = tk.Frame(self.root, bg='#f0f0f0')
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-        
-        status_frame = tk.LabelFrame(main_frame, text="Статус", font=("Arial", 10, "bold"), bg='#f0f0f0')
-        status_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        self.status_label = tk.Label(status_frame, text="ОСТАНОВЛЕН", font=("Arial", 10), fg='red', bg='#f0f0f0')
-        self.status_label.pack(pady=2)
-        self.clients_label = tk.Label(status_frame, text="Клиентов: 0", bg='#f0f0f0')
-        self.clients_label.pack(pady=2)
-        
-        settings_frame = tk.LabelFrame(main_frame, text="Настройки", font=("Arial", 10, "bold"), bg='#f0f0f0')
-        settings_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        tk.Label(settings_frame, text="Сервер:", bg='#f0f0f0').grid(row=0, column=0, sticky='w', pady=2)
-        tk.Entry(settings_frame, textvariable=self.relay_server, width=30).grid(row=0, column=1, padx=5)
-        
-        tk.Label(settings_frame, text="ID хоста:", bg='#f0f0f0').grid(row=1, column=0, sticky='w', pady=2)
-        tk.Entry(settings_frame, textvariable=self.host_id, width=30).grid(row=1, column=1, padx=5)
-        
-        control_frame = tk.Frame(main_frame, bg='#f0f0f0')
-        control_frame.pack(fill=tk.X, pady=10)
-        
-        self.start_btn = tk.Button(control_frame, text="ЗАПУСТИТЬ", bg='#27ae60', fg='white',
-                                 command=self.start_host, width=15)
-        self.start_btn.pack(side=tk.LEFT, padx=5)
-        
-        self.stop_btn = tk.Button(control_frame, text="ОСТАНОВИТЬ", bg='#e74c3c', fg='white',
-                                command=self.stop_host, width=15, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
-        
-        log_frame = tk.LabelFrame(main_frame, text="Журнал", padx=5, pady=5)
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=6, font=("Consolas", 8))
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-        
-        settings_frame.columnconfigure(1, weight=1)
-    
-    def log(self, message):
-        try:
-            self.log_text.insert(tk.END, f"[{time.strftime('%H:%M:%S')}] {message}\n")
-            self.log_text.see(tk.END)
-        except:
-            pass
-    
-    def update_status(self):
-        try:
-            if self.is_running and self.is_connected:
-                self.status_label.config(text="АКТИВЕН", fg='green')
-                self.clients_label.config(text=f"Клиентов: {self.connected_clients}")
-                self.start_btn.config(state=tk.DISABLED)
-                self.stop_btn.config(state=tk.NORMAL)
-            elif self.is_running:
-                self.status_label.config(text="ПОДКЛЮЧЕНИЕ...", fg='orange')
-                self.start_btn.config(state=tk.DISABLED)
-                self.stop_btn.config(state=tk.NORMAL)
-            else:
-                self.status_label.config(text="ОСТАНОВЛЕН", fg='red')
-                self.clients_label.config(text="Клиентов: 0")
-                self.start_btn.config(state=tk.NORMAL)
-                self.stop_btn.config(state=tk.DISABLED)
-        except:
-            pass
-    
-    def start_host(self):
-        if not self.relay_server.get().startswith('ws://'):
-            messagebox.showerror("Ошибка", "Сервер должен начинаться с ws://")
-            return
-        if not self.host_id.get():
-            messagebox.showerror("Ошибка", "Введите ID хоста")
-            return
-        
-        self.is_running = True
-        self.update_status()
-        self.log("Запуск хоста...")
-        
-        host_thread = threading.Thread(target=self.run_host, daemon=True)
-        host_thread.start()
-    
-    def stop_host(self):
-        self.is_running = False
-        self.is_connected = False
-        self.connected_clients = 0
-        if self.loop and self.ws:
-            try:
-                asyncio.run_coroutine_threadsafe(self.ws.close(), self.loop)
-            except:
-                pass
-        self.update_status()
-        self.log("Хост остановлен")
-    
-    def run_host(self):
-        try:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self.host_main())
-        except Exception as e:
-            self.log(f"Ошибка: {e}")
-            self.stop_host()
+    def run(self):
+        asyncio.run(self.host_main())
     
     async def host_main(self):
         reconnect_delay = 2
         while self.is_running:
             try:
-                async with websockets.connect(self.relay_server.get()) as ws:
+                async with websockets.connect(self.relay_server) as ws:
                     self.ws = ws
                     await ws.send(json.dumps({
                         "type": "register_host",
-                        "data": {"host_id": self.host_id.get()},
-                        "host_id": self.host_id.get()
+                        "data": {"host_id": self.host_id},
+                        "host_id": self.host_id
                     }))
                     
                     self.is_connected = True
-                    self.update_status()
-                    self.log("Подключен к серверу")
+                    self.status_changed.emit(True, self.connected_clients)
+                    self.log_message.emit("✅ Подключен к серверу")
                     
+                    # Создаем задачи
                     send_task = asyncio.create_task(self.send_loop(ws))
                     info_task = asyncio.create_task(self.info_loop(ws))
                     receive_task = asyncio.create_task(self.receive_commands(ws))
                     
-                    await asyncio.wait([send_task, info_task, receive_task], return_when=asyncio.FIRST_COMPLETED)
+                    # Ожидаем завершения любой из задач
+                    await asyncio.wait([send_task, info_task, receive_task], 
+                                     return_when=asyncio.FIRST_COMPLETED)
                     
+                    # Отменяем все задачи
                     for task in [send_task, info_task, receive_task]:
                         task.cancel()
                     
             except Exception as e:
-                self.log(f"Ошибка подключения: {e}")
+                self.log_message.emit(f"❌ Ошибка подключения: {e}")
             
             self.is_connected = False
-            self.update_status()
+            self.connected_clients = 0
+            self.status_changed.emit(False, 0)
+            
             if self.is_running:
+                self.log_message.emit(f"🔄 Переподключение через {reconnect_delay} сек...")
                 await asyncio.sleep(reconnect_delay)
     
     async def send_system_info(self, ws):
@@ -301,73 +220,88 @@ class RemoteAccessHost:
             await ws.send(json.dumps({
                 "type": "system_info",
                 "data": system_info,
-                "host_id": self.host_id.get()
+                "host_id": self.host_id
             }))
-            self.log("Информация о системе отправлена")
+            self.log_message.emit("📊 Информация о системе отправлена")
             return True
-        except:
+        except Exception as e:
+            self.log_message.emit(f"⚠️ Ошибка отправки информации: {e}")
             return False
     
     async def info_loop(self, ws):
+        """Периодическая отправка информации о системе"""
         await self.send_system_info(ws)
         last_sent = time.time()
+        
         while self.is_running and self.is_connected:
             try:
+                # Отправляем информацию каждый час
                 if time.time() - last_sent >= 3600:
                     await self.send_system_info(ws)
                     last_sent = time.time()
                 await asyncio.sleep(60)
-            except:
+            except Exception as e:
+                self.log_message.emit(f"⚠️ Ошибка в info_loop: {e}")
                 break
     
     async def send_screenshot(self, ws):
         try:
             with mss.mss() as sct:
-                monitor = sct.monitors[1]
+                monitor = sct.monitors[1]  # Основной монитор
                 sct_img = sct.grab(monitor)
                 img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                
+                # Сжимаем изображение
                 buffer = BytesIO()
-                img.save(buffer, format="JPEG", quality=50)
+                img.save(buffer, format="JPEG", quality=70, optimize=True)
                 img_b64 = base64.b64encode(buffer.getvalue()).decode()
                 
                 await ws.send(json.dumps({
                     "type": "screenshot",
                     "data": img_b64,
-                    "host_id": self.host_id.get()
+                    "host_id": self.host_id
                 }))
                 return True
-        except:
+        except Exception as e:
+            self.log_message.emit(f"⚠️ Ошибка создания скриншота: {e}")
             return False
     
     async def send_loop(self, ws):
+        """Цикл отправки скриншотов"""
         while self.is_running and self.is_connected:
             try:
                 await self.send_screenshot(ws)
-                await asyncio.sleep(self.screenshot_interval.get())
-            except:
+                await asyncio.sleep(self.screenshot_interval)
+            except Exception as e:
+                self.log_message.emit(f"⚠️ Ошибка в send_loop: {e}")
                 break
     
     async def receive_commands(self, ws):
+        """Получение и обработка команд от клиента"""
         try:
             async for msg in ws:
                 data = json.loads(msg)
                 cmd_type = data.get("type")
+                cmd_data = data.get("data", {})
                 
                 if cmd_type == "register_client":
                     self.connected_clients += 1
-                    self.update_status()
-                    self.log("Клиент подключен")
+                    self.status_changed.emit(True, self.connected_clients)
+                    self.log_message.emit(f"👤 Клиент подключен (всего: {self.connected_clients})")
                     await self.send_system_info(ws)
                 
                 elif cmd_type == "request_system_info":
+                    self.log_message.emit("📋 Запрос информации о системе")
                     await self.send_system_info(ws)
                 
-                elif cmd_type in ["mouse_move", "mouse_click", "key_press", "mouse_wheel", "command"]:
-                    await self.handle_command(data.get("data", {}))
-        except:
-            pass
+                elif cmd_type in ["mouse_move", "mouse_click", "mouse_wheel", "command"]:
+                    await self.handle_command(cmd_data)
+                    
+        except Exception as e:
+            self.log_message.emit(f"⚠️ Ошибка в receive_commands: {e}")
     
     async def handle_command(self, command):
+        """Обработка команд управления"""
         try:
             action = command.get("action")
             
@@ -375,25 +309,231 @@ class RemoteAccessHost:
                 x, y = command.get("x"), command.get("y")
                 if x is not None and y is not None:
                     self.mouse.position = (x, y)
+                    
             elif action == "mouse_click":
                 button = Button.left if command.get("button") == "left" else Button.right
                 self.mouse.click(button)
+                
             elif action == "mouse_wheel":
-                self.mouse.scroll(0, command.get("delta", 0))
+                delta = command.get("delta", 0)
+                self.mouse.scroll(0, delta)
+                
             elif action == "key_press":
                 key = command.get("key")
                 if key in self.KEY_MAPPING:
                     self.keyboard.press(self.KEY_MAPPING[key])
                     self.keyboard.release(self.KEY_MAPPING[key])
+                    
             elif action == "text_input":
-                self.keyboard.type(command.get("text", ""))
-        except:
-            pass
+                text = command.get("text", "")
+                if text:
+                    self.keyboard.type(text)
+                    
+        except Exception as e:
+            self.log_message.emit(f"⚠️ Ошибка выполнения команды: {e}")
     
-    def run(self):
-        self.log("Хост запущен")
-        self.root.mainloop()
+    def stop(self):
+        """Остановка потока"""
+        self.is_running = False
+        self.is_connected = False
+
+
+class RemoteAccessHostWindow(QMainWindow):
+    """Главное окно хоста"""
+    
+    def __init__(self):
+        super().__init__()
+        self.host_thread = None
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("Удалённый доступ - Хост")
+        self.setGeometry(300, 300, 600, 500)
+        
+        # Центральный виджет
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        # Основной layout
+        main_layout = QVBoxLayout(central_widget)
+        
+        # Заголовок
+        header = QLabel("ХОСТ УДАЛЕННОГО ДОСТУПА")
+        header.setStyleSheet("""
+            QLabel {
+                background-color: #2c3e50;
+                color: white;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 15px;
+                border-radius: 5px;
+            }
+        """)
+        header.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(header)
+        
+        # Статус
+        status_group = QGroupBox("Статус")
+        status_group.setFont(QFont("Arial", 10, QFont.Bold))
+        status_layout = QVBoxLayout()
+        
+        self.status_label = QLabel("ОСТАНОВЛЕН")
+        self.status_label.setStyleSheet("color: red; font-size: 12px;")
+        status_layout.addWidget(self.status_label)
+        
+        self.clients_label = QLabel("Клиентов: 0")
+        status_layout.addWidget(self.clients_label)
+        
+        status_group.setLayout(status_layout)
+        main_layout.addWidget(status_group)
+        
+        # Настройки
+        settings_group = QGroupBox("Настройки")
+        settings_group.setFont(QFont("Arial", 10, QFont.Bold))
+        settings_layout = QGridLayout()
+        
+        settings_layout.addWidget(QLabel("Сервер:"), 0, 0)
+        self.server_edit = QLineEdit("ws://130.49.149.152:9001")
+        settings_layout.addWidget(self.server_edit, 0, 1)
+        
+        settings_layout.addWidget(QLabel("ID хоста:"), 1, 0)
+        self.host_id_edit = QLineEdit("PC_HOME")
+        settings_layout.addWidget(self.host_id_edit, 1, 1)
+        
+        settings_group.setLayout(settings_layout)
+        main_layout.addWidget(settings_group)
+        
+        # Кнопки управления
+        button_layout = QHBoxLayout()
+        
+        self.start_btn = QPushButton("ЗАПУСТИТЬ")
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2ecc71;
+            }
+        """)
+        self.start_btn.clicked.connect(self.start_host)
+        button_layout.addWidget(self.start_btn)
+        
+        self.stop_btn = QPushButton("ОСТАНОВИТЬ")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+            QPushButton:disabled {
+                background-color: #bdc3c7;
+            }
+        """)
+        self.stop_btn.clicked.connect(self.stop_host)
+        button_layout.addWidget(self.stop_btn)
+        
+        main_layout.addLayout(button_layout)
+        
+        # Журнал
+        log_group = QGroupBox("Журнал")
+        log_group.setFont(QFont("Arial", 10, QFont.Bold))
+        log_layout = QVBoxLayout()
+        
+        self.log_text = QTextEdit()
+        self.log_text.setFont(QFont("Consolas", 9))
+        self.log_text.setReadOnly(True)
+        log_layout.addWidget(self.log_text)
+        
+        log_group.setLayout(log_layout)
+        main_layout.addWidget(log_group)
+    
+    def log(self, message):
+        """Добавление сообщения в журнал"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {message}")
+        # Прокрутка вниз
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self.log_text.setTextCursor(cursor)
+    
+    def start_host(self):
+        """Запуск хоста"""
+        if not self.server_edit.text().startswith('ws://'):
+            QMessageBox.warning(self, "Ошибка", "Сервер должен начинаться с ws://")
+            return
+        if not self.host_id_edit.text():
+            QMessageBox.warning(self, "Ошибка", "Введите ID хоста")
+            return
+        
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.status_label.setText("ПОДКЛЮЧЕНИЕ...")
+        self.status_label.setStyleSheet("color: orange; font-size: 12px;")
+        
+        self.log("🚀 Запуск хоста...")
+        
+        self.host_thread = RemoteHostThread(
+            relay_server=self.server_edit.text(),
+            host_id=self.host_id_edit.text(),
+            screenshot_interval=0.1
+        )
+        
+        self.host_thread.log_message.connect(self.log)
+        self.host_thread.status_changed.connect(self.on_status_changed)
+        
+        self.host_thread.start()
+    
+    def stop_host(self):
+        """Остановка хоста"""
+        if self.host_thread:
+            self.host_thread.stop()
+            self.host_thread = None
+        
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("ОСТАНОВЛЕН")
+        self.status_label.setStyleSheet("color: red; font-size: 12px;")
+        self.clients_label.setText("Клиентов: 0")
+        
+        self.log("🛑 Хост остановлен")
+    
+    def on_status_changed(self, is_connected, clients_count):
+        """Обработка изменения статуса"""
+        if is_connected:
+            self.status_label.setText("АКТИВЕН")
+            self.status_label.setStyleSheet("color: green; font-size: 12px;")
+            self.clients_label.setText(f"Клиентов: {clients_count}")
+        else:
+            self.status_label.setText("ОТКЛЮЧЕН")
+            self.status_label.setStyleSheet("color: red; font-size: 12px;")
+            self.clients_label.setText("Клиентов: 0")
+    
+    def closeEvent(self, event):
+        """Обработка закрытия окна"""
+        self.stop_host()
+        event.accept()
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')
+    
+    window = RemoteAccessHostWindow()
+    window.show()
+    
+    sys.exit(app.exec_())
+
 
 if __name__ == "__main__":
-    app = RemoteAccessHost()
-    app.run()
+    os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins')
+    main()

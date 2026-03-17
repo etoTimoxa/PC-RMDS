@@ -8,15 +8,14 @@ import time
 import queue
 from datetime import datetime
 import os
-import PyQt5
 
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                             QTabWidget, QTextEdit, QFrame, QMessageBox,
                             QGroupBox, QGridLayout, QSplitter, QTableWidget, 
                             QTableWidgetItem, QHeaderView, QSizePolicy)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
-from PyQt5.QtGui import QPixmap, QImage, QFont, QColor
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
+from PyQt6.QtGui import QPixmap, QImage, QFont, QColor
 
 from PIL import Image
 
@@ -41,7 +40,7 @@ class MetricsTableWidget(QWidget):
                 border-radius: 4px;
             }
         """)
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
         
         self.update_time_label = QLabel("Последнее обновление: никогда")
@@ -51,8 +50,8 @@ class MetricsTableWidget(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Параметр", "Значение"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
         self.table.setStyleSheet("""
             QTableWidget {
@@ -99,10 +98,10 @@ class MetricsTableWidget(QWidget):
         self.table.setRowCount(len(rows))
         for i, (param, value) in enumerate(rows):
             param_item = QTableWidgetItem(param)
-            param_item.setFlags(param_item.flags() & ~Qt.ItemIsEditable)
+            param_item.setFlags(param_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             
             value_item = QTableWidgetItem(value)
-            value_item.setFlags(value_item.flags() & ~Qt.ItemIsEditable)
+            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             
             if i == 0:
                 cpu = metrics.get('cpu_usage', 0)
@@ -127,11 +126,11 @@ class MetricsTableWidget(QWidget):
             for i, event in enumerate(events):
                 warning_item = QTableWidgetItem(f"⚠️ {event.get('event_source', 'Warning')}")
                 warning_item.setForeground(QColor(255, 0, 0))
-                warning_item.setFlags(warning_item.flags() & ~Qt.ItemIsEditable)
+                warning_item.setFlags(warning_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 
                 desc_item = QTableWidgetItem(event.get('description', ''))
                 desc_item.setForeground(QColor(255, 0, 0))
-                desc_item.setFlags(desc_item.flags() & ~Qt.ItemIsEditable)
+                desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 
                 self.table.setItem(current_row + i, 0, warning_item)
                 self.table.setItem(current_row + i, 1, desc_item)
@@ -171,7 +170,8 @@ class SystemInfoDisplay(QWidget):
         layout.addLayout(top_layout)
         
         basic_group = QGroupBox("Основная информация")
-        basic_group.setFont(QFont("Arial", 10, QFont.Bold))
+        font = QFont("Arial", 10, QFont.Weight.Bold)
+        basic_group.setFont(font)
         basic_layout = QVBoxLayout()
         self.basic_info = QTextEdit()
         self.basic_info.setFont(QFont("Consolas", 9))
@@ -182,7 +182,7 @@ class SystemInfoDisplay(QWidget):
         layout.addWidget(basic_group)
         
         hw_group = QGroupBox("Конфигурация оборудования")
-        hw_group.setFont(QFont("Arial", 10, QFont.Bold))
+        hw_group.setFont(font)
         hw_layout = QVBoxLayout()
         self.hw_info = QTextEdit()
         self.hw_info.setFont(QFont("Consolas", 9))
@@ -193,7 +193,7 @@ class SystemInfoDisplay(QWidget):
         layout.addWidget(hw_group)
         
         metrics_group = QGroupBox("Подробные метрики производительности")
-        metrics_group.setFont(QFont("Arial", 10, QFont.Bold))
+        metrics_group.setFont(font)
         metrics_layout = QVBoxLayout()
         self.metrics_info = QTextEdit()
         self.metrics_info.setFont(QFont("Consolas", 9))
@@ -242,22 +242,22 @@ class RemoteScreenWidget(QLabel):
     def __init__(self):
         super().__init__()
         self.setStyleSheet("background-color: black;")
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMouseTracking(True)
         self.host_screen_width = None
         self.host_screen_height = None
-        self.setFocusPolicy(Qt.StrongFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     
     def mouseMoveEvent(self, event):
         if self.host_screen_width and self.host_screen_height:
             scale_x = self.host_screen_width / max(self.width(), 1)
             scale_y = self.host_screen_height / max(self.height(), 1)
-            x = int(event.x() * scale_x)
-            y = int(event.y() * scale_y)
+            x = int(event.position().x() * scale_x)
+            y = int(event.position().y() * scale_y)
             self.mouse_moved.emit(x, y)
     
     def mousePressEvent(self, event):
-        button = "left" if event.button() == Qt.LeftButton else "right" if event.button() == Qt.RightButton else "middle"
+        button = "left" if event.button() == Qt.MouseButton.LeftButton else "right" if event.button() == Qt.MouseButton.RightButton else "middle"
         self.mouse_clicked.emit(button)
     
     def wheelEvent(self, event):
@@ -439,7 +439,7 @@ class RemoteAccessClientWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         
         settings_frame = QFrame()
-        settings_frame.setFrameStyle(QFrame.Box)
+        settings_frame.setFrameStyle(QFrame.Shape.Box)
         settings_frame.setStyleSheet("""
             QFrame {
                 background-color: #f0f0f0;
@@ -508,7 +508,7 @@ class RemoteAccessClientWindow(QMainWindow):
         self.status_label.setStyleSheet("color: red; font-weight: bold; padding: 5px;")
         main_layout.addWidget(self.status_label)
         
-        content_splitter = QSplitter(Qt.Horizontal)
+        content_splitter = QSplitter(Qt.Orientation.Horizontal)
         
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
@@ -780,8 +780,8 @@ class RemoteScreenWindow(QMainWindow):
         layout.addWidget(status_bar)
         
         self.screen_widget = RemoteScreenWidget()
-        self.screen_widget.setFocusPolicy(Qt.StrongFocus)
-        self.screen_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.screen_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.screen_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.screen_widget, 1)
     
     def update_image(self, img):
@@ -873,7 +873,7 @@ class SettingsWindow(QMainWindow):
                 border-radius: 5px;
             }
         """)
-        header.setAlignment(Qt.AlignCenter)
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
         
         start_btn = QPushButton("ЗАПУСТИТЬ КЛИЕНТ")
@@ -894,7 +894,7 @@ class SettingsWindow(QMainWindow):
         layout.addWidget(start_btn)
         
         self.status_label = QLabel("Готов к запуску")
-        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("color: gray; padding: 10px;")
         layout.addWidget(self.status_label)
     
@@ -912,9 +912,8 @@ def main():
     window = SettingsWindow()
     window.show()
     
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins')
     main()

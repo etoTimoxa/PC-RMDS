@@ -6,7 +6,6 @@ import mss
 from io import BytesIO
 from PIL import Image
 import base64
-import threading
 import time
 import platform
 import psutil
@@ -15,13 +14,11 @@ import os
 import PyQt5
 from datetime import datetime
 
-
-
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                             QTextEdit, QFrame, QMessageBox, QGroupBox,
                             QGridLayout)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QTextCursor
 
 from pynput.mouse import Button, Controller as MouseController
@@ -29,8 +26,6 @@ from pynput.keyboard import Key, Controller as KeyboardController
 
 
 class SystemInfoCollector:
-    """Сбор информации о системе"""
-    
     @staticmethod
     def get_basic_info():
         try:
@@ -73,7 +68,6 @@ class SystemInfoCollector:
             ram_total = ram.total / (1024**3)
             disk = psutil.disk_usage('/')
             storage_total = disk.total / (1024**3)
-            gpu_model = "Unknown"
             
             return {
                 "cpu_model": cpu_model,
@@ -81,7 +75,7 @@ class SystemInfoCollector:
                 "cpu_physical_cores": cpu_physical_cores,
                 "ram_total": round(ram_total, 2),
                 "storage_total": round(storage_total, 2),
-                "gpu_model": gpu_model
+                "gpu_model": "Unknown"
             }
         except:
             return {}
@@ -89,7 +83,7 @@ class SystemInfoCollector:
     @staticmethod
     def get_performance_metrics():
         try:
-            cpu_usage = psutil.cpu_percent(interval=1)
+            cpu_usage = psutil.cpu_percent(interval=0.5)
             ram = psutil.virtual_memory()
             ram_usage = ram.percent
             ram_used = ram.used / (1024**3)
@@ -129,8 +123,6 @@ class SystemInfoCollector:
 
 
 class RemoteHostThread(QThread):
-    """Поток для работы с WebSocket соединением"""
-    
     log_message = pyqtSignal(str)
     status_changed = pyqtSignal(bool, int)
     
@@ -142,7 +134,10 @@ class RemoteHostThread(QThread):
         self.is_running = True
         self.is_connected = False
         self.connected_clients = 0
+        self.connected_clients_list = []
+        self.streaming_clients = set()
         self.ws = None
+        self.sending_screenshots = False
         
         self.mouse = MouseController()
         self.keyboard = KeyboardController()
@@ -174,38 +169,30 @@ class RemoteHostThread(QThread):
             try:
                 async with websockets.connect(self.relay_server) as ws:
                     self.ws = ws
-                    await ws.send(json.dumps({
+                    
+                    register_msg = {
                         "type": "register_host",
                         "data": {"host_id": self.host_id},
                         "host_id": self.host_id
-                    }))
+                    }
+                    await ws.send(json.dumps(register_msg))
                     
                     self.is_connected = True
                     self.status_changed.emit(True, self.connected_clients)
-                    self.log_message.emit("✅ Подключен к серверу")
                     
-                    # Создаем задачи
-                    send_task = asyncio.create_task(self.send_loop(ws))
-                    info_task = asyncio.create_task(self.info_loop(ws))
-                    receive_task = asyncio.create_task(self.receive_commands(ws))
-                    
-                    # Ожидаем завершения любой из задач
-                    await asyncio.wait([send_task, info_task, receive_task], 
-                                     return_when=asyncio.FIRST_COMPLETED)
-                    
-                    # Отменяем все задачи
-                    for task in [send_task, info_task, receive_task]:
-                        task.cancel()
+                    await self.receive_commands(ws)
                     
             except Exception as e:
-                self.log_message.emit(f"❌ Ошибка подключения: {e}")
+                self.log_message.emit(f"Ошибка: {e}")
             
             self.is_connected = False
             self.connected_clients = 0
+            self.connected_clients_list.clear()
+            self.streaming_clients.clear()
+            self.sending_screenshots = False
             self.status_changed.emit(False, 0)
             
             if self.is_running:
-                self.log_message.emit(f"🔄 Переподключение через {reconnect_delay} сек...")
                 await asyncio.sleep(reconnect_delay)
     
     async def send_system_info(self, ws):
@@ -217,130 +204,152 @@ class RemoteHostThread(QThread):
                 "timestamp": datetime.now().isoformat()
             }
             
-            await ws.send(json.dumps({
+            message = {
                 "type": "system_info",
                 "data": system_info,
                 "host_id": self.host_id
-            }))
-            self.log_message.emit("📊 Информация о системе отправлена")
+            }
+            
+            await ws.send(json.dumps(message))
             return True
-        except Exception as e:
-            self.log_message.emit(f"⚠️ Ошибка отправки информации: {e}")
+        except:
             return False
     
-    async def info_loop(self, ws):
-        """Периодическая отправка информации о системе"""
-        await self.send_system_info(ws)
-        last_sent = time.time()
+    async def screenshot_loop(self, ws):
+        self.sending_screenshots = True
+        frame_count = 0
         
-        while self.is_running and self.is_connected:
+        while self.sending_screenshots and self.is_connected and len(self.streaming_clients) > 0:
             try:
-                # Отправляем информацию каждый час
-                if time.time() - last_sent >= 3600:
-                    await self.send_system_info(ws)
-                    last_sent = time.time()
-                await asyncio.sleep(60)
-            except Exception as e:
-                self.log_message.emit(f"⚠️ Ошибка в info_loop: {e}")
-                break
-    
-    async def send_screenshot(self, ws):
-        try:
-            with mss.mss() as sct:
-                monitor = sct.monitors[1]  # Основной монитор
-                sct_img = sct.grab(monitor)
-                img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                start_time = time.time()
                 
-                # Сжимаем изображение
-                buffer = BytesIO()
-                img.save(buffer, format="JPEG", quality=70, optimize=True)
-                img_b64 = base64.b64encode(buffer.getvalue()).decode()
+                with mss.mss() as sct:
+                    monitor = sct.monitors[1]
+                    sct_img = sct.grab(monitor)
+                    img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                    
+                    buffer = BytesIO()
+                    img.save(buffer, format="JPEG", quality=70, optimize=True)
+                    img_data = buffer.getvalue()
+                    img_b64 = base64.b64encode(img_data).decode()
+                    
+                    message = {
+                        "type": "screenshot",
+                        "data": img_b64,
+                        "host_id": self.host_id
+                    }
+                    
+                    await ws.send(json.dumps(message))
+                    frame_count += 1
                 
-                await ws.send(json.dumps({
-                    "type": "screenshot",
-                    "data": img_b64,
-                    "host_id": self.host_id
-                }))
-                return True
-        except Exception as e:
-            self.log_message.emit(f"⚠️ Ошибка создания скриншота: {e}")
-            return False
-    
-    async def send_loop(self, ws):
-        """Цикл отправки скриншотов"""
-        while self.is_running and self.is_connected:
-            try:
-                await self.send_screenshot(ws)
-                await asyncio.sleep(self.screenshot_interval)
-            except Exception as e:
-                self.log_message.emit(f"⚠️ Ошибка в send_loop: {e}")
+                elapsed = time.time() - start_time
+                sleep_time = max(0, self.screenshot_interval - elapsed)
+                
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+                    
+            except:
                 break
+        
+        self.sending_screenshots = False
     
     async def receive_commands(self, ws):
-        """Получение и обработка команд от клиента"""
         try:
             async for msg in ws:
                 data = json.loads(msg)
                 cmd_type = data.get("type")
-                cmd_data = data.get("data", {})
+                client_id = data.get("client_id", "unknown")
                 
                 if cmd_type == "register_client":
-                    self.connected_clients += 1
-                    self.status_changed.emit(True, self.connected_clients)
-                    self.log_message.emit(f"👤 Клиент подключен (всего: {self.connected_clients})")
-                    await self.send_system_info(ws)
+                    if client_id not in self.connected_clients_list:
+                        self.connected_clients += 1
+                        self.connected_clients_list.append(client_id)
+                        self.status_changed.emit(True, self.connected_clients)
+                        await self.send_system_info(ws)
+                
+                elif cmd_type == "start_stream":
+                    self.streaming_clients.add(client_id)
+                    
+                    if not self.sending_screenshots and len(self.streaming_clients) > 0:
+                        asyncio.create_task(self.screenshot_loop(ws))
+                
+                elif cmd_type == "stop_stream":
+                    if client_id in self.streaming_clients:
+                        self.streaming_clients.remove(client_id)
+                    
+                    if len(self.streaming_clients) == 0:
+                        self.sending_screenshots = False
                 
                 elif cmd_type == "request_system_info":
-                    self.log_message.emit("📋 Запрос информации о системе")
                     await self.send_system_info(ws)
                 
-                elif cmd_type in ["mouse_move", "mouse_click", "mouse_wheel", "command"]:
-                    await self.handle_command(cmd_data)
+                elif cmd_type == "mouse_move":
+                    await self.handle_mouse_move(data.get("data", {}))
+                
+                elif cmd_type == "mouse_click":
+                    await self.handle_mouse_click(data.get("data", {}))
+                
+                elif cmd_type == "mouse_wheel":
+                    await self.handle_mouse_wheel(data.get("data", {}))
+                
+                elif cmd_type == "command":
+                    await self.handle_command(data.get("data", {}))
                     
-        except Exception as e:
-            self.log_message.emit(f"⚠️ Ошибка в receive_commands: {e}")
+        except:
+            self.streaming_clients.clear()
+            self.sending_screenshots = False
     
-    async def handle_command(self, command):
-        """Обработка команд управления"""
+    async def handle_mouse_move(self, command_data):
         try:
-            action = command.get("action")
+            x = command_data.get("x")
+            y = command_data.get("y")
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
+        except:
+            pass
+    
+    async def handle_mouse_click(self, command_data):
+        try:
+            button_name = command_data.get("button", "left")
+            button = Button.left if button_name == "left" else Button.right
+            self.mouse.click(button)
+        except:
+            pass
+    
+    async def handle_mouse_wheel(self, command_data):
+        try:
+            delta = command_data.get("delta", 0)
+            self.mouse.scroll(0, delta)
+        except:
+            pass
+    
+    async def handle_command(self, command_data):
+        try:
+            action = command_data.get("action")
             
-            if action == "mouse_move":
-                x, y = command.get("x"), command.get("y")
-                if x is not None and y is not None:
-                    self.mouse.position = (x, y)
-                    
-            elif action == "mouse_click":
-                button = Button.left if command.get("button") == "left" else Button.right
-                self.mouse.click(button)
-                
-            elif action == "mouse_wheel":
-                delta = command.get("delta", 0)
-                self.mouse.scroll(0, delta)
-                
+            if action == "text_input":
+                text = command_data.get("text", "")
+                if text:
+                    self.keyboard.type(text)
+            
             elif action == "key_press":
-                key = command.get("key")
+                key = command_data.get("key")
                 if key in self.KEY_MAPPING:
                     self.keyboard.press(self.KEY_MAPPING[key])
                     self.keyboard.release(self.KEY_MAPPING[key])
                     
-            elif action == "text_input":
-                text = command.get("text", "")
-                if text:
-                    self.keyboard.type(text)
-                    
-        except Exception as e:
-            self.log_message.emit(f"⚠️ Ошибка выполнения команды: {e}")
+        except:
+            pass
     
     def stop(self):
-        """Остановка потока"""
         self.is_running = False
         self.is_connected = False
+        self.streaming_clients.clear()
+        self.connected_clients_list.clear()
+        self.sending_screenshots = False
 
 
 class RemoteAccessHostWindow(QMainWindow):
-    """Главное окно хоста"""
-    
     def __init__(self):
         super().__init__()
         self.host_thread = None
@@ -350,14 +359,11 @@ class RemoteAccessHostWindow(QMainWindow):
         self.setWindowTitle("Удалённый доступ - Хост")
         self.setGeometry(300, 300, 600, 500)
         
-        # Центральный виджет
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # Основной layout
         main_layout = QVBoxLayout(central_widget)
         
-        # Заголовок
         header = QLabel("ХОСТ УДАЛЕННОГО ДОСТУПА")
         header.setStyleSheet("""
             QLabel {
@@ -372,7 +378,6 @@ class RemoteAccessHostWindow(QMainWindow):
         header.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(header)
         
-        # Статус
         status_group = QGroupBox("Статус")
         status_group.setFont(QFont("Arial", 10, QFont.Bold))
         status_layout = QVBoxLayout()
@@ -384,10 +389,13 @@ class RemoteAccessHostWindow(QMainWindow):
         self.clients_label = QLabel("Клиентов: 0")
         status_layout.addWidget(self.clients_label)
         
+        self.streaming_label = QLabel("Трансляция: Нет")
+        self.streaming_label.setStyleSheet("color: gray; font-size: 11px;")
+        status_layout.addWidget(self.streaming_label)
+        
         status_group.setLayout(status_layout)
         main_layout.addWidget(status_group)
         
-        # Настройки
         settings_group = QGroupBox("Настройки")
         settings_group.setFont(QFont("Arial", 10, QFont.Bold))
         settings_layout = QGridLayout()
@@ -403,7 +411,6 @@ class RemoteAccessHostWindow(QMainWindow):
         settings_group.setLayout(settings_layout)
         main_layout.addWidget(settings_group)
         
-        # Кнопки управления
         button_layout = QHBoxLayout()
         
         self.start_btn = QPushButton("ЗАПУСТИТЬ")
@@ -444,7 +451,6 @@ class RemoteAccessHostWindow(QMainWindow):
         
         main_layout.addLayout(button_layout)
         
-        # Журнал
         log_group = QGroupBox("Журнал")
         log_group.setFont(QFont("Arial", 10, QFont.Bold))
         log_layout = QVBoxLayout()
@@ -458,16 +464,13 @@ class RemoteAccessHostWindow(QMainWindow):
         main_layout.addWidget(log_group)
     
     def log(self, message):
-        """Добавление сообщения в журнал"""
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
-        # Прокрутка вниз
         cursor = self.log_text.textCursor()
         cursor.movePosition(QTextCursor.End)
         self.log_text.setTextCursor(cursor)
     
     def start_host(self):
-        """Запуск хоста"""
         if not self.server_edit.text().startswith('ws://'):
             QMessageBox.warning(self, "Ошибка", "Сервер должен начинаться с ws://")
             return
@@ -482,10 +485,12 @@ class RemoteAccessHostWindow(QMainWindow):
         
         self.log("🚀 Запуск хоста...")
         
+        interval = 0.05
+        
         self.host_thread = RemoteHostThread(
             relay_server=self.server_edit.text(),
             host_id=self.host_id_edit.text(),
-            screenshot_interval=0.1
+            screenshot_interval=interval
         )
         
         self.host_thread.log_message.connect(self.log)
@@ -494,7 +499,6 @@ class RemoteAccessHostWindow(QMainWindow):
         self.host_thread.start()
     
     def stop_host(self):
-        """Остановка хоста"""
         if self.host_thread:
             self.host_thread.stop()
             self.host_thread = None
@@ -504,22 +508,31 @@ class RemoteAccessHostWindow(QMainWindow):
         self.status_label.setText("ОСТАНОВЛЕН")
         self.status_label.setStyleSheet("color: red; font-size: 12px;")
         self.clients_label.setText("Клиентов: 0")
+        self.streaming_label.setText("Трансляция: Нет")
+        self.streaming_label.setStyleSheet("color: gray; font-size: 11px;")
         
         self.log("🛑 Хост остановлен")
     
     def on_status_changed(self, is_connected, clients_count):
-        """Обработка изменения статуса"""
         if is_connected:
             self.status_label.setText("АКТИВЕН")
             self.status_label.setStyleSheet("color: green; font-size: 12px;")
             self.clients_label.setText(f"Клиентов: {clients_count}")
+            
+            if self.host_thread and len(self.host_thread.streaming_clients) > 0:
+                self.streaming_label.setText(f"Трансляция: Да ({len(self.host_thread.streaming_clients)} клиентов)")
+                self.streaming_label.setStyleSheet("color: green; font-size: 11px;")
+            else:
+                self.streaming_label.setText("Трансляция: Нет")
+                self.streaming_label.setStyleSheet("color: gray; font-size: 11px;")
         else:
             self.status_label.setText("ОТКЛЮЧЕН")
             self.status_label.setStyleSheet("color: red; font-size: 12px;")
             self.clients_label.setText("Клиентов: 0")
+            self.streaming_label.setText("Трансляция: Нет")
+            self.streaming_label.setStyleSheet("color: gray; font-size: 11px;")
     
     def closeEvent(self, event):
-        """Обработка закрытия окна"""
         self.stop_host()
         event.accept()
 

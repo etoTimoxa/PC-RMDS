@@ -11,15 +11,13 @@ import platform
 import psutil
 import socket
 import os
-import PyQt5
 from datetime import datetime
 
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
-                            QTextEdit, QFrame, QMessageBox, QGroupBox,
-                            QGridLayout)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QFont, QTextCursor
+                            QTextEdit, QGroupBox, QGridLayout, QMessageBox)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont, QTextCursor
 
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
@@ -375,11 +373,12 @@ class RemoteAccessHostWindow(QMainWindow):
                 border-radius: 5px;
             }
         """)
-        header.setAlignment(Qt.AlignCenter)
+        header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(header)
         
         status_group = QGroupBox("Статус")
-        status_group.setFont(QFont("Arial", 10, QFont.Bold))
+        font = QFont("Arial", 10, QFont.Weight.Bold)
+        status_group.setFont(font)
         status_layout = QVBoxLayout()
         
         self.status_label = QLabel("ОСТАНОВЛЕН")
@@ -397,7 +396,7 @@ class RemoteAccessHostWindow(QMainWindow):
         main_layout.addWidget(status_group)
         
         settings_group = QGroupBox("Настройки")
-        settings_group.setFont(QFont("Arial", 10, QFont.Bold))
+        settings_group.setFont(font)
         settings_layout = QGridLayout()
         
         settings_layout.addWidget(QLabel("Сервер:"), 0, 0)
@@ -452,7 +451,7 @@ class RemoteAccessHostWindow(QMainWindow):
         main_layout.addLayout(button_layout)
         
         log_group = QGroupBox("Журнал")
-        log_group.setFont(QFont("Arial", 10, QFont.Bold))
+        log_group.setFont(font)
         log_layout = QVBoxLayout()
         
         self.log_text = QTextEdit()
@@ -467,7 +466,7 @@ class RemoteAccessHostWindow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_text.append(f"[{timestamp}] {message}")
         cursor = self.log_text.textCursor()
-        cursor.movePosition(QTextCursor.End)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         self.log_text.setTextCursor(cursor)
     
     def start_host(self):
@@ -544,9 +543,8 @@ def main():
     window = RemoteAccessHostWindow()
     window.show()
     
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins')
     main()

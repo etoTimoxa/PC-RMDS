@@ -10,8 +10,8 @@ import time
 import platform
 import psutil
 import socket
-import os
 from datetime import datetime
+import pyautogui
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
@@ -141,7 +141,6 @@ class RemoteHostThread(QThread):
         self.keyboard = KeyboardController()
         
         try:
-            import pyautogui
             self.screen_width, self.screen_height = pyautogui.size()
         except:
             self.screen_width, self.screen_height = 1920, 1080
@@ -290,6 +289,9 @@ class RemoteHostThread(QThread):
                 elif cmd_type == "mouse_wheel":
                     await self.handle_mouse_wheel(data.get("data", {}))
                 
+                elif cmd_type == "keyboard_input":
+                    await self.handle_keyboard_input(data.get("data", {}))
+                
                 elif cmd_type == "command":
                     await self.handle_command(data.get("data", {}))
                     
@@ -309,6 +311,13 @@ class RemoteHostThread(QThread):
     async def handle_mouse_click(self, command_data):
         try:
             button_name = command_data.get("button", "left")
+            x = command_data.get("x")
+            y = command_data.get("y")
+            
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
+                time.sleep(0.01)
+            
             button = Button.left if button_name == "left" else Button.right
             self.mouse.click(button)
         except:
@@ -318,6 +327,54 @@ class RemoteHostThread(QThread):
         try:
             delta = command_data.get("delta", 0)
             self.mouse.scroll(0, delta)
+        except:
+            pass
+    
+    async def handle_keyboard_input(self, command_data):
+        try:
+            text = command_data.get("text", "")
+            if text:
+                if text == '\b':
+                    self.keyboard.press(Key.backspace)
+                    self.keyboard.release(Key.backspace)
+                elif text == '\r' or text == '\n':
+                    self.keyboard.press(Key.enter)
+                    self.keyboard.release(Key.enter)
+                elif text == '\t':
+                    self.keyboard.press(Key.tab)
+                    self.keyboard.release(Key.tab)
+                elif text == '\x1b':
+                    self.keyboard.press(Key.esc)
+                    self.keyboard.release(Key.esc)
+                elif text == '\x7f':
+                    self.keyboard.press(Key.delete)
+                    self.keyboard.release(Key.delete)
+                elif text == '\x1b[D':
+                    self.keyboard.press(Key.left)
+                    self.keyboard.release(Key.left)
+                elif text == '\x1b[C':
+                    self.keyboard.press(Key.right)
+                    self.keyboard.release(Key.right)
+                elif text == '\x1b[A':
+                    self.keyboard.press(Key.up)
+                    self.keyboard.release(Key.up)
+                elif text == '\x1b[B':
+                    self.keyboard.press(Key.down)
+                    self.keyboard.release(Key.down)
+                elif text == '\x1b[H':
+                    self.keyboard.press(Key.home)
+                    self.keyboard.release(Key.home)
+                elif text == '\x1b[F':
+                    self.keyboard.press(Key.end)
+                    self.keyboard.release(Key.end)
+                elif text == '\x1b[5~':
+                    self.keyboard.press(Key.page_up)
+                    self.keyboard.release(Key.page_up)
+                elif text == '\x1b[6~':
+                    self.keyboard.press(Key.page_down)
+                    self.keyboard.release(Key.page_down)
+                else:
+                    self.keyboard.type(text)
         except:
             pass
     
@@ -482,7 +539,7 @@ class RemoteAccessHostWindow(QMainWindow):
         self.status_label.setText("ПОДКЛЮЧЕНИЕ...")
         self.status_label.setStyleSheet("color: orange; font-size: 12px;")
         
-        self.log("🚀 Запуск хоста...")
+        self.log("Запуск хоста...")
         
         interval = 0.05
         
@@ -510,7 +567,7 @@ class RemoteAccessHostWindow(QMainWindow):
         self.streaming_label.setText("Трансляция: Нет")
         self.streaming_label.setStyleSheet("color: gray; font-size: 11px;")
         
-        self.log("🛑 Хост остановлен")
+        self.log("Хост остановлен")
     
     def on_status_changed(self, is_connected, clients_count):
         if is_connected:

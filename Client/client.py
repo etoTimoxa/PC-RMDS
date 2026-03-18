@@ -5,16 +5,14 @@ import json
 import base64
 from io import BytesIO
 import time
-import queue
 from datetime import datetime
-import os
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                             QTabWidget, QTextEdit, QFrame, QMessageBox,
                             QGroupBox, QGridLayout, QSplitter, QTableWidget, 
                             QTableWidgetItem, QHeaderView, QSizePolicy)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QFont, QColor
 
 from PIL import Image
@@ -66,7 +64,7 @@ class MetricsTableWidget(QWidget):
         self.update_table({})
         layout.addWidget(self.table)
         
-        self.refresh_btn = QPushButton("🔄 ОБНОВИТЬ МЕТРИКИ")
+        self.refresh_btn = QPushButton("ОБНОВИТЬ МЕТРИКИ")
         self.refresh_btn.setEnabled(False)
         self.refresh_btn.setStyleSheet("""
             QPushButton {
@@ -90,9 +88,9 @@ class MetricsTableWidget(QWidget):
     
     def update_table(self, metrics):
         rows = [
-            ("🖥️ CPU", f"{metrics.get('cpu_usage', 0)}%"),
-            ("🧠 RAM", f"{metrics.get('ram_usage', 0)}% ({metrics.get('ram_used_gb', 0)} GB / {metrics.get('ram_total_gb', 0)} GB)"),
-            ("💾 Диск", f"{metrics.get('disk_usage', 0)}% ({metrics.get('disk_used_gb', 0)} GB / {metrics.get('disk_total_gb', 0)} GB)"),
+            ("CPU", f"{metrics.get('cpu_usage', 0)}%"),
+            ("RAM", f"{metrics.get('ram_usage', 0)}% ({metrics.get('ram_used_gb', 0)} GB / {metrics.get('ram_total_gb', 0)} GB)"),
+            ("Диск", f"{metrics.get('disk_usage', 0)}% ({metrics.get('disk_used_gb', 0)} GB / {metrics.get('disk_total_gb', 0)} GB)"),
         ]
         
         self.table.setRowCount(len(rows))
@@ -124,7 +122,7 @@ class MetricsTableWidget(QWidget):
             current_row = self.table.rowCount()
             self.table.setRowCount(current_row + len(events))
             for i, event in enumerate(events):
-                warning_item = QTableWidgetItem(f"⚠️ {event.get('event_source', 'Warning')}")
+                warning_item = QTableWidgetItem(f"! {event.get('event_source', 'Warning')}")
                 warning_item.setForeground(QColor(255, 0, 0))
                 warning_item.setFlags(warning_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 
@@ -145,7 +143,7 @@ class SystemInfoDisplay(QWidget):
         layout = QVBoxLayout()
         
         top_layout = QHBoxLayout()
-        self.refresh_btn = QPushButton("🔄 ОБНОВИТЬ ИНФОРМАЦИЮ")
+        self.refresh_btn = QPushButton("ОБНОВИТЬ ИНФОРМАЦИЮ")
         self.refresh_btn.setEnabled(False)
         self.refresh_btn.setStyleSheet("""
             QPushButton {
@@ -235,9 +233,10 @@ class SystemInfoDisplay(QWidget):
 
 
 class RemoteScreenWidget(QLabel):
-    mouse_moved = pyqtSignal(int, int)
-    mouse_clicked = pyqtSignal(str)
+    mouse_moved = pyqtSignal(int, int, int, int)
+    mouse_clicked = pyqtSignal(str, int, int)
     mouse_wheeled = pyqtSignal(int)
+    key_pressed = pyqtSignal(str)
     
     def __init__(self):
         super().__init__()
@@ -246,27 +245,135 @@ class RemoteScreenWidget(QLabel):
         self.setMouseTracking(True)
         self.host_screen_width = None
         self.host_screen_height = None
+        self.display_image_width = 0
+        self.display_image_height = 0
+        self.image_offset_x = 0
+        self.image_offset_y = 0
+        self.scale_x = 1.0
+        self.scale_y = 1.0
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus()
+    
+    def set_display_info(self, host_width, host_height, display_width, display_height):
+        self.host_screen_width = host_width
+        self.host_screen_height = host_height
+        self.display_image_width = display_width
+        self.display_image_height = display_height
+        
+        if host_width and host_height and display_width and display_height:
+            self.scale_x = host_width / display_width
+            self.scale_y = host_height / display_height
+    
+    def update_image_position(self):
+        pixmap = self.pixmap()
+        if pixmap:
+            self.image_offset_x = (self.width() - pixmap.width()) // 2
+            self.image_offset_y = (self.height() - pixmap.height()) // 2
+    
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_image_position()
+    
+    def client_to_host_coords(self, client_x, client_y):
+        if (self.host_screen_width and self.host_screen_height and 
+            self.display_image_width and self.display_image_height):
+            
+            host_x = int(client_x * self.scale_x)
+            host_y = int(client_y * self.scale_y)
+            
+            host_x = max(0, min(host_x, self.host_screen_width - 1))
+            host_y = max(0, min(host_y, self.host_screen_height - 1))
+            
+            return host_x, host_y
+        return client_x, client_y
+    
+    def get_image_coords(self, widget_x, widget_y):
+        pixmap = self.pixmap()
+        if pixmap:
+            img_left = self.image_offset_x
+            img_right = img_left + pixmap.width()
+            img_top = self.image_offset_y
+            img_bottom = img_top + pixmap.height()
+            
+            if (img_left <= widget_x <= img_right and 
+                img_top <= widget_y <= img_bottom):
+                
+                img_x = widget_x - img_left
+                img_y = widget_y - img_top
+                
+                return img_x, img_y
+        
+        return None, None
     
     def mouseMoveEvent(self, event):
         if self.host_screen_width and self.host_screen_height:
-            scale_x = self.host_screen_width / max(self.width(), 1)
-            scale_y = self.host_screen_height / max(self.height(), 1)
-            x = int(event.position().x() * scale_x)
-            y = int(event.position().y() * scale_y)
-            self.mouse_moved.emit(x, y)
+            img_x, img_y = self.get_image_coords(
+                int(event.position().x()), 
+                int(event.position().y())
+            )
+            
+            if img_x is not None and img_y is not None:
+                host_x, host_y = self.client_to_host_coords(img_x, img_y)
+                self.mouse_moved.emit(img_x, img_y, host_x, host_y)
     
     def mousePressEvent(self, event):
-        button = "left" if event.button() == Qt.MouseButton.LeftButton else "right" if event.button() == Qt.MouseButton.RightButton else "middle"
-        self.mouse_clicked.emit(button)
+        if self.host_screen_width and self.host_screen_height:
+            img_x, img_y = self.get_image_coords(
+                int(event.position().x()), 
+                int(event.position().y())
+            )
+            
+            if img_x is not None and img_y is not None:
+                host_x, host_y = self.client_to_host_coords(img_x, img_y)
+                
+                if event.button() == Qt.MouseButton.LeftButton:
+                    button = "left"
+                elif event.button() == Qt.MouseButton.RightButton:
+                    button = "right"
+                else:
+                    button = "middle"
+                
+                self.mouse_clicked.emit(button, host_x, host_y)
     
     def wheelEvent(self, event):
         delta = 1 if event.angleDelta().y() > 0 else -1
         self.mouse_wheeled.emit(delta)
     
     def keyPressEvent(self, event):
-        if event.text():
-            self.parent().key_pressed.emit(event.text())
+        text = event.text()
+        
+        if text:
+            self.key_pressed.emit(text)
+        else:
+            key = event.key()
+            if key == Qt.Key.Key_Backspace:
+                self.key_pressed.emit('\b')
+            elif key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
+                self.key_pressed.emit('\r')
+            elif key == Qt.Key.Key_Tab:
+                self.key_pressed.emit('\t')
+            elif key == Qt.Key.Key_Escape:
+                self.key_pressed.emit('\x1b')
+            elif key == Qt.Key.Key_Delete:
+                self.key_pressed.emit('\x7f')
+            elif key == Qt.Key.Key_Left:
+                self.key_pressed.emit('\x1b[D')
+            elif key == Qt.Key.Key_Right:
+                self.key_pressed.emit('\x1b[C')
+            elif key == Qt.Key.Key_Up:
+                self.key_pressed.emit('\x1b[A')
+            elif key == Qt.Key.Key_Down:
+                self.key_pressed.emit('\x1b[B')
+            elif key == Qt.Key.Key_Home:
+                self.key_pressed.emit('\x1b[H')
+            elif key == Qt.Key.Key_End:
+                self.key_pressed.emit('\x1b[F')
+            elif key == Qt.Key.Key_PageUp:
+                self.key_pressed.emit('\x1b[5~')
+            elif key == Qt.Key.Key_PageDown:
+                self.key_pressed.emit('\x1b[6~')
+        
+        super().keyPressEvent(event)
     
     def set_screen_size(self, width, height):
         self.host_screen_width = width
@@ -518,7 +625,7 @@ class RemoteAccessClientWindow(QMainWindow):
         self.metrics_table.refresh_btn.clicked.connect(self.request_system_info)
         left_layout.addWidget(self.metrics_table)
         
-        self.remote_screen_btn = QPushButton("🖥️ ОТКРЫТЬ УДАЛЕННЫЙ ЭКРАН")
+        self.remote_screen_btn = QPushButton("ОТКРЫТЬ УДАЛЕННЫЙ ЭКРАН")
         self.remote_screen_btn.setEnabled(False)
         self.remote_screen_btn.setStyleSheet("""
             QPushButton {
@@ -641,9 +748,9 @@ class RemoteAccessClientWindow(QMainWindow):
         self.info_display.update_info(self.host_info)
         
         self.metrics_table.refresh_btn.setEnabled(True)
-        self.metrics_table.refresh_btn.setText("🔄 ОБНОВИТЬ МЕТРИКИ")
+        self.metrics_table.refresh_btn.setText("ОБНОВИТЬ МЕТРИКИ")
         self.info_display.refresh_btn.setEnabled(True)
-        self.info_display.refresh_btn.setText("🔄 ОБНОВИТЬ ИНФОРМАЦИЮ")
+        self.info_display.refresh_btn.setText("ОБНОВИТЬ ИНФОРМАЦИЮ")
     
     def on_connection_lost(self):
         if self.remote_window:
@@ -695,18 +802,18 @@ class RemoteAccessClientWindow(QMainWindow):
         self.fps_timer.stop()
         self.frame_count = 0
     
-    def on_mouse_move(self, x, y):
+    def on_mouse_move(self, client_x, client_y, host_x, host_y):
         if self.client_thread and self.client_thread.is_connected and self.remote_window:
             self.client_thread.queue_command({
                 "type": "mouse_move",
-                "data": {"x": x, "y": y}
+                "data": {"x": host_x, "y": host_y}
             })
     
-    def on_mouse_click(self, button):
+    def on_mouse_click(self, button, host_x, host_y):
         if self.client_thread and self.client_thread.is_connected and self.remote_window:
             self.client_thread.queue_command({
                 "type": "mouse_click",
-                "data": {"button": button}
+                "data": {"button": button, "x": host_x, "y": host_y}
             })
     
     def on_mouse_wheel(self, delta):
@@ -719,16 +826,16 @@ class RemoteAccessClientWindow(QMainWindow):
     def on_key_press(self, text):
         if self.client_thread and self.client_thread.is_connected and self.remote_window:
             self.client_thread.queue_command({
-                "type": "command",
-                "data": {"action": "text_input", "text": text}
+                "type": "keyboard_input",
+                "data": {"text": text}
             })
     
     def request_system_info(self):
         if self.client_thread and self.client_thread.is_connected:
             self.metrics_table.refresh_btn.setEnabled(False)
-            self.metrics_table.refresh_btn.setText("⏳ ОБНОВЛЕНИЕ...")
+            self.metrics_table.refresh_btn.setText("ОБНОВЛЕНИЕ...")
             self.info_display.refresh_btn.setEnabled(False)
-            self.info_display.refresh_btn.setText("⏳ ОБНОВЛЕНИЕ...")
+            self.info_display.refresh_btn.setText("ОБНОВЛЕНИЕ...")
             
             self.client_thread.request_system_info()
     
@@ -745,11 +852,16 @@ class RemoteScreenWindow(QMainWindow):
         super().__init__()
         self.client_thread = client_thread
         self.frame_count = 0
+        self.original_width = 0
+        self.original_height = 0
+        self.display_width = 0
+        self.display_height = 0
         self.init_ui()
         
         self.screen_widget.mouse_moved.connect(self.on_mouse_move)
         self.screen_widget.mouse_clicked.connect(self.on_mouse_click)
         self.screen_widget.mouse_wheeled.connect(self.on_mouse_wheel)
+        self.screen_widget.key_pressed.connect(self.on_key_press)
     
     def init_ui(self):
         self.setWindowTitle("Удаленный экран")
@@ -777,18 +889,36 @@ class RemoteScreenWindow(QMainWindow):
         self.fps_label.setStyleSheet("color: white; font-size: 11px;")
         status_layout.addWidget(self.fps_label)
         
+        self.resolution_label = QLabel("")
+        self.resolution_label.setStyleSheet("color: white; font-size: 11px;")
+        status_layout.addWidget(self.resolution_label)
+        
         layout.addWidget(status_bar)
         
         self.screen_widget = RemoteScreenWidget()
         self.screen_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.screen_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         layout.addWidget(self.screen_widget, 1)
+        
+        QTimer.singleShot(100, self.set_focus)
+    
+    def set_focus(self):
+        self.screen_widget.setFocus()
+        self.activateWindow()
+        self.raise_()
+    
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(100, self.set_focus)
     
     def update_image(self, img):
         widget_size = self.screen_widget.size()
         if widget_size.width() <= 1 or widget_size.height() <= 1:
             return
-            
+        
+        self.original_width = img.width
+        self.original_height = img.height
+        
         img_ratio = img.width / img.height
         widget_ratio = widget_size.width() / widget_size.height()
         
@@ -800,7 +930,17 @@ class RemoteScreenWindow(QMainWindow):
             new_width = int(widget_size.height() * img_ratio)
         
         if new_width > 0 and new_height > 0:
+            self.display_width = new_width
+            self.display_height = new_height
+            
             img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            self.screen_widget.set_display_info(
+                self.original_width, 
+                self.original_height,
+                self.display_width, 
+                self.display_height
+            )
             
             img_byte_array = BytesIO()
             img_resized.save(img_byte_array, format='PNG')
@@ -809,7 +949,15 @@ class RemoteScreenWindow(QMainWindow):
             
             self.screen_widget.setPixmap(pixmap)
             self.screen_widget.set_screen_size(img.width, img.height)
+            self.screen_widget.update_image_position()
             self.frame_count += 1
+            
+            scale_percent = int((new_width / img.width) * 100)
+            self.resolution_label.setText(
+                f"Сервер: {img.width}x{img.height} | "
+                f"Экран: {new_width}x{new_height} | "
+                f"Масштаб: {scale_percent}%"
+            )
     
     def update_fps(self, fps):
         self.fps_label.setText(f"FPS: {fps}")
@@ -819,16 +967,16 @@ class RemoteScreenWindow(QMainWindow):
         self.status_label.setText("Соединение потеряно")
         self.status_label.setStyleSheet("color: red; font-size: 11px;")
     
-    def on_mouse_move(self, x, y):
+    def on_mouse_move(self, client_x, client_y, host_x, host_y):
         self.client_thread.queue_command({
             "type": "mouse_move",
-            "data": {"x": x, "y": y}
+            "data": {"x": host_x, "y": host_y}
         })
     
-    def on_mouse_click(self, button):
+    def on_mouse_click(self, button, host_x, host_y):
         self.client_thread.queue_command({
             "type": "mouse_click",
-            "data": {"button": button}
+            "data": {"button": button, "x": host_x, "y": host_y}
         })
     
     def on_mouse_wheel(self, delta):
@@ -837,9 +985,8 @@ class RemoteScreenWindow(QMainWindow):
             "data": {"delta": delta}
         })
     
-    def keyPressEvent(self, event):
-        if event.text():
-            self.key_pressed.emit(event.text())
+    def on_key_press(self, text):
+        self.key_pressed.emit(text)
     
     def closeEvent(self, event):
         self.closed.emit()

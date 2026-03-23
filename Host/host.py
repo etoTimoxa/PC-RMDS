@@ -507,6 +507,42 @@ class DatabaseManager:
             connection.close()
     
     @staticmethod
+    def save_metrics(computer_id: int, session_id: int, metrics: Dict):
+        """Создает новую запись метрик в БД"""
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return False
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO metric 
+                    (computer_id, session_id, cpu_usage, ram_usage, disk_usage, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                """, (
+                    computer_id, session_id,
+                    metrics.get('cpu_usage', 0),
+                    metrics.get('ram_usage', 0),
+                    metrics.get('disk_usage', 0)
+                ))
+                
+                cursor.execute("""
+                    UPDATE client_session 
+                    SET metrics_count = metrics_count + 1,
+                        last_activity = NOW()
+                    WHERE session_id = %s
+                """, (session_id,))
+                
+                connection.commit()
+                print(f"✅ Сохранены метрики для сессии {session_id}: CPU={metrics.get('cpu_usage', 0)}%, RAM={metrics.get('ram_usage', 0)}%")
+                return True
+        except Exception as e:
+            print(f"Ошибка сохранения метрик: {e}")
+            return False
+        finally:
+            connection.close()
+    
+    @staticmethod
     def get_or_create_os():
         connection = DatabaseManager.get_connection()
         if not connection:
@@ -704,6 +740,11 @@ class DatabaseManager:
                         
                         session_id = DatabaseManager.create_session(existing['computer_id'])
                         
+                        # Сохраняем начальные метрики при создании сессии
+                        if session_id:
+                            metrics = SystemInfoCollector.get_performance_metrics()
+                            DatabaseManager.save_metrics(existing['computer_id'], session_id, metrics)
+                        
                         return {
                             'computer_id': existing['computer_id'],
                             'hostname': hostname,
@@ -737,6 +778,12 @@ class DatabaseManager:
                 DatabaseManager.update_hardware_config(computer_id)
                 
                 session_id = DatabaseManager.create_session(computer_id)
+                
+                # Сохраняем начальные метрики для новой сессии
+                if session_id:
+                    metrics = SystemInfoCollector.get_performance_metrics()
+                    DatabaseManager.save_metrics(computer_id, session_id, metrics)
+                
                 HardwareIDGenerator.save_credentials(computer_login, computer_password)
                 
                 return {
@@ -794,6 +841,11 @@ class DatabaseManager:
                     DatabaseManager.update_hardware_config(computer_data['computer_id'])
                     
                     session_id = DatabaseManager.create_session(computer_data['computer_id'])
+                    
+                    # Сохраняем начальные метрики для сессии
+                    if session_id:
+                        metrics = SystemInfoCollector.get_performance_metrics()
+                        DatabaseManager.save_metrics(computer_data['computer_id'], session_id, metrics)
                     
                     return {
                         'computer_id': computer_data['computer_id'],
@@ -870,38 +922,6 @@ class DatabaseManager:
                             last_heartbeat = NOW()
                         WHERE session_id = %s
                     """, (session_id,))
-                
-                connection.commit()
-        except:
-            pass
-        finally:
-            connection.close()
-    
-    @staticmethod
-    def save_metrics(computer_id: int, session_id: int, metrics: Dict):
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return
-        
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO metric 
-                    (computer_id, session_id, cpu_usage, ram_usage, disk_usage, timestamp)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
-                """, (
-                    computer_id, session_id,
-                    metrics.get('cpu_usage', 0),
-                    metrics.get('ram_usage', 0),
-                    metrics.get('disk_usage', 0)
-                ))
-                
-                cursor.execute("""
-                    UPDATE client_session 
-                    SET metrics_count = metrics_count + 1,
-                        last_activity = NOW()
-                    WHERE session_id = %s
-                """, (session_id,))
                 
                 connection.commit()
         except:
@@ -1214,7 +1234,7 @@ class RemoteAgentThread(QThread):
         super().__init__()
         self.relay_server = relay_server
         self.computer_data = computer_data
-        self.computer_id = computer_data['computer_id']  # Числовой ID из БД
+        self.computer_id = computer_data['computer_id']
         self.session_id = computer_data['session_id']
         self.hostname = computer_data['hostname']
         self.screenshot_interval = screenshot_interval
@@ -1228,6 +1248,7 @@ class RemoteAgentThread(QThread):
         self.sending_screenshots = False
         self.heartbeat_task = None
         self.activity_task = None
+        self.metrics_task = None  # Задача для сбора метрик
         
         self.mouse = MouseController()
         self.keyboard = KeyboardController()
@@ -1295,12 +1316,37 @@ class RemoteAgentThread(QThread):
         
         self.activity_task = asyncio.create_task(update_activity_periodically())
     
+    def start_metrics_collector(self):
+        """Запускает периодический сбор метрик (каждые 15 минут)"""
+        async def collect_metrics_periodically():
+            # Ждем 15 минут перед первым сбором
+            await asyncio.sleep(900)  # 15 минут
+            
+            while self.is_connected and self.is_running:
+                try:
+                    if self.is_connected and self.session_id:
+                        # Получаем текущие метрики
+                        metrics = SystemInfoCollector.get_performance_metrics()
+                        # Создаем новую запись в БД
+                        DatabaseManager.save_metrics(self.computer_id, self.session_id, metrics)
+                        self.log_message.emit(f"📊 Сохранены метрики: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%, DISK={metrics['disk_usage']}%")
+                        
+                        # Ждем еще 15 минут
+                        await asyncio.sleep(900)
+                except Exception as e:
+                    self.log_message.emit(f"Ошибка сбора метрик: {e}")
+                    await asyncio.sleep(300)  # При ошибке ждем 5 минут и пробуем снова
+        
+        self.metrics_task = asyncio.create_task(collect_metrics_periodically())
+    
     def stop_updaters(self):
         """Останавливает периодические обновления"""
         if self.heartbeat_task:
             self.heartbeat_task.cancel()
         if self.activity_task:
             self.activity_task.cancel()
+        if self.metrics_task:
+            self.metrics_task.cancel()
     
     async def agent_main(self):
         reconnect_delay = 5
@@ -1309,11 +1355,12 @@ class RemoteAgentThread(QThread):
                 async with websockets.connect(self.relay_server) as ws:
                     self.ws = ws
                     
-                    # Запускаем обновления
+                    # Запускаем все периодические задачи
                     self.start_heartbeat_updater()
                     self.start_activity_updater()
+                    self.start_metrics_collector()  # Запускаем сбор метрик каждые 15 минут
                     
-                    # Регистрация агента с числовым computer_id
+                    # Регистрация агента
                     register_msg = {
                         "type": "register_agent",
                         "data": {
@@ -1324,7 +1371,7 @@ class RemoteAgentThread(QThread):
                         }
                     }
                     await ws.send(json.dumps(register_msg))
-                    self.log_message.emit(f"Регистрация агента: computer_id={self.computer_id}")
+                    self.log_message.emit(f"Регистрация агента: computer_id={self.computer_id}, session_id={self.session_id}")
                     
                     self.is_connected = True
                     self.connection_status_changed.emit(True, self.connected_clients)
@@ -1338,7 +1385,7 @@ class RemoteAgentThread(QThread):
             self.is_connected = False
             self.connection_status_changed.emit(False, 0)
             
-            # Останавливаем обновления
+            # Останавливаем все задачи
             self.stop_updaters()
             
             if self.is_running:
@@ -1351,22 +1398,20 @@ class RemoteAgentThread(QThread):
                 "hardware": SystemInfoCollector.get_hardware_config(),
                 "metrics": SystemInfoCollector.get_performance_metrics(),
                 "timestamp": datetime.now().isoformat(),
-                "computer_id": self.computer_id,  # Используем числовой ID
+                "computer_id": self.computer_id,
                 "session_id": self.session_id
             }
             
-            metrics = system_info["metrics"]
-            DatabaseManager.save_metrics(self.computer_id, self.session_id, metrics)
-            
+            # Отправляем информацию клиенту (НЕ сохраняем в БД, так как это запрос клиента)
             message = {
                 "type": "system_info",
                 "data": system_info,
-                "computer_id": self.computer_id,  # Используем числовой ID
+                "computer_id": self.computer_id,
                 "agent_id": self.hostname
             }
             
             await ws.send(json.dumps(message))
-            self.log_message.emit(f"Отправлена system_info: computer_id={self.computer_id}")
+            self.log_message.emit(f"Отправлена system_info клиенту")
             return True
         except Exception as e:
             self.log_message.emit(f"Ошибка отправки system_info: {e}")
@@ -1393,7 +1438,7 @@ class RemoteAgentThread(QThread):
                     message = {
                         "type": "screenshot",
                         "data": img_b64,
-                        "computer_id": self.computer_id,  # Используем числовой ID
+                        "computer_id": self.computer_id,
                         "agent_id": self.hostname
                     }
                     
@@ -1811,7 +1856,8 @@ class RemoteAgentWindow(QMainWindow):
         self.status_label.setStyleSheet("font-size: 13px; color: #e74c3c; font-weight: bold;")
     
     def update_activity_status(self, status):
-        self.activity_label.setText(f"📊 {status}")
+        if hasattr(self, 'activity_label'):
+            self.activity_label.setText(f"📊 {status}")
     
     def on_connection_status_changed(self, is_connected, clients_count):
         if is_connected:

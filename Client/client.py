@@ -27,7 +27,7 @@ class MetricsTableWidget(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         
-        title = QLabel("МЕТРИКИ ХОСТА")
+        title = QLabel("МЕТРИКИ КОМПЬЮТЕРА")
         title.setStyleSheet("""
             QLabel {
                 background-color: #3498db;
@@ -208,7 +208,8 @@ class SystemInfoDisplay(QWidget):
             f"Hostname: {basic.get('hostname', 'N/A')}\n"
             f"IP Address: {basic.get('ip_address', 'N/A')}\n"
             f"MAC Address: {basic.get('mac_address', 'N/A')}\n"
-            f"OS Version: {basic.get('os_version', 'N/A')}"
+            f"OS Version: {basic.get('os_version', 'N/A')}\n"
+            f"Computer ID: {basic.get('computer_id', 'N/A')}"
         )
         
         hw = host_info.get("hardware", {})
@@ -386,10 +387,10 @@ class RemoteClientThread(QThread):
     system_info_received = pyqtSignal(dict)
     connection_lost = pyqtSignal()
     
-    def __init__(self, relay_server, host_id, client_id, update_interval):
+    def __init__(self, relay_server, computer_id, client_id, update_interval):
         super().__init__()
         self.relay_server = relay_server
-        self.host_id = host_id
+        self.computer_id = computer_id
         self.client_id = client_id
         self.update_interval = update_interval
         self.ws = None
@@ -417,15 +418,20 @@ class RemoteClientThread(QThread):
                 async with websockets.connect(self.relay_server) as websocket:
                     self.ws = websocket
                     
+                    # Регистрация клиента с computer_id
                     register_msg = {
                         "type": "register_client",
-                        "data": {"client_id": self.client_id, "host_id": self.host_id},
-                        "host_id": self.host_id,
+                        "data": {
+                            "client_id": self.client_id, 
+                            "computer_id": self.computer_id
+                        },
+                        "computer_id": self.computer_id,
                         "client_id": self.client_id
                     }
                     await self.ws.send(json.dumps(register_msg))
                     
                     self.is_connected = True
+                    self.status_updated.emit("Подключен к серверу", "success")
                     
                     await self.send_command({"type": "request_system_info", "data": {}})
                     
@@ -448,7 +454,7 @@ class RemoteClientThread(QThread):
                                 system_data = data.get("data", {})
                                 self.system_info_received.emit(system_data)
                             
-                        except:
+                        except Exception as e:
                             pass
                     
             except Exception as e:
@@ -482,15 +488,16 @@ class RemoteClientThread(QThread):
     async def send_command(self, command):
         if self.ws and self.is_connected:
             try:
+                # Используем computer_id для идентификации
                 message = {
                     "type": command.get("type", "command"),
                     "data": command.get("data", {}),
-                    "host_id": self.host_id,
+                    "computer_id": self.computer_id,
                     "client_id": self.client_id
                 }
                 await self.ws.send(json.dumps(message))
                 return True
-            except:
+            except Exception as e:
                 return False
         return False
     
@@ -559,16 +566,23 @@ class RemoteAccessClientWindow(QMainWindow):
         settings_layout = QGridLayout(settings_frame)
         
         settings_layout.addWidget(QLabel("Сервер:"), 0, 0)
-        self.server_edit = QLineEdit("ws://130.49.149.152:9001")
+        self.server_edit = QLineEdit("ws://localhost:9001")
         settings_layout.addWidget(self.server_edit, 0, 1)
         
-        settings_layout.addWidget(QLabel("ID хоста:"), 1, 0)
-        self.host_id_edit = QLineEdit("PC_HOME")
-        settings_layout.addWidget(self.host_id_edit, 1, 1)
+        settings_layout.addWidget(QLabel("Computer ID:"), 1, 0)
+        self.computer_id_edit = QLineEdit("")
+        self.computer_id_edit.setPlaceholderText("Введите computer_id компьютера")
+        settings_layout.addWidget(self.computer_id_edit, 1, 1)
         
         settings_layout.addWidget(QLabel("ID клиента:"), 2, 0)
-        self.client_id_edit = QLineEdit("CLIENT")
+        self.client_id_edit = QLineEdit("CLIENT_001")
         settings_layout.addWidget(self.client_id_edit, 2, 1)
+        
+        # Добавляем информационную метку
+        info_label = QLabel("ℹ️ Computer ID можно найти в логах хоста после регистрации")
+        info_label.setStyleSheet("color: gray; font-size: 10px; padding: 5px;")
+        info_label.setWordWrap(True)
+        settings_layout.addWidget(info_label, 3, 0, 1, 2)
         
         button_layout = QHBoxLayout()
         
@@ -608,7 +622,7 @@ class RemoteAccessClientWindow(QMainWindow):
         self.disconnect_btn.clicked.connect(self.stop_client)
         button_layout.addWidget(self.disconnect_btn)
         
-        settings_layout.addLayout(button_layout, 3, 0, 1, 2)
+        settings_layout.addLayout(button_layout, 4, 0, 1, 2)
         main_layout.addWidget(settings_frame)
         
         self.status_label = QLabel("Отключено")
@@ -670,8 +684,8 @@ class RemoteAccessClientWindow(QMainWindow):
         if not self.server_edit.text().startswith('ws://'):
             QMessageBox.warning(self, "Ошибка", "Сервер должен начинаться с ws://")
             return
-        if not self.host_id_edit.text():
-            QMessageBox.warning(self, "Ошибка", "Введите ID хоста")
+        if not self.computer_id_edit.text():
+            QMessageBox.warning(self, "Ошибка", "Введите Computer ID")
             return
         
         self.connect_btn.setEnabled(False)
@@ -684,7 +698,7 @@ class RemoteAccessClientWindow(QMainWindow):
         
         self.client_thread = RemoteClientThread(
             relay_server=self.server_edit.text(),
-            host_id=self.host_id_edit.text(),
+            computer_id=self.computer_id_edit.text(),
             client_id=self.client_id_edit.text(),
             update_interval=0.033
         )
@@ -730,12 +744,19 @@ class RemoteAccessClientWindow(QMainWindow):
             self.frame_count += 1
     
     def on_system_info_received(self, system_data):
+        # Добавляем computer_id в информацию о хосте
+        if "computer_id" not in system_data:
+            system_data["computer_id"] = self.computer_id_edit.text()
+            
         self.host_info = {
             "basic": system_data.get("basic", {}),
             "hardware": system_data.get("hardware", {}),
             "metrics": system_data.get("metrics", {}),
             "last_update": system_data.get("timestamp", datetime.now().isoformat())
         }
+        
+        # Добавляем computer_id в basic информацию
+        self.host_info["basic"]["computer_id"] = system_data.get("computer_id", self.computer_id_edit.text())
         
         self.metrics_table.update_table(system_data.get("metrics", {}))
         if system_data.get("timestamp"):
@@ -777,7 +798,7 @@ class RemoteAccessClientWindow(QMainWindow):
     
     def open_remote_screen(self):
         if not self.client_thread or not self.client_thread.is_connected:
-            QMessageBox.warning(self, "Ошибка", "Сначала подключитесь к хосту")
+            QMessageBox.warning(self, "Ошибка", "Сначала подключитесь к компьютеру")
             return
         
         self.start_stream()

@@ -1,0 +1,310 @@
+#!/usr/bin/env python
+"""Скрипт для управления файлами в облачном хранилище Reg.ru Cloud"""
+
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
+import sys
+import re
+from datetime import datetime
+
+
+# ==================== НАСТРОЙКИ ====================
+ACCESS_KEY = "1TUFGD6LDS8S8DGRFYMU"
+SECRET_KEY = "Vq3kZWM8HSxcxZNv4qLw9l63J80mj9fBsd80KumS"
+ENDPOINT_URL = "https://s3.regru.cloud"
+BUCKET_NAME = "metrics-errors-logs"
+# ==================================================
+
+
+class CloudManager:
+    """Класс для управления файлами в облаке"""
+    
+    def __init__(self):
+        self.s3 = None
+        self.init_s3_client()
+    
+    def init_s3_client(self):
+        """Инициализация S3 клиента"""
+        try:
+            self.s3 = boto3.client(
+                's3',
+                endpoint_url=ENDPOINT_URL,
+                aws_access_key_id=ACCESS_KEY,
+                aws_secret_access_key=SECRET_KEY,
+                config=Config(signature_version='s3v4')
+            )
+            print("✅ S3 клиент инициализирован\n")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка инициализации S3: {e}")
+            return False
+    
+    def list_files(self, prefix: str = None) -> list:
+        """Получить список всех файлов в бакете"""
+        if not self.s3:
+            return []
+        
+        try:
+            params = {'Bucket': BUCKET_NAME}
+            if prefix:
+                params['Prefix'] = prefix
+            
+            files = []
+            response = self.s3.list_objects_v2(**params)
+            
+            if 'Contents' in response:
+                for obj in response['Contents']:
+                    files.append({
+                        'name': obj['Key'],
+                        'size': obj['Size'],
+                        'last_modified': obj['LastModified']
+                    })
+            
+            # Если есть больше страниц
+            while response.get('IsTruncated'):
+                params['ContinuationToken'] = response['NextContinuationToken']
+                response = self.s3.list_objects_v2(**params)
+                if 'Contents' in response:
+                    for obj in response['Contents']:
+                        files.append({
+                            'name': obj['Key'],
+                            'size': obj['Size'],
+                            'last_modified': obj['LastModified']
+                        })
+            
+            return files
+        except Exception as e:
+            print(f"Ошибка получения списка файлов: {e}")
+            return []
+    
+    def delete_file(self, file_name: str) -> bool:
+        """Удалить один файл"""
+        if not self.s3:
+            return False
+        
+        try:
+            self.s3.delete_object(Bucket=BUCKET_NAME, Key=file_name)
+            print(f"   ✅ Удален: {file_name}")
+            return True
+        except Exception as e:
+            print(f"   ❌ Ошибка удаления {file_name}: {e}")
+            return False
+    
+    def delete_files(self, file_names: list) -> dict:
+        """Удалить несколько файлов"""
+        if not self.s3:
+            return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        success = 0
+        failed = 0
+        failed_names = []
+        
+        for file_name in file_names:
+            if self.delete_file(file_name):
+                success += 1
+            else:
+                failed += 1
+                failed_names.append(file_name)
+        
+        return {'success': success, 'failed': failed, 'failed_names': failed_names}
+    
+    def delete_all_files(self, confirm: bool = True) -> dict:
+        """Удалить все файлы в бакете"""
+        files = self.list_files()
+        
+        if not files:
+            print("📋 Бакет пуст, удалять нечего")
+            return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        print(f"\n📋 Найдено файлов: {len(files)}")
+        for f in files:
+            size_kb = f['size'] / 1024
+            print(f"   - {f['name']} ({size_kb:.1f} KB)")
+        
+        if confirm:
+            answer = input(f"\n⚠️ Удалить все {len(files)} файлов? (yes/no): ")
+            if answer.lower() != 'yes':
+                print("❌ Отменено")
+                return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        return self.delete_files([f['name'] for f in files])
+    
+    def delete_by_pattern(self, pattern: str, confirm: bool = True) -> dict:
+        """Удалить файлы по маске (регулярному выражению)"""
+        files = self.list_files()
+        
+        if not files:
+            print("📋 Бакет пуст")
+            return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        # Фильтруем файлы по паттерну
+        regex = re.compile(pattern, re.IGNORECASE)
+        matched_files = [f for f in files if regex.search(f['name'])]
+        
+        if not matched_files:
+            print(f"📋 Файлы по паттерну '{pattern}' не найдены")
+            return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        print(f"\n📋 Найдено файлов по паттерну '{pattern}': {len(matched_files)}")
+        for f in matched_files:
+            size_kb = f['size'] / 1024
+            print(f"   - {f['name']} ({size_kb:.1f} KB)")
+        
+        if confirm:
+            answer = input(f"\n⚠️ Удалить эти {len(matched_files)} файлов? (yes/no): ")
+            if answer.lower() != 'yes':
+                print("❌ Отменено")
+                return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        return self.delete_files([f['name'] for f in matched_files])
+    
+    def delete_by_date(self, before_date: str, confirm: bool = True) -> dict:
+        """Удалить файлы, созданные до указанной даты (формат: YYYY-MM-DD)"""
+        try:
+            cutoff_date = datetime.fromisoformat(before_date)
+        except ValueError:
+            print(f"❌ Неверный формат даты. Используйте YYYY-MM-DD")
+            return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        files = self.list_files()
+        
+        if not files:
+            print("📋 Бакет пуст")
+            return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        # Фильтруем файлы по дате
+        matched_files = [f for f in files if f['last_modified'].replace(tzinfo=None) < cutoff_date]
+        
+        if not matched_files:
+            print(f"📋 Файлы до {before_date} не найдены")
+            return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        print(f"\n📋 Найдено файлов до {before_date}: {len(matched_files)}")
+        for f in matched_files:
+            size_kb = f['size'] / 1024
+            print(f"   - {f['name']} ({size_kb:.1f} KB) - {f['last_modified'].strftime('%Y-%m-%d %H:%M')}")
+        
+        if confirm:
+            answer = input(f"\n⚠️ Удалить эти {len(matched_files)} файлов? (yes/no): ")
+            if answer.lower() != 'yes':
+                print("❌ Отменено")
+                return {'success': 0, 'failed': 0, 'failed_names': []}
+        
+        return self.delete_files([f['name'] for f in matched_files])
+    
+    def show_files(self, prefix: str = None):
+        """Показать все файлы в бакете"""
+        files = self.list_files(prefix)
+        
+        if not files:
+            print("📋 Бакет пуст")
+            return
+        
+        print(f"\n📋 Файлы в бакете {BUCKET_NAME}:")
+        print("-" * 60)
+        
+        total_size = 0
+        for f in files:
+            size_kb = f['size'] / 1024
+            size_mb = size_kb / 1024
+            if size_mb > 1:
+                size_str = f"{size_mb:.2f} MB"
+            else:
+                size_str = f"{size_kb:.1f} KB"
+            
+            print(f"   {f['name']}")
+            print(f"      Размер: {size_str}")
+            print(f"      Дата: {f['last_modified'].strftime('%Y-%m-%d %H:%M:%S')}")
+            print()
+            total_size += f['size']
+        
+        print("-" * 60)
+        total_mb = total_size / (1024 * 1024)
+        print(f"📊 Всего файлов: {len(files)}, общий размер: {total_mb:.2f} MB")
+    
+    def check_connection(self):
+        """Проверить подключение к облаку"""
+        try:
+            self.s3.list_buckets()
+            print("✅ Подключение к облаку успешно")
+            print(f"   Бакет: {BUCKET_NAME}")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка подключения: {e}")
+            return False
+
+
+def print_menu():
+    """Вывести меню"""
+    print("\n" + "=" * 50)
+    print("    УПРАВЛЕНИЕ ФАЙЛАМИ В ОБЛАЧНОМ ХРАНИЛИЩЕ")
+    print("=" * 50)
+    print("1. Показать все файлы")
+    print("2. Удалить все файлы")
+    print("3. Удалить файлы по маске (regex)")
+    print("4. Удалить файлы старше даты")
+    print("5. Удалить конкретный файл")
+    print("6. Проверить подключение")
+    print("0. Выход")
+    print("-" * 50)
+
+
+def main():
+    """Главная функция"""
+    cloud = CloudManager()
+    
+    if not cloud.s3:
+        print("❌ Не удалось подключиться к облаку")
+        return
+    
+    while True:
+        print_menu()
+        choice = input("Выберите действие: ").strip()
+        
+        if choice == '0':
+            print("👋 До свидания!")
+            break
+        
+        elif choice == '1':
+            cloud.show_files()
+        
+        elif choice == '2':
+            result = cloud.delete_all_files(confirm=True)
+            print(f"\n📊 Результат: удалено {result['success']}, ошибок {result['failed']}")
+        
+        elif choice == '3':
+            pattern = input("Введите паттерн (regex) для поиска: ").strip()
+            if pattern:
+                result = cloud.delete_by_pattern(pattern, confirm=True)
+                print(f"\n📊 Результат: удалено {result['success']}, ошибок {result['failed']}")
+            else:
+                print("❌ Паттерн не может быть пустым")
+        
+        elif choice == '4':
+            date_str = input("Введите дату (YYYY-MM-DD): ").strip()
+            if date_str:
+                result = cloud.delete_by_date(date_str, confirm=True)
+                print(f"\n📊 Результат: удалено {result['success']}, ошибок {result['failed']}")
+            else:
+                print("❌ Дата не может быть пустой")
+        
+        elif choice == '5':
+            file_name = input("Введите имя файла: ").strip()
+            if file_name:
+                if cloud.delete_file(file_name):
+                    print("✅ Файл удален")
+                else:
+                    print("❌ Не удалось удалить файл")
+            else:
+                print("❌ Имя файла не может быть пустым")
+        
+        elif choice == '6':
+            cloud.check_connection()
+        
+        else:
+            print("❌ Неверный выбор. Попробуйте снова.")
+
+
+if __name__ == "__main__":
+    main()

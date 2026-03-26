@@ -172,19 +172,24 @@ class RemoteAgentThread(QThread):
                 next_midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
                 seconds_until_midnight = (next_midnight - now).total_seconds()
                 
+                self.log_message.emit(f"⏰ До полуночи: {seconds_until_midnight:.0f} секунд")
                 await asyncio.sleep(seconds_until_midnight)
+                
                 if not self.is_running:
                     break
                 
-                self.log_message.emit("🌙 Полночь - переключение на новый день")
+                self.log_message.emit("🌙 Полночь - начинаем обработку")
+                
+                # 1. Сначала переключаемся на новый день (это помечает старый файл для отправки)
                 self.json_logger.switch_to_new_day()
                 
+                # 2. Отправляем все помеченные файлы
                 uploaded = self.cloud_uploader.check_and_upload()
                 if uploaded > 0:
-                    self.log_message.emit(f"☁️ Загружено {uploaded} файлов")
+                    self.log_message.emit(f"☁️ Загружено {uploaded} файлов в облако")
                     DatabaseManager.update_json_sent_count(self.session_id, uploaded)
                 
-                # Загружаем события для нового дня
+                # 3. Загружаем события за последние 24 часа для нового дня
                 self.log_message.emit("📋 Сбор событий Windows для нового дня...")
                 events = WindowsEventCollector.get_all_events_last_24h()
                 
@@ -196,8 +201,16 @@ class RemoteAgentThread(QThread):
                     errors = len([e for e in grouped_events if e.get('severity') == 'error'])
                     warnings = len([e for e in grouped_events if e.get('severity') == 'warning'])
                     self.log_message.emit(f"📋 События для нового дня: {len(grouped_events)} (критических: {critical}, ошибок: {errors}, предупреждений: {warnings})")
+                else:
+                    self.log_message.emit("📋 Новых событий Windows за 24 часа нет")
+                
+                # 4. Сохраняем первую метрику нового дня
+                metrics = SystemInfoCollector.get_performance_metrics()
+                self.json_logger.add_metric(metrics)
+                self.log_message.emit(f"📊 Первая метрика нового дня: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%")
+                
             except Exception as e:
-                self.log_message.emit(f"Ошибка проверки полуночи: {e}")
+                self.log_message.emit(f"❌ Ошибка проверки полуночи: {e}")
     
     async def check_and_upload_on_startup(self):
         """Проверка и отправка файлов при запуске"""

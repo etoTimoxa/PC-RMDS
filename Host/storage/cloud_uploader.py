@@ -1,6 +1,7 @@
 import json
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 from pathlib import Path
 
 from utils.constants import CLOUD_CONFIG
@@ -27,27 +28,80 @@ class CloudUploader:
                 endpoint_url=self.endpoint_url,
                 aws_access_key_id=self.access_key,
                 aws_secret_access_key=self.secret_key,
-                config=Config(signature_version='s3v4')
+                config=Config(signature_version='s3v4'),
+                verify=True  # Проверка SSL сертификата
             )
+            # Проверяем подключение, получая список бакетов
+            buckets = self.s3.list_buckets()
+            print(f"✅ S3 клиент инициализирован. Доступные бакеты: {[b['Name'] for b in buckets['Buckets']]}")
         except Exception as e:
-            print(f"Ошибка инициализации S3: {e}")
+            print(f"❌ Ошибка инициализации S3: {e}")
             self.s3 = None
     
     def upload_file(self, file_path: Path) -> bool:
+        """Загрузить файл с проверкой"""
         if not self.s3 or not file_path.exists():
             return False
         
         try:
             object_name = file_path.name
-            self.s3.upload_file(str(file_path), self.bucket_name, object_name)
-            return True
+            file_size = file_path.stat().st_size / 1024
+            print(f"📤 Загрузка: {object_name} ({file_size:.1f} KB)")
+            
+            # Загружаем файл
+            self.s3.upload_file(
+                str(file_path), 
+                self.bucket_name, 
+                object_name,
+                ExtraArgs={'ContentType': 'application/json'}
+            )
+            
+            # ПРОВЕРЯЕМ, что файл действительно загружен
+            try:
+                # Пытаемся получить информацию о файле
+                head = self.s3.head_object(Bucket=self.bucket_name, Key=object_name)
+                print(f"   ✅ {object_name} - загружен (размер в облаке: {head['ContentLength']} байт)")
+                return True
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == '404':
+                    print(f"   ❌ Файл не найден в облаке после загрузки!")
+                    return False
+                else:
+                    print(f"   ⚠️ Не удалось проверить загрузку: {e}")
+                    return True  # Возвращаем True, но с предупреждением
+                    
         except Exception as e:
-            print(f"Ошибка загрузки {object_name}: {e}")
+            print(f"   ❌ Ошибка загрузки {object_name}: {e}")
             return False
+    
+    def list_bucket_files(self):
+        """Вывести список файлов в бакете (для отладки)"""
+        if not self.s3:
+            print("S3 клиент не инициализирован")
+            return []
+        
+        try:
+            response = self.s3.list_objects_v2(Bucket=self.bucket_name)
+            if 'Contents' in response:
+                files = [obj['Key'] for obj in response['Contents']]
+                print(f"📋 Файлы в бакете {self.bucket_name}:")
+                for f in files:
+                    print(f"   - {f}")
+                return files
+            else:
+                print(f"📋 Бакет {self.bucket_name} пуст")
+                return []
+        except Exception as e:
+            print(f"Ошибка получения списка файлов: {e}")
+            return []
     
     def upload_end_of_day_files(self) -> int:
         uploaded = 0
-        for marker_file in self.markers_folder.glob("endofday_*.json"):
+        endofday_files = list(self.markers_folder.glob("endofday_*.json"))
+        print(f"📋 Найдено маркеров endofday: {len(endofday_files)}")
+        
+        for marker_file in endofday_files:
             try:
                 with open(marker_file, 'r') as f:
                     file_name = f.read().strip()
@@ -55,19 +109,33 @@ class CloudUploader:
                 file_path = self.temps_folder / file_name
                 sent_marker = self.markers_folder / f"sent_{file_name}"
                 
+                print(f"   Обработка: {file_name} (существует: {file_path.exists()}, отправлен: {sent_marker.exists()})")
+                
                 if file_path.exists() and not sent_marker.exists():
                     if self.upload_file(file_path):
                         sent_marker.touch()
                         uploaded += 1
-                
-                marker_file.unlink()
-            except:
-                pass
+                        marker_file.unlink()
+                        print(f"   ✅ Отправлен и удален маркер: {file_name}")
+                    else:
+                        print(f"   ❌ Ошибка загрузки, маркер сохранен для повторной попытки: {file_name}")
+                else:
+                    if not file_path.exists():
+                        print(f"   ⚠️ Файл не найден, удаляем маркер: {file_name}")
+                        marker_file.unlink()
+                    elif sent_marker.exists():
+                        print(f"   ℹ️ Файл уже отправлен, удаляем маркер: {file_name}")
+                        marker_file.unlink()
+            except Exception as e:
+                print(f"   ❌ Ошибка обработки маркера: {e}")
+        
         return uploaded
     
     def upload_urgent_files(self) -> int:
         uploaded = 0
-        for marker_file in self.markers_folder.glob("urgent_*.json"):
+        urgent_files = list(self.markers_folder.glob("urgent_*.json"))
+        
+        for marker_file in urgent_files:
             try:
                 with open(marker_file, 'r') as f:
                     file_name = f.read().strip()
@@ -89,4 +157,10 @@ class CloudUploader:
         uploaded = 0
         uploaded += self.upload_end_of_day_files()
         uploaded += self.upload_urgent_files()
+        
+        # Для отладки - показываем список файлов в бакете после загрузки
+        if uploaded > 0:
+            print("📋 Проверка содержимого облака после загрузки:")
+            self.list_bucket_files()
+        
         return uploaded

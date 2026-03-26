@@ -10,7 +10,7 @@ import time
 import platform
 import psutil
 import socket
-from datetime import datetime
+from datetime import datetime, timedelta, date
 import pyautogui
 import os
 import hashlib
@@ -22,14 +22,29 @@ import winreg
 import signal
 import atexit
 import ctypes
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+import win32evtlog
+import win32evtlogutil
+import win32security
 import win32api
 import win32con
 from ctypes import wintypes
+import threading
+import boto3
+from botocore.config import Config
+from pathlib import Path
+
+# Настройка DPI для Windows
+if platform.system() == "Windows":
+    try:
+        from ctypes import windll
+        windll.shcore.SetProcessDpiAwareness(1)
+    except:
+        pass
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QLabel, QLineEdit, QPushButton, 
-                            QTextEdit, QGroupBox, QGridLayout, QMessageBox,
+                            QTextEdit, QGroupBox, QMessageBox,
                             QDialog, QDialogButtonBox, QFormLayout, QCheckBox,
                             QSpinBox, QDoubleSpinBox, QTabWidget, QSystemTrayIcon,
                             QMenu, QStatusBar, QFrame, QProgressBar)
@@ -40,314 +55,1204 @@ from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
 
 
-# Глобальная переменная для очистки
-_cleanup_done = False
-
-def cleanup_on_exit():
-    """Функция для очистки при завершении"""
-    global _cleanup_done
-    if _cleanup_done:
-        return
-    _cleanup_done = True
-    
+# ==================== ПРОВЕРКА ПРАВ АДМИНИСТРАТОРА ====================
+def is_admin():
     try:
-        if hasattr(DatabaseManager, 'current_session_id') and DatabaseManager.current_session_id:
-            if hasattr(DatabaseManager, 'current_computer_id'):
-                DatabaseManager.update_computer_status(
-                    DatabaseManager.current_computer_id, 
-                    False, 
-                    DatabaseManager.current_session_id
-                )
+        return ctypes.windll.shell32.IsUserAnAdmin()
     except:
-        pass
-
-# Регистрируем функцию очистки
-atexit.register(cleanup_on_exit)
-
-# Обработка сигналов
-def signal_handler(signum, frame):
-    """Обработчик сигналов"""
-    cleanup_on_exit()
-    sys.exit(0)
-
-signal.signal(signal.SIGTERM, signal_handler)
-if hasattr(signal, 'SIGBREAK'):
-    signal.signal(signal.SIGBREAK, signal_handler)
+        return False
 
 
-# Стили для приложения
-APP_STYLE = """
-QMainWindow {
-    background-color: #f5f5f5;
-}
-
-QGroupBox {
-    font-weight: bold;
-    border: 2px solid #ff8c42;
-    border-radius: 8px;
-    margin-top: 10px;
-    padding-top: 10px;
-    background-color: white;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 5px 0 5px;
-    color: #ff8c42;
-}
-
-QLabel {
-    color: #333333;
-}
-
-QPushButton {
-    background-color: #ff8c42;
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 6px;
-    font-weight: bold;
-    font-size: 12px;
-}
-QPushButton:hover {
-    background-color: #ff6b2c;
-}
-QPushButton:pressed {
-    background-color: #e55a1a;
-}
-QPushButton:disabled {
-    background-color: #cccccc;
-    color: #666666;
-}
-
-QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox {
-    border: 1px solid #ff8c42;
-    border-radius: 4px;
-    padding: 5px;
-    background-color: white;
-}
-QLineEdit:focus, QTextEdit:focus {
-    border: 2px solid #ff8c42;
-}
-
-QTabWidget::pane {
-    border: 1px solid #ff8c42;
-    border-radius: 4px;
-    background-color: white;
-}
-QTabBar::tab {
-    background-color: #e0e0e0;
-    padding: 8px 16px;
-    margin-right: 2px;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-}
-QTabBar::tab:selected {
-    background-color: #ff8c42;
-    color: white;
-}
-QTabBar::tab:hover:!selected {
-    background-color: #ffb87a;
-}
-
-QProgressBar {
-    border: 1px solid #ff8c42;
-    border-radius: 4px;
-    text-align: center;
-}
-QProgressBar::chunk {
-    background-color: #ff8c42;
-    border-radius: 3px;
-}
-
-QStatusBar {
-    background-color: #f0f0f0;
-    color: #666666;
-}
-
-QMenuBar {
-    background-color: #ff8c42;
-    color: white;
-}
-QMenuBar::item {
-    background-color: #ff8c42;
-    padding: 4px 8px;
-}
-QMenuBar::item:selected {
-    background-color: #ff6b2c;
-}
-QMenu {
-    background-color: white;
-    border: 1px solid #ff8c42;
-}
-QMenu::item:selected {
-    background-color: #ff8c42;
-    color: white;
-}
-
-QSystemTrayIcon {
-    color: #ff8c42;
-}
-"""
+def run_as_admin():
+    try:
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, " ".join(sys.argv), None, 1
+        )
+        return True
+    except:
+        return False
 
 
-class SystemActivityMonitor:
-    """Мониторинг активности системы"""
-    
-    class LASTINPUTINFO(ctypes.Structure):
-        _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+# ==================== КЛАСС ДЛЯ ГРУППИРОВКИ СОБЫТИЙ ====================
+class EventGrouper:
+    """Класс для группировки повторяющихся событий"""
     
     @staticmethod
-    def get_last_input_time():
-        """Получить время последнего ввода (мышь/клавиатура) в секундах"""
+    def get_event_key(event: Dict) -> str:
+        """Создать ключ для группировки события"""
+        message = event.get('message', '')
+        # Убираем из сообщения временные метки и номера записей
+        import re
+        cleaned_message = re.sub(r'record number \d+', '', message, flags=re.IGNORECASE)
+        cleaned_message = re.sub(r'Record Number: \d+', '', cleaned_message, flags=re.IGNORECASE)
+        cleaned_message = re.sub(r'Event ID: \d+', '', cleaned_message, flags=re.IGNORECASE)
+        cleaned_message = re.sub(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', '', cleaned_message)
+        
+        return f"{event.get('log')}_{event.get('event_id')}_{event.get('source')}_{hash(cleaned_message)}"
+    
+    def group_events(self, events: List[Dict]) -> List[Dict]:
+        """Сгруппировать повторяющиеся события"""
+        grouped = {}
+        
+        for event in events:
+            key = self.get_event_key(event)
+            
+            if key not in grouped:
+                grouped[key] = {
+                    'log': event.get('log'),
+                    'event_id': event.get('event_id'),
+                    'source': event.get('source'),
+                    'severity': event.get('severity'),
+                    'event_type': event.get('event_type'),
+                    'message': event.get('message'),
+                    'category': event.get('category'),
+                    'user': event.get('user'),
+                    'first_time': event.get('time'),
+                    'last_time': event.get('time'),
+                    'count': 1
+                }
+            else:
+                grouped[key]['count'] += 1
+                grouped[key]['last_time'] = event.get('time')
+        
+        # Преобразуем в список
+        result = []
+        for key, data in grouped.items():
+            if data['count'] == 1:
+                # Одиночное событие
+                result.append({
+                    'log': data['log'],
+                    'event_id': data['event_id'],
+                    'source': data['source'],
+                    'severity': data['severity'],
+                    'event_type': data['event_type'],
+                    'time': data['first_time'],
+                    'message': data['message'],
+                    'category': data['category'],
+                    'user': data['user'],
+                    'is_grouped': False
+                })
+            else:
+                # Групповое событие
+                result.append({
+                    'log': data['log'],
+                    'event_id': data['event_id'],
+                    'source': data['source'],
+                    'severity': data['severity'],
+                    'event_type': data['event_type'],
+                    'first_time': data['first_time'],
+                    'last_time': data['last_time'],
+                    'count': data['count'],
+                    'message': data['message'],
+                    'category': data['category'],
+                    'user': data['user'],
+                    'is_grouped': True
+                })
+        
+        return result
+
+
+# ==================== КЛАСС ДЛЯ РАБОТЫ С JSON ЛОГАМИ ====================
+class JSONLogger:
+    """Класс для записи метрик и событий Windows в JSON файлы"""
+    
+    def __init__(self, temps_folder: str = None):
+        if temps_folder is None:
+            base_path = Path(__file__).parent
+            self.temps_folder = base_path / "Temps"
+        else:
+            self.temps_folder = Path(temps_folder)
+        
+        self.temps_folder.mkdir(exist_ok=True)
+        
+        self.current_file = None
+        self.current_date = None
+        self.current_computer_name = None
+        self.current_session_token = None
+        self.lock = threading.Lock()
+        
+        self.previous_metrics = None
+        self.anomaly_threshold = {
+            'cpu_usage': 30,
+            'ram_usage': 20,
+            'disk_usage': 15
+        }
+        
+        # Служебная папка для маркеров (не отправляется в облако)
+        self.markers_folder = self.temps_folder / ".markers"
+        self.markers_folder.mkdir(exist_ok=True)
+        
+        # Файл флага - были ли уже записаны события за 24 часа в текущем дне
+        self.events_flag_file = self.markers_folder / "events_24h_loaded.json"
+        self._load_events_flag()
+    
+    def _load_events_flag(self):
+        """Загрузить флаг о загрузке событий за 24 часа"""
+        self._events_loaded_date = None
+        if self.events_flag_file.exists():
+            try:
+                with open(self.events_flag_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._events_loaded_date = data.get('date')
+                    print(f"📋 Загружен флаг событий: дата={self._events_loaded_date}")
+            except Exception as e:
+                print(f"Ошибка загрузки флага: {e}")
+    
+    def _save_events_flag(self, date_str: str):
+        """Сохранить флаг о загрузке событий за 24 часа"""
         try:
-            lastInputInfo = SystemActivityMonitor.LASTINPUTINFO()
-            lastInputInfo.cbSize = ctypes.sizeof(lastInputInfo)
-            ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lastInputInfo))
-            tickCount = ctypes.windll.kernel32.GetTickCount()
-            elapsed_ms = tickCount - lastInputInfo.dwTime
-            return elapsed_ms / 1000.0
+            with open(self.events_flag_file, 'w', encoding='utf-8') as f:
+                json.dump({'date': date_str}, f)
+            print(f"📋 Сохранен флаг событий: дата={date_str}")
+        except Exception as e:
+            print(f"Ошибка сохранения флага: {e}")
+    
+    def _clear_events_flag(self):
+        """Очистить флаг о загрузке событий"""
+        if self.events_flag_file.exists():
+            try:
+                self.events_flag_file.unlink()
+                print(f"📋 Очищен флаг событий")
+            except:
+                pass
+        self._events_loaded_date = None
+    
+    def set_session(self, computer_name: str, session_token: str):
+        """Установить данные сессии"""
+        self.current_computer_name = computer_name
+        self.current_session_token = session_token
+        
+        old_date = self.current_date
+        self.current_date = datetime.now().date()
+        
+        print(f"📅 Текущая дата: {self.current_date}, старая дата: {old_date}")
+        
+        # Если день изменился, очищаем флаг
+        if old_date is not None and old_date != self.current_date:
+            print(f"📅 День изменился, очищаем флаг")
+            self._clear_events_flag()
+        else:
+            # Если день не изменился, перезагружаем флаг из файла
+            self._load_events_flag()
+        
+        self.create_daily_file()
+        
+        # Проверяем, не нужно ли отправить файл за вчерашний день
+        self.check_and_mark_yesterday_file()
+        
+        # Удаляем старые файлы (старше 2 дней)
+        self.cleanup_old_files()
+    
+    def create_daily_file(self):
+        """Создать файл для текущей даты (один файл на день)"""
+        clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', self.current_computer_name)
+        file_name = f"{clean_name}_{self.current_date.isoformat()}.json"
+        self.current_file = self.temps_folder / file_name
+        print(f"📁 Текущий файл: {self.current_file.name}")
+        
+        if not self.current_file.exists():
+            self.save_records([])
+    
+    def save_records(self, records: List[Dict]):
+        """Сохранить записи в файл"""
+        if not self.current_file:
+            return
+        
+        try:
+            with self.lock:
+                with open(self.current_file, 'w', encoding='utf-8') as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Ошибка сохранения JSON файла: {e}")
+    
+    def load_records(self) -> List[Dict]:
+        """Загрузить все записи из файла"""
+        if not self.current_file or not self.current_file.exists():
+            return []
+        
+        try:
+            with open(self.current_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+                return []
         except:
-            return 0
+            return []
     
-    @staticmethod
-    def get_cpu_usage():
-        """Получить текущую загрузку CPU"""
-        try:
-            return psutil.cpu_percent(interval=1)
-        except:
-            return 0
+    def add_metric(self, metrics: Dict):
+        """Добавить метрики системы с привязкой к токену сессии"""
+        records = self.load_records()
+        
+        record = {
+            'timestamp': datetime.now().isoformat(),
+            'computer_name': self.current_computer_name,
+            'session_token': self.current_session_token,
+            'type': 'metric',
+            'data': metrics
+        }
+        
+        records.append(record)
+        self.save_records(records)
+        
+        # Проверяем на аномалии
+        if self.previous_metrics:
+            self.check_anomalies(metrics)
+        
+        self.previous_metrics = metrics.copy()
     
-    @staticmethod
-    def get_memory_usage():
-        """Получить использование памяти"""
-        try:
-            return psutil.virtual_memory().percent
-        except:
-            return 0
+    def add_windows_events(self, events: List[Dict], is_initial: bool = False):
+        """Добавить события из журнала Windows с привязкой к токену сессии"""
+        records = self.load_records()
+        
+        for event in events:
+            if event.get('is_grouped'):
+                # Групповое событие
+                record = {
+                    'computer_name': self.current_computer_name,
+                    'session_token': self.current_session_token,
+                    'type': 'windows_event_grouped',
+                    'data': {
+                        'log': event.get('log'),
+                        'event_id': event.get('event_id'),
+                        'source': event.get('source'),
+                        'severity': event.get('severity'),
+                        'event_type': event.get('event_type'),
+                        'first_time': event.get('first_time'),
+                        'last_time': event.get('last_time'),
+                        'count': event.get('count'),
+                        'message': event.get('message'),
+                        'category': event.get('category'),
+                        'user': event.get('user')
+                    }
+                }
+            else:
+                # Одиночное событие
+                record = {
+                    'timestamp': event.get('time', datetime.now().isoformat()),
+                    'computer_name': self.current_computer_name,
+                    'session_token': self.current_session_token,
+                    'type': 'windows_event',
+                    'data': {
+                        'log': event.get('log'),
+                        'event_id': event.get('event_id'),
+                        'source': event.get('source'),
+                        'severity': event.get('severity'),
+                        'event_type': event.get('event_type'),
+                        'message': event.get('message', ''),
+                        'category': event.get('category', 0),
+                        'user': event.get('user', None)
+                    }
+                }
+            records.append(record)
+        
+        self.save_records(records)
+        
+        # Если это начальная загрузка за 24 часа, сохраняем флаг
+        if is_initial:
+            self._save_events_flag(self.current_date.isoformat())
+            print(f"✅ Сохранен флаг: события за 24 часа загружены для {self.current_date}")
     
-    @staticmethod
-    def get_disk_io():
-        """Получить активность диска (MB)"""
-        try:
-            disk_io = psutil.disk_io_counters()
-            if disk_io:
-                return (disk_io.read_bytes + disk_io.write_bytes) / (1024 * 1024)
-            return 0
-        except:
-            return 0
-    
-    @staticmethod
-    def get_network_activity():
-        """Получить сетевую активность (MB)"""
-        try:
-            net_io = psutil.net_io_counters()
-            if net_io:
-                return (net_io.bytes_recv + net_io.bytes_sent) / (1024 * 1024)
-            return 0
-        except:
-            return 0
-    
-    @staticmethod
-    def get_running_processes():
-        """Получить список активных процессов"""
-        try:
-            active_processes = []
-            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
-                try:
-                    if proc.info['cpu_percent'] > 5 or proc.info['memory_percent'] > 10:
-                        active_processes.append({
-                            'name': proc.info['name'],
-                            'cpu': proc.info['cpu_percent'],
-                            'memory': proc.info['memory_percent']
+    def check_anomalies(self, current_metrics: Dict):
+        """Проверить наличие аномалий в метриках"""
+        anomalies = []
+        
+        for key, threshold in self.anomaly_threshold.items():
+            if key in current_metrics and key in self.previous_metrics:
+                current_value = current_metrics.get(key, 0)
+                previous_value = self.previous_metrics.get(key, 0)
+                
+                if previous_value > 0:
+                    change = abs(current_value - previous_value)
+                    if change > threshold:
+                        anomalies.append({
+                            'metric': key,
+                            'previous': previous_value,
+                            'current': current_value,
+                            'change': change
                         })
+        
+        if anomalies:
+            # Добавляем предупреждение об аномалии
+            records = self.load_records()
+            record = {
+                'timestamp': datetime.now().isoformat(),
+                'computer_name': self.current_computer_name,
+                'session_token': self.current_session_token,
+                'type': 'windows_event',
+                'data': {
+                    'log': 'system',
+                    'event_id': 0,
+                    'source': 'Performance Monitor',
+                    'severity': 'warning',
+                    'event_type': 'warning',
+                    'message': f"Обнаружены резкие скачки метрик: {anomalies}",
+                    'category': 0,
+                    'user': None
+                }
+            }
+            records.append(record)
+            self.save_records(records)
+            
+            # Помечаем файл для срочной отправки
+            self.mark_for_urgent_upload()
+    
+    def get_file_path_for_date(self, target_date: date) -> Path:
+        """Получить путь к файлу за определенную дату"""
+        clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', self.current_computer_name)
+        file_name = f"{clean_name}_{target_date.isoformat()}.json"
+        return self.temps_folder / file_name
+    
+    def mark_for_urgent_upload(self):
+        """Пометить текущий файл для срочной отправки"""
+        if self.current_file:
+            marker_file = self.markers_folder / f"urgent_{self.current_file.name}"
+            try:
+                with open(marker_file, 'w') as f:
+                    f.write(self.current_file.name)
+            except:
+                pass
+    
+    def mark_for_end_of_day_upload(self):
+        """Пометить файл для отправки в конце дня"""
+        if self.current_file:
+            marker_file = self.markers_folder / f"endofday_{self.current_file.name}"
+            try:
+                with open(marker_file, 'w') as f:
+                    f.write(self.current_file.name)
+            except:
+                pass
+    
+    def check_and_mark_yesterday_file(self):
+        """Проверить и пометить файл за вчерашний день для отправки"""
+        yesterday = datetime.now().date() - timedelta(days=1)
+        yesterday_file = self.get_file_path_for_date(yesterday)
+        
+        if yesterday_file.exists():
+            sent_marker = self.markers_folder / f"sent_{yesterday_file.name}"
+            if not sent_marker.exists():
+                marker_file = self.markers_folder / f"endofday_{yesterday_file.name}"
+                try:
+                    with open(marker_file, 'w') as f:
+                        f.write(yesterday_file.name)
+                    print(f"📁 Файл за {yesterday} помечен для отправки")
+                    return True
                 except:
                     pass
-            return active_processes[:5]
-        except:
-            return []
-    
-    @staticmethod
-    def get_active_windows():
-        """Получить активные окна Windows"""
-        try:
-            import win32gui
-            
-            def callback(hwnd, windows):
-                if win32gui.IsWindowVisible(hwnd):
-                    window_text = win32gui.GetWindowText(hwnd)
-                    if window_text:
-                        windows.append(window_text)
-                return True
-            
-            windows = []
-            win32gui.EnumWindows(callback, windows)
-            return windows[:5]
-        except:
-            return []
-    
-    @staticmethod
-    def is_system_active():
-        """Определить, активна ли система"""
-        last_input = SystemActivityMonitor.get_last_input_time()
-        if last_input < 300:
-            return True
-        
-        cpu_usage = SystemActivityMonitor.get_cpu_usage()
-        if cpu_usage > 10:
-            return True
-        
-        disk_io = SystemActivityMonitor.get_disk_io()
-        if disk_io > 50:
-            return True
-        
-        net_activity = SystemActivityMonitor.get_network_activity()
-        if net_activity > 20:
-            return True
-        
-        processes = SystemActivityMonitor.get_running_processes()
-        if processes:
-            return True
-        
         return False
     
-    @staticmethod
-    def get_activity_description():
-        """Получить описание текущей активности"""
-        activities = []
-        
-        last_input = SystemActivityMonitor.get_last_input_time()
-        if last_input < 300:
-            activities.append(f"Ввод: {int(last_input)} сек назад")
-        
-        cpu_usage = SystemActivityMonitor.get_cpu_usage()
-        if cpu_usage > 10:
-            activities.append(f"CPU: {cpu_usage:.1f}%")
-        
-        disk_io = SystemActivityMonitor.get_disk_io()
-        if disk_io > 50:
-            activities.append(f"Диск: {disk_io:.0f} MB")
-        
-        net_activity = SystemActivityMonitor.get_network_activity()
-        if net_activity > 20:
-            activities.append(f"Сеть: {net_activity:.0f} MB")
-        
-        processes = SystemActivityMonitor.get_running_processes()
-        if processes:
-            activities.append(f"Процессы: {len(processes)}")
-        
-        windows = SystemActivityMonitor.get_active_windows()
-        if windows:
-            activities.append(f"Окна: {windows[0][:20]}...")
-        
-        if activities:
-            return ", ".join(activities[:3])
-        return "Нет активности"
-
-
-class HardwareIDGenerator:
-    """Генератор уникального идентификатора компьютера"""
+    def mark_as_sent(self, file_name: str):
+        """Пометить файл как отправленный"""
+        sent_marker = self.markers_folder / f"sent_{file_name}"
+        try:
+            sent_marker.touch()
+        except:
+            pass
     
+    def mark_today_as_sent(self):
+        """Пометить сегодняшний файл как отправленный"""
+        if self.current_file:
+            self.mark_as_sent(self.current_file.name)
+    
+    def cleanup_old_files(self):
+        """Удалить файлы старше 2 дней (оставить только текущий и предыдущий)"""
+        try:
+            current_date = self.current_date
+            files_to_keep = set()
+            
+            # Добавляем текущий файл
+            if self.current_file:
+                files_to_keep.add(self.current_file.name)
+            
+            # Добавляем файл за вчерашний день
+            yesterday = current_date - timedelta(days=1)
+            yesterday_file = self.get_file_path_for_date(yesterday)
+            if yesterday_file.exists():
+                files_to_keep.add(yesterday_file.name)
+            
+            # Удаляем все остальные JSON файлы (не трогаем .markers)
+            for file_path in self.temps_folder.glob("*.json"):
+                if file_path.name not in files_to_keep:
+                    try:
+                        file_path.unlink()
+                        print(f"🗑️ Удален старый файл: {file_path.name}")
+                    except Exception as e:
+                        print(f"Ошибка удаления {file_path.name}: {e}")
+        except Exception as e:
+            print(f"Ошибка очистки старых файлов: {e}")
+    
+    def events_loaded_today(self) -> bool:
+        """Проверить, были ли загружены события за 24 часа в этом дне"""
+        result = self._events_loaded_date == self.current_date.isoformat() if self.current_date else False
+        print(f"📋 Проверка флага: загружены ли события для {self.current_date}? {result} (флаг: {self._events_loaded_date})")
+        return result
+    
+    def switch_to_new_day(self):
+        """Переключиться на новый день (вызывается в полночь)"""
+        print(f"🌙 Переключение на новый день")
+        # Помечаем текущий файл для отправки
+        self.mark_for_end_of_day_upload()
+        
+        # Очищаем флаг загрузки событий для нового дня
+        self._clear_events_flag()
+        
+        # Обновляем дату и создаем новый файл
+        self.current_date = datetime.now().date()
+        self.create_daily_file()
+
+
+# ==================== КЛАСС ДЛЯ СБОРА СОБЫТИЙ WINDOWS ====================
+class WindowsEventCollector:
+    """Класс для сбора событий из журнала Windows с разделением по severity"""
+    
+    # Для хранения последних номеров записей
+    _last_record_numbers = {}
+    
+    @staticmethod
+    def get_severity(event_type: int, event_id: int = None) -> str:
+        """Определить severity события"""
+        # Критические события
+        critical_event_ids = [1001, 1003, 1005, 1010, 1011, 1015, 1074, 1076, 1078, 1098, 1099, 1101]
+        
+        if event_type == win32evtlog.EVENTLOG_ERROR_TYPE:
+            if event_id in critical_event_ids:
+                return 'critical'
+            return 'error'
+        elif event_type == win32evtlog.EVENTLOG_WARNING_TYPE:
+            return 'warning'
+        elif event_type == win32evtlog.EVENTLOG_INFORMATION_TYPE:
+            return 'info'
+        elif event_type == win32evtlog.EVENTLOG_AUDIT_SUCCESS:
+            return 'info'
+        elif event_type == win32evtlog.EVENTLOG_AUDIT_FAILURE:
+            return 'warning'
+        return 'info'
+    
+    @staticmethod
+    def get_new_events(logs: List[str] = None) -> List[Dict]:
+        """Получить только новые события, которые появились с момента последнего сбора"""
+        if logs is None:
+            logs = ['System', 'Application']
+        
+        all_events = []
+        
+        for log_name in logs:
+            try:
+                hand = win32evtlog.OpenEventLog(None, log_name)
+                num_records = win32evtlog.GetNumberOfEventLogRecords(hand)
+                last_record = WindowsEventCollector._last_record_numbers.get(log_name, 0)
+                
+                if num_records > last_record:
+                    flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+                    records_to_read = num_records - last_record
+                    events_data = win32evtlog.ReadEventLog(hand, flags, records_to_read)
+                    
+                    if events_data:
+                        for event in reversed(events_data):
+                            severity = WindowsEventCollector.get_severity(event.EventType, event.EventID)
+                            
+                            message = ""
+                            try:
+                                message = win32evtlogutil.SafeFormatMessage(event, log_name)
+                            except:
+                                try:
+                                    if event.StringInserts:
+                                        message = ' '.join(event.StringInserts)
+                                    else:
+                                        message = f"Event ID: {event.EventID}, Source: {event.SourceName}"
+                                except:
+                                    message = f"Event ID: {event.EventID}"
+                            
+                            user_info = None
+                            if event.Sid is not None:
+                                try:
+                                    domain, user, typ = win32security.LookupAccountSid(None, event.Sid)
+                                    user_info = f"{domain}\\{user}"
+                                except:
+                                    user_info = str(event.Sid)
+                            
+                            event_data = {
+                                'log': log_name.lower(),
+                                'event_id': event.EventID,
+                                'source': event.SourceName,
+                                'severity': severity,
+                                'event_type': 'error' if severity in ['critical', 'error'] else severity,
+                                'time': event.TimeGenerated.strftime('%Y-%m-%d %H:%M:%S'),
+                                'message': message[:2000] if message else '',
+                                'category': event.EventCategory,
+                                'user': user_info,
+                                'record_number': event.RecordNumber
+                            }
+                            all_events.append(event_data)
+                    
+                    WindowsEventCollector._last_record_numbers[log_name] = num_records
+                
+                win32evtlog.CloseEventLog(hand)
+                
+            except Exception as e:
+                print(f"Ошибка чтения журнала {log_name}: {e}")
+        
+        return all_events
+    
+    @staticmethod
+    def get_all_events_last_24h() -> List[Dict]:
+        """Получить все события за последние 24 часа (при первом запуске дня)"""
+        logs = ['System', 'Application']
+        all_events = []
+        cutoff_time = datetime.now() - timedelta(hours=24)
+        
+        for log_name in logs:
+            try:
+                hand = win32evtlog.OpenEventLog(None, log_name)
+                num_records = win32evtlog.GetNumberOfEventLogRecords(hand)
+                WindowsEventCollector._last_record_numbers[log_name] = num_records
+                
+                flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+                
+                while True:
+                    events_data = win32evtlog.ReadEventLog(hand, flags, 0)
+                    if not events_data:
+                        break
+                    
+                    for event in events_data:
+                        event_time = event.TimeGenerated
+                        if event_time < cutoff_time:
+                            continue
+                        
+                        severity = WindowsEventCollector.get_severity(event.EventType, event.EventID)
+                        
+                        message = ""
+                        try:
+                            message = win32evtlogutil.SafeFormatMessage(event, log_name)
+                        except:
+                            try:
+                                if event.StringInserts:
+                                    message = ' '.join(event.StringInserts)
+                                else:
+                                    message = f"Event ID: {event.EventID}, Source: {event.SourceName}"
+                            except:
+                                message = f"Event ID: {event.EventID}"
+                        
+                        user_info = None
+                        if event.Sid is not None:
+                            try:
+                                domain, user, typ = win32security.LookupAccountSid(None, event.Sid)
+                                user_info = f"{domain}\\{user}"
+                            except:
+                                user_info = str(event.Sid)
+                        
+                        event_data = {
+                            'log': log_name.lower(),
+                            'event_id': event.EventID,
+                            'source': event.SourceName,
+                            'severity': severity,
+                            'event_type': 'error' if severity in ['critical', 'error'] else severity,
+                            'time': event_time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'message': message[:2000] if message else '',
+                            'category': event.EventCategory,
+                            'user': user_info,
+                            'record_number': event.RecordNumber
+                        }
+                        all_events.append(event_data)
+                        
+                        if len(all_events) > 5000:
+                            break
+                    
+                    if len(all_events) > 5000:
+                        break
+                
+                win32evtlog.CloseEventLog(hand)
+                
+            except Exception as e:
+                print(f"Ошибка чтения журнала {log_name}: {e}")
+        
+        return all_events
+
+
+# ==================== КЛАСС ДЛЯ СБОРА МЕТРИК СИСТЕМЫ ====================
+class SystemInfoCollector:
+    @staticmethod
+    def get_basic_info():
+        return {
+            "hostname": socket.gethostname(),
+            "ip_address": DatabaseManager.get_local_ip(),
+            "mac_address": HardwareIDGenerator.get_mac_address(),
+            "os_version": f"{platform.system()} {platform.release()}"
+        }
+    
+    @staticmethod
+    def get_performance_metrics():
+        try:
+            return {
+                "cpu_usage": psutil.cpu_percent(interval=1),
+                "ram_usage": psutil.virtual_memory().percent,
+                "ram_used_gb": round(psutil.virtual_memory().used / (1024**3), 2),
+                "ram_total_gb": round(psutil.virtual_memory().total / (1024**3), 2),
+                "disk_usage": psutil.disk_usage('/').percent,
+                "disk_used_gb": round(psutil.disk_usage('/').used / (1024**3), 2),
+                "disk_total_gb": round(psutil.disk_usage('/').total / (1024**3), 2),
+                "network_sent_mb": round(psutil.net_io_counters().bytes_sent / (1024**2), 2),
+                "network_recv_mb": round(psutil.net_io_counters().bytes_recv / (1024**2), 2),
+                "uptime_seconds": time.time() - psutil.boot_time()
+            }
+        except:
+            return {}
+
+
+# ==================== КЛАСС ДЛЯ ОТПРАВКИ В ОБЛАЧНОЕ ХРАНИЛИЩЕ ====================
+class CloudUploader:
+    def __init__(self):
+        self.ACCESS_KEY = "1TUFGD6LDS8S8DGRFYMU"
+        self.SECRET_KEY = "Vq3kZWM8HSxcxZNv4qLw9l63J80mj9fBsd80KumS"
+        self.ENDPOINT_URL = "https://s3.regru.cloud"
+        self.BUCKET_NAME = "metrics-errors-logs"
+        
+        self.s3 = None
+        self.temps_folder = Path(__file__).parent / "Temps"
+        self.markers_folder = self.temps_folder / ".markers"
+        
+        self.init_s3_client()
+    
+    def init_s3_client(self):
+        try:
+            self.s3 = boto3.client(
+                's3',
+                endpoint_url=self.ENDPOINT_URL,
+                aws_access_key_id=self.ACCESS_KEY,
+                aws_secret_access_key=self.SECRET_KEY,
+                config=Config(signature_version='s3v4')
+            )
+        except Exception as e:
+            print(f"Ошибка инициализации S3: {e}")
+            self.s3 = None
+    
+    def upload_file(self, file_path: Path) -> bool:
+        if not self.s3 or not file_path.exists():
+            return False
+        
+        try:
+            object_name = file_path.name
+            file_size = file_path.stat().st_size / 1024
+            
+            print(f"📤 Загрузка: {object_name} ({file_size:.1f} KB)")
+            self.s3.upload_file(str(file_path), self.BUCKET_NAME, object_name)
+            print(f"   ✅ {object_name} - загружен")
+            return True
+        except Exception as e:
+            print(f"   ❌ {object_name}: {e}")
+            return False
+    
+    def upload_end_of_day_files(self):
+        uploaded = 0
+        end_of_day_files = self.markers_folder.glob("endofday_*.json")
+        
+        for marker_file in end_of_day_files:
+            try:
+                with open(marker_file, 'r') as f:
+                    file_name = f.read().strip()
+                
+                file_path = self.temps_folder / file_name
+                sent_marker = self.markers_folder / f"sent_{file_name}"
+                
+                if file_path.exists() and not sent_marker.exists():
+                    if self.upload_file(file_path):
+                        sent_marker.touch()
+                        uploaded += 1
+                
+                marker_file.unlink()
+            except Exception as e:
+                print(f"Ошибка: {e}")
+        
+        return uploaded
+    
+    def upload_urgent_files(self):
+        uploaded = 0
+        urgent_files = self.markers_folder.glob("urgent_*.json")
+        
+        for marker_file in urgent_files:
+            try:
+                with open(marker_file, 'r') as f:
+                    file_name = f.read().strip()
+                
+                file_path = self.temps_folder / file_name
+                sent_marker = self.markers_folder / f"sent_{file_name}"
+                
+                if file_path.exists() and not sent_marker.exists():
+                    if self.upload_file(file_path):
+                        sent_marker.touch()
+                        uploaded += 1
+                
+                marker_file.unlink()
+            except Exception as e:
+                print(f"Ошибка: {e}")
+        
+        return uploaded
+    
+    def check_and_upload(self):
+        uploaded = 0
+        uploaded += self.upload_end_of_day_files()
+        uploaded += self.upload_urgent_files()
+        return uploaded
+
+
+# ==================== КЛАСС ДЛЯ РАБОТЫ С БД ====================
+class DatabaseManager:
+    DB_CONFIG = {
+        'host': '5.183.188.132',
+        'user': '2024_mysql_t_usr',
+        'password': 'uqnOzz3fbUqudcdM',
+        'db': '2024_mysql_tim',
+        'charset': 'utf8mb4',
+        'cursorclass': pymysql.cursors.DictCursor
+    }
+    
+    current_session_id = None
+    current_computer_id = None
+    
+    STATUS_ACTIVE = 1
+    STATUS_DISCONNECTED = 2
+    STATUS_TIMEOUT = 3
+    STATUS_ERROR = 4
+    STATUS_PENDING = 5
+    
+    @staticmethod
+    def get_connection():
+        try:
+            return pymysql.connect(**DatabaseManager.DB_CONFIG)
+        except Exception as e:
+            print(f"Ошибка подключения к БД: {e}")
+            return None
+    
+    @staticmethod
+    def set_current_session(computer_id, session_id):
+        DatabaseManager.current_computer_id = computer_id
+        DatabaseManager.current_session_id = session_id
+    
+    @staticmethod
+    def generate_session_token(computer_hostname: str) -> str:
+        clean_hostname = re.sub(r'[^a-zA-Z0-9_-]', '_', computer_hostname)
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        return f"{clean_hostname}_{timestamp}"
+    
+    @staticmethod
+    def create_session(computer_id: int, computer_hostname: str) -> Optional[int]:
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE session 
+                    SET status_id = %s,
+                        end_time = NOW()
+                    WHERE computer_id = %s AND status_id = %s
+                """, (DatabaseManager.STATUS_DISCONNECTED, computer_id, DatabaseManager.STATUS_ACTIVE))
+                
+                session_token = DatabaseManager.generate_session_token(computer_hostname)
+                
+                cursor.execute("""
+                    INSERT INTO session 
+                    (computer_id, session_token, start_time, status_id, json_sent_count, error_count)
+                    VALUES (%s, %s, NOW(), %s, 0, 0)
+                """, (computer_id, session_token, DatabaseManager.STATUS_ACTIVE))
+                
+                session_id = cursor.lastrowid
+                connection.commit()
+                print(f"✅ Создана сессия: id={session_id}, token={session_token}")
+                return session_id
+        except Exception as e:
+            print(f"Ошибка создания сессии: {e}")
+            return None
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def update_session_activity(session_id: int):
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE session 
+                    SET last_activity = NOW()
+                    WHERE session_id = %s
+                """, (session_id,))
+                connection.commit()
+        except Exception as e:
+            print(f"Ошибка обновления активности: {e}")
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def update_session_end(session_id: int, status_id: int = None):
+        if status_id is None:
+            status_id = DatabaseManager.STATUS_DISCONNECTED
+            
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE session 
+                    SET status_id = %s,
+                        end_time = NOW()
+                    WHERE session_id = %s
+                """, (status_id, session_id))
+                connection.commit()
+        except Exception as e:
+            print(f"Ошибка завершения сессии: {e}")
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def update_json_sent_count(session_id: int, count: int):
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE session 
+                    SET json_sent_count = json_sent_count + %s
+                    WHERE session_id = %s
+                """, (count, session_id))
+                connection.commit()
+        except:
+            pass
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def update_error_count(session_id: int, count: int):
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE session 
+                    SET error_count = error_count + %s
+                    WHERE session_id = %s
+                """, (count, session_id))
+                connection.commit()
+        except:
+            pass
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def get_or_create_os():
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                os_name = platform.system()
+                os_version = platform.release()
+                os_build = platform.version() if platform.system() == "Windows" else None
+                
+                os_arch = platform.machine()
+                if os_arch == "AMD64":
+                    os_arch = "x64"
+                elif os_arch == "ARM64":
+                    os_arch = "arm64"
+                else:
+                    os_arch = "x86"
+                
+                cursor.execute("""
+                    SELECT os_id FROM operating_system 
+                    WHERE os_name = %s AND os_version = %s
+                """, (os_name, os_version))
+                
+                os_record = cursor.fetchone()
+                
+                if os_record:
+                    return os_record['os_id']
+                else:
+                    cursor.execute("""
+                        INSERT INTO operating_system 
+                        (os_name, os_version, os_build, os_architecture)
+                        VALUES (%s, %s, %s, %s)
+                    """, (os_name, os_version, os_build, os_arch))
+                    os_id = cursor.lastrowid
+                    connection.commit()
+                    return os_id
+        except Exception as e:
+            print(f"Ошибка получения/создания OS: {e}")
+            return None
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def get_or_create_hardware_config() -> Optional[int]:
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                cpu_model = platform.processor() or "Unknown"
+                cpu_cores = psutil.cpu_count(logical=True)
+                ram_total = round(psutil.virtual_memory().total / (1024**3), 2)
+                storage_total = round(psutil.disk_usage('/').total / (1024**3), 2)
+                
+                gpu_model = "Unknown"
+                if platform.system() == "Windows":
+                    try:
+                        cmd = "wmic path win32_VideoController get name"
+                        output = subprocess.check_output(cmd, shell=True).decode()
+                        lines = output.strip().split('\n')
+                        if len(lines) > 1:
+                            gpu_model = lines[1].strip()
+                    except:
+                        pass
+                
+                cursor.execute("""
+                    SELECT config_id FROM hardware_config 
+                    WHERE cpu_model = %s AND cpu_cores = %s 
+                    AND ram_total = %s AND storage_total = %s
+                """, (cpu_model, cpu_cores, ram_total, storage_total))
+                
+                config = cursor.fetchone()
+                
+                if config:
+                    return config['config_id']
+                else:
+                    cursor.execute("""
+                        INSERT INTO hardware_config 
+                        (cpu_model, cpu_cores, ram_total, storage_total, gpu_model, detected_at)
+                        VALUES (%s, %s, %s, %s, %s, NOW())
+                    """, (cpu_model, cpu_cores, ram_total, storage_total, gpu_model))
+                    config_id = cursor.lastrowid
+                    connection.commit()
+                    return config_id
+        except Exception as e:
+            print(f"Ошибка получения/создания hardware config: {e}")
+            return None
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def update_ip_address(computer_id: int, ip_address: str):
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    INSERT INTO ip_address 
+                    (computer_id, ip_address, detected_at)
+                    VALUES (%s, %s, NOW())
+                """, (computer_id, ip_address))
+                ip_id = cursor.lastrowid
+                connection.commit()
+                return ip_id
+        except Exception as e:
+            print(f"Ошибка обновления IP: {e}")
+            return None
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def register_computer() -> Optional[Dict[str, Any]]:
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                hostname = socket.gethostname()
+                mac_address = HardwareIDGenerator.get_mac_address()
+                unique_hardware_id = HardwareIDGenerator.generate_unique_id()
+                
+                computer_login = f"comp_{unique_hardware_id[:16]}"
+                computer_password = unique_hardware_id
+                password_hash = hashlib.sha256(computer_password.encode()).hexdigest()
+                
+                cursor.execute("""
+                    SELECT c.computer_id, c.hostname, c.mac_address, cred.login, cred.password_hash
+                    FROM computer c
+                    INNER JOIN credential cred ON c.credential_id = cred.credential_id
+                    WHERE c.mac_address = %s
+                """, (mac_address,))
+                
+                existing = cursor.fetchone()
+                
+                if existing:
+                    if existing['password_hash'] == password_hash:
+                        cursor.execute("""
+                            UPDATE computer SET hostname = %s, last_online = NOW()
+                            WHERE computer_id = %s
+                        """, (hostname, existing['computer_id']))
+                        connection.commit()
+                        
+                        ip_address = DatabaseManager.get_local_ip()
+                        DatabaseManager.update_ip_address(existing['computer_id'], ip_address)
+                        session_id = DatabaseManager.create_session(existing['computer_id'], hostname)
+                        
+                        cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
+                        token_data = cursor.fetchone()
+                        session_token = token_data['session_token'] if token_data else None
+                        
+                        return {
+                            'computer_id': existing['computer_id'],
+                            'hostname': hostname,
+                            'mac_address': existing['mac_address'],
+                            'login': existing['login'],
+                            'password': computer_password,
+                            'is_new': False,
+                            'session_id': session_id,
+                            'session_token': session_token
+                        }
+                    return None
+                
+                cursor.execute("""
+                    INSERT INTO credential (login, password_hash, is_active, created_at)
+                    VALUES (%s, %s, 1, NOW())
+                """, (computer_login, password_hash))
+                credential_id = cursor.lastrowid
+                
+                os_id = DatabaseManager.get_or_create_os()
+                hardware_config_id = DatabaseManager.get_or_create_hardware_config()
+                
+                cursor.execute("""
+                    INSERT INTO computer 
+                    (credential_id, os_id, hardware_config_id, hostname, mac_address, computer_type, is_online, last_online, created_at)
+                    VALUES (%s, %s, %s, %s, %s, 'client', 1, NOW(), NOW())
+                """, (credential_id, os_id, hardware_config_id, hostname, mac_address))
+                computer_id = cursor.lastrowid
+                connection.commit()
+                
+                ip_address = DatabaseManager.get_local_ip()
+                DatabaseManager.update_ip_address(computer_id, ip_address)
+                session_id = DatabaseManager.create_session(computer_id, hostname)
+                
+                cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
+                token_data = cursor.fetchone()
+                session_token = token_data['session_token'] if token_data else None
+                
+                HardwareIDGenerator.save_credentials(computer_login, computer_password)
+                
+                return {
+                    'computer_id': computer_id,
+                    'hostname': hostname,
+                    'mac_address': mac_address,
+                    'login': computer_login,
+                    'password': computer_password,
+                    'is_new': True,
+                    'session_id': session_id,
+                    'session_token': session_token
+                }
+        except Exception as e:
+            print(f"Ошибка регистрации компьютера: {e}")
+            return None
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def authenticate_computer() -> Optional[Dict[str, Any]]:
+        unique_id = HardwareIDGenerator.generate_unique_id()
+        computer_login = f"comp_{unique_id[:16]}"
+        computer_password = unique_id
+        password_hash = hashlib.sha256(computer_password.encode()).hexdigest()
+        
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return None
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        c.computer_id, c.hostname, c.mac_address,
+                        cred.credential_id, cred.login,
+                        os.os_name, os.os_version
+                    FROM credential cred
+                    INNER JOIN computer c ON c.credential_id = cred.credential_id
+                    LEFT JOIN operating_system os ON c.os_id = os.os_id
+                    WHERE cred.login = %s AND cred.password_hash = %s AND cred.is_active = 1
+                """, (computer_login, password_hash))
+                
+                computer_data = cursor.fetchone()
+                
+                if computer_data:
+                    hostname = socket.gethostname()
+                    if computer_data['hostname'] != hostname:
+                        cursor.execute("""
+                            UPDATE computer SET hostname = %s, last_online = NOW()
+                            WHERE computer_id = %s
+                        """, (hostname, computer_data['computer_id']))
+                        connection.commit()
+                    
+                    ip_address = DatabaseManager.get_local_ip()
+                    DatabaseManager.update_ip_address(computer_data['computer_id'], ip_address)
+                    session_id = DatabaseManager.create_session(computer_data['computer_id'], hostname)
+                    
+                    cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
+                    token_data = cursor.fetchone()
+                    session_token = token_data['session_token'] if token_data else None
+                    
+                    return {
+                        'computer_id': computer_data['computer_id'],
+                        'hostname': hostname,
+                        'mac_address': computer_data['mac_address'],
+                        'login': computer_data['login'],
+                        'os_name': computer_data.get('os_name', 'Unknown'),
+                        'os_version': computer_data.get('os_version', 'Unknown'),
+                        'session_id': session_id,
+                        'session_token': session_token,
+                        'is_new': False
+                    }
+                return None
+        except Exception as e:
+            print(f"Ошибка аутентификации: {e}")
+            return None
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def update_computer_status(computer_id: int, is_online: bool, session_id: int = None):
+        connection = DatabaseManager.get_connection()
+        if not connection:
+            return
+        
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    UPDATE computer SET is_online = %s, last_online = NOW()
+                    WHERE computer_id = %s
+                """, (1 if is_online else 0, computer_id))
+                
+                if session_id and not is_online:
+                    DatabaseManager.update_session_end(session_id, DatabaseManager.STATUS_DISCONNECTED)
+                connection.commit()
+        except Exception as e:
+            print(f"Ошибка обновления статуса: {e}")
+        finally:
+            connection.close()
+    
+    @staticmethod
+    def get_local_ip() -> str:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "Unknown"
+
+
+# ==================== КЛАСС ДЛЯ ГЕНЕРАЦИИ HARDWARE ID ====================
+class HardwareIDGenerator:
     @staticmethod
     def get_cpu_serial():
         try:
@@ -401,11 +1306,8 @@ class HardwareIDGenerator:
         mac = HardwareIDGenerator.get_mac_address()
         disk = HardwareIDGenerator.get_disk_serial()
         motherboard = HardwareIDGenerator.get_motherboard_serial()
-        
         hardware_string = f"{cpu}{mac}{disk}{motherboard}"
-        unique_id = hashlib.sha256(hardware_string.encode()).hexdigest()
-        
-        return unique_id[:32]
+        return hashlib.sha256(hardware_string.encode()).hexdigest()[:32]
     
     @staticmethod
     def save_credentials(login: str, password: str):
@@ -424,525 +1326,438 @@ class HardwareIDGenerator:
             return None
 
 
-class DatabaseManager:
-    """Класс для работы с базой данных"""
+# ==================== КЛАСС АГЕНТА ====================
+class RemoteAgentThread(QThread):
+    log_message = pyqtSignal(str)
+    connection_status_changed = pyqtSignal(bool, int)
+    client_connected = pyqtSignal(str)
+    client_disconnected = pyqtSignal(str)
     
-    DB_CONFIG = {
-        'host': '5.183.188.132',
-        'user': '2024_mysql_t_usr',
-        'password': 'uqnOzz3fbUqudcdM',
-        'db': '2024_mysql_tim',
-        'charset': 'utf8mb4',
-        'cursorclass': pymysql.cursors.DictCursor
-    }
-    
-    current_session_id = None
-    current_computer_id = None
-    
-    @staticmethod
-    def get_connection():
-        try:
-            return pymysql.connect(**DatabaseManager.DB_CONFIG)
-        except Exception as e:
-            print(f"Ошибка подключения к БД: {e}")
-            return None
-    
-    @staticmethod
-    def set_current_session(computer_id, session_id):
-        """Сохранить текущую сессию для очистки при завершении"""
-        DatabaseManager.current_computer_id = computer_id
-        DatabaseManager.current_session_id = session_id
-    
-    @staticmethod
-    def create_session(computer_id: int) -> Optional[int]:
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return None
+    def __init__(self, relay_server, computer_data, screenshot_interval, quality=70):
+        super().__init__()
+        self.relay_server = relay_server
+        self.computer_data = computer_data
+        self.computer_id = computer_data['computer_id']
+        self.session_id = computer_data['session_id']
+        self.session_token = computer_data.get('session_token', '')
+        self.hostname = computer_data['hostname']
+        self.screenshot_interval = screenshot_interval
+        self.quality = quality
+        self.is_running = True
+        self.is_connected = False
+        self.connected_clients = 0
+        self.connected_clients_list = []
+        self.streaming_clients = set()
+        self.ws = None
+        self.sending_screenshots = False
+        
+        # Инициализируем JSON логгер с токеном сессии
+        self.json_logger = JSONLogger()
+        self.json_logger.set_session(self.hostname, self.session_token)
+        
+        # Инициализируем загрузчик в облако
+        self.cloud_uploader = CloudUploader()
+        
+        # Группировщик событий
+        self.event_grouper = EventGrouper()
+        
+        self.mouse = MouseController()
+        self.keyboard = KeyboardController()
         
         try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    UPDATE client_session 
-                    SET status_id = 3, end_time = NOW()
-                    WHERE computer_id = %s AND status_id IN (1, 2)
-                """, (computer_id,))
-                
-                session_token = hashlib.sha256(
-                    f"{computer_id}{datetime.now().isoformat()}{uuid.uuid4()}".encode()
-                ).hexdigest()
-                
-                cursor.execute("""
-                    INSERT INTO client_session 
-                    (computer_id, session_token, start_ip, start_method, status_id, last_heartbeat)
-                    VALUES (%s, %s, %s, 'auto_auth', 1, NOW())
-                """, (computer_id, session_token, DatabaseManager.get_local_ip()))
-                
-                session_id = cursor.lastrowid
-                connection.commit()
-                return session_id
-        except Exception as e:
-            print(f"Ошибка создания сессии: {e}")
-            return None
-        finally:
-            connection.close()
-    
-    @staticmethod
-    def update_heartbeat(session_id: int):
-        """Обновить heartbeat сессии"""
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return
-        
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    UPDATE client_session 
-                    SET last_heartbeat = NOW()
-                    WHERE session_id = %s
-                """, (session_id,))
-                connection.commit()
+            self.screen_width, self.screen_height = pyautogui.size()
         except:
-            pass
-        finally:
-            connection.close()
+            self.screen_width, self.screen_height = 1920, 1080
     
-    @staticmethod
-    def save_metrics(computer_id: int, session_id: int, metrics: Dict):
-        """Создает новую запись метрик в БД"""
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return False
-        
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO metric 
-                    (computer_id, session_id, cpu_usage, ram_usage, disk_usage, timestamp)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
-                """, (
-                    computer_id, session_id,
-                    metrics.get('cpu_usage', 0),
-                    metrics.get('ram_usage', 0),
-                    metrics.get('disk_usage', 0)
-                ))
-                
-                cursor.execute("""
-                    UPDATE client_session 
-                    SET metrics_count = metrics_count + 1,
-                        last_activity = NOW()
-                    WHERE session_id = %s
-                """, (session_id,))
-                
-                connection.commit()
-                print(f"✅ Сохранены метрики для сессии {session_id}: CPU={metrics.get('cpu_usage', 0)}%, RAM={metrics.get('ram_usage', 0)}%")
-                return True
-        except Exception as e:
-            print(f"Ошибка сохранения метрик: {e}")
-            return False
-        finally:
-            connection.close()
+    def update_settings(self, screenshot_interval=None, quality=None):
+        if screenshot_interval is not None:
+            self.screenshot_interval = screenshot_interval
+        if quality is not None:
+            self.quality = quality
     
-    @staticmethod
-    def get_or_create_os():
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return None
+    def run(self):
+        asyncio.run(self.agent_main())
+    
+    async def collect_initial_metrics_and_events(self):
+        """Сбор начальных метрик и событий Windows при старте сессии"""
+        # Собираем метрики всегда
+        metrics = SystemInfoCollector.get_performance_metrics()
+        self.json_logger.add_metric(metrics)
+        self.log_message.emit(f"📊 Начальные метрики: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%")
         
-        try:
-            with connection.cursor() as cursor:
-                os_name = platform.system()
-                os_version = platform.release()
-                os_build = None
+        # Собираем события Windows за последние 24 часа ТОЛЬКО если в этом дне еще не загружали
+        events_loaded = self.json_logger.events_loaded_today()
+        self.log_message.emit(f"📋 Проверка: события за 24 часа уже загружены? {events_loaded}")
+        
+        if not events_loaded:
+            self.log_message.emit("📋 Сбор событий Windows за последние 24 часа...")
+            events = WindowsEventCollector.get_all_events_last_24h()
+            
+            if events:
+                # Группируем повторяющиеся события
+                grouped_events = self.event_grouper.group_events(events)
                 
-                if platform.system() == "Windows":
-                    try:
-                        os_build = platform.version()
-                    except:
-                        pass
+                self.json_logger.add_windows_events(grouped_events, is_initial=True)
                 
-                os_arch = platform.machine()
-                if os_arch == "AMD64":
-                    os_arch = "x64"
-                elif os_arch == "ARM64":
-                    os_arch = "arm64"
-                else:
-                    os_arch = "x86"
+                critical = len([e for e in grouped_events if e.get('severity') == 'critical'])
+                errors = len([e for e in grouped_events if e.get('severity') == 'error'])
+                warnings = len([e for e in grouped_events if e.get('severity') == 'warning'])
+                grouped_count = len([e for e in grouped_events if e.get('is_grouped')])
                 
-                cursor.execute("""
-                    SELECT os_id FROM operating_system 
-                    WHERE os_name = %s AND os_version = %s
-                """, (os_name, os_version))
+                self.log_message.emit(f"📋 События Windows за 24 часа: всего {len(grouped_events)} записей (критических: {critical}, ошибок: {errors}, предупреждений: {warnings}, сгруппировано: {grouped_count})")
+            else:
+                self.log_message.emit("📋 События Windows: нет событий за последние 24 часа")
+        else:
+            self.log_message.emit("📋 События Windows уже загружены сегодня, пропускаем")
+    
+    async def collect_metrics_periodically(self):
+        """Периодический сбор метрик (каждые 30 минут)"""
+        while self.is_running:
+            try:
+                await asyncio.sleep(1800)  # 30 минут
                 
-                os_record = cursor.fetchone()
+                if not self.is_running:
+                    break
                 
-                if os_record:
-                    return os_record['os_id']
-                else:
-                    cursor.execute("""
-                        INSERT INTO operating_system 
-                        (os_name, os_version, os_build, os_architecture, is_supported)
-                        VALUES (%s, %s, %s, %s, 1)
-                    """, (os_name, os_version, os_build, os_arch))
+                metrics = SystemInfoCollector.get_performance_metrics()
+                self.json_logger.add_metric(metrics)
+                self.log_message.emit(f"📊 Метрики: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%")
+                
+            except Exception as e:
+                self.log_message.emit(f"Ошибка сбора метрик: {e}")
+    
+    async def collect_new_windows_events_periodically(self):
+        """Периодический сбор НОВЫХ событий Windows (каждые 30 минут)"""
+        while self.is_running:
+            try:
+                await asyncio.sleep(1800)  # 30 минут
+                
+                if not self.is_running:
+                    break
+                
+                # Собираем только новые события
+                self.log_message.emit("📋 Сбор новых событий Windows...")
+                events = WindowsEventCollector.get_new_events()
+                
+                if events:
+                    # Группируем повторяющиеся события
+                    grouped_events = self.event_grouper.group_events(events)
                     
-                    os_id = cursor.lastrowid
-                    connection.commit()
-                    return os_id
-        except:
-            return None
-        finally:
-            connection.close()
-    
-    @staticmethod
-    def update_ip_address(computer_id: int, ip_address: str):
-        """Обновить IP адрес компьютера"""
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return None
-        
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT ip_address, ip_id FROM ip_address 
-                    WHERE computer_id = %s AND is_current = 1
-                """, (computer_id,))
-                
-                current_ip = cursor.fetchone()
-                
-                if current_ip and current_ip['ip_address'] == ip_address:
-                    return current_ip['ip_id']
-                
-                if current_ip:
-                    cursor.execute("""
-                        UPDATE ip_address SET is_current = 0
-                        WHERE computer_id = %s AND is_current = 1
-                    """, (computer_id,))
-                
-                cursor.execute("""
-                    INSERT INTO ip_address 
-                    (computer_id, ip_address, interface_name, is_current, detected_at)
-                    VALUES (%s, %s, %s, 1, NOW())
-                """, (computer_id, ip_address, "Ethernet"))
-                
-                ip_id = cursor.lastrowid
-                
-                cursor.execute("""
-                    UPDATE computer SET ip_address_id = %s
-                    WHERE computer_id = %s
-                """, (ip_id, computer_id))
-                
-                connection.commit()
-                return ip_id
-        except:
-            return None
-        finally:
-            connection.close()
-    
-    @staticmethod
-    def update_hardware_config(computer_id: int):
-        """Обновить конфигурацию оборудования"""
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return
-        
-        try:
-            with connection.cursor() as cursor:
-                cpu_model = platform.processor() or "Unknown"
-                cpu_cores = psutil.cpu_count(logical=True)
-                ram = psutil.virtual_memory()
-                ram_total = round(ram.total / (1024**3), 2)
-                disk = psutil.disk_usage('/')
-                storage_total = round(disk.total / (1024**3), 2)
-                
-                gpu_model = "Unknown"
-                if platform.system() == "Windows":
-                    try:
-                        cmd = "wmic path win32_VideoController get name"
-                        output = subprocess.check_output(cmd, shell=True).decode()
-                        lines = output.strip().split('\n')
-                        if len(lines) > 1:
-                            gpu_model = lines[1].strip()
-                    except:
-                        pass
-                
-                cursor.execute("""
-                    SELECT cpu_model, cpu_cores, ram_total, storage_total, gpu_model 
-                    FROM hardware_config
-                    WHERE computer_id = %s
-                """, (computer_id,))
-                
-                current = cursor.fetchone()
-                
-                if current:
-                    if (current['cpu_model'] == cpu_model and 
-                        current['cpu_cores'] == cpu_cores and
-                        current['ram_total'] == ram_total and
-                        current['storage_total'] == storage_total and
-                        current['gpu_model'] == gpu_model):
-                        return
-                
-                if current:
-                    cursor.execute("""
-                        UPDATE hardware_config 
-                        SET cpu_model = %s, cpu_cores = %s, ram_total = %s, 
-                            storage_total = %s, gpu_model = %s, updated_at = NOW()
-                        WHERE computer_id = %s
-                    """, (cpu_model, cpu_cores, ram_total, storage_total, gpu_model, computer_id))
+                    self.json_logger.add_windows_events(grouped_events, is_initial=False)
+                    
+                    critical = len([e for e in grouped_events if e.get('severity') == 'critical'])
+                    errors = len([e for e in grouped_events if e.get('severity') == 'error'])
+                    warnings = len([e for e in grouped_events if e.get('severity') == 'warning'])
+                    grouped_count = len([e for e in grouped_events if e.get('is_grouped')])
+                    
+                    self.log_message.emit(f"📋 Новые события Windows: {len(grouped_events)} записей (критических: {critical}, ошибок: {errors}, предупреждений: {warnings}, сгруппировано: {grouped_count})")
                 else:
-                    cursor.execute("""
-                        INSERT INTO hardware_config 
-                        (computer_id, cpu_model, cpu_cores, ram_total, storage_total, gpu_model)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    """, (computer_id, cpu_model, cpu_cores, ram_total, storage_total, gpu_model))
+                    self.log_message.emit("📋 Новые события Windows: нет")
                 
-                connection.commit()
-        except:
-            pass
-        finally:
-            connection.close()
+            except Exception as e:
+                self.log_message.emit(f"Ошибка сбора событий Windows: {e}")
     
-    @staticmethod
-    def register_computer() -> Optional[Dict[str, Any]]:
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return None
+    async def update_activity_periodically(self):
+        """Обновление last_activity в БД (каждые 15 минут)"""
+        while self.is_running and self.is_connected:
+            try:
+                await asyncio.sleep(900)  # 15 минут
+                
+                if self.session_id:
+                    DatabaseManager.update_session_activity(self.session_id)
+                    self.log_message.emit("💓 Обновлена last_activity")
+                
+            except Exception as e:
+                self.log_message.emit(f"Ошибка обновления активности: {e}")
+    
+    async def check_and_upload_at_midnight(self):
+        """Проверка и отправка файлов в полночь"""
+        while self.is_running:
+            try:
+                now = datetime.now()
+                next_midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
+                seconds_until_midnight = (next_midnight - now).total_seconds()
+                
+                await asyncio.sleep(seconds_until_midnight)
+                
+                if not self.is_running:
+                    break
+                
+                # Полночь наступила - переключаемся на новый день
+                self.log_message.emit("🌙 Полночь - переключение на новый день")
+                
+                # Сохраняем старый файл для отправки и создаем новый
+                old_file = self.json_logger.current_file
+                self.json_logger.switch_to_new_day()
+                
+                # Помечаем старый файл для отправки
+                if old_file and old_file.exists():
+                    self.json_logger.mark_for_end_of_day_upload()
+                    self.log_message.emit(f"📁 Файл {old_file.name} помечен для отправки")
+                
+                # Отправляем все помеченные файлы
+                uploaded = self.cloud_uploader.check_and_upload()
+                if uploaded > 0:
+                    self.log_message.emit(f"☁️ Загружено {uploaded} файлов")
+                    DatabaseManager.update_json_sent_count(self.session_id, uploaded)
+                
+                # Теперь загружаем события за последние 24 часа для нового дня
+                self.log_message.emit("📋 Сбор событий Windows за последние 24 часа для нового дня...")
+                events = WindowsEventCollector.get_all_events_last_24h()
+                
+                if events:
+                    grouped_events = self.event_grouper.group_events(events)
+                    self.json_logger.add_windows_events(grouped_events, is_initial=True)
+                    
+                    critical = len([e for e in grouped_events if e.get('severity') == 'critical'])
+                    errors = len([e for e in grouped_events if e.get('severity') == 'error'])
+                    warnings = len([e for e in grouped_events if e.get('severity') == 'warning'])
+                    self.log_message.emit(f"📋 События за 24 часа для нового дня: {len(grouped_events)} (критических: {critical}, ошибок: {errors}, предупреждений: {warnings})")
+                
+            except Exception as e:
+                self.log_message.emit(f"Ошибка проверки полуночи: {e}")
+    
+    async def check_and_upload_on_startup(self):
+        """Проверка и отправка файлов при запуске"""
+        uploaded = self.cloud_uploader.check_and_upload()
+        if uploaded > 0:
+            self.log_message.emit(f"☁️ Загружено {uploaded} файлов из прошлых сессий")
+            DatabaseManager.update_json_sent_count(self.session_id, uploaded)
+    
+    async def check_urgent_upload(self):
+        """Проверка срочных отправок (при аномалиях)"""
+        while self.is_running:
+            try:
+                await asyncio.sleep(60)  # Проверяем каждую минуту
+                
+                uploaded = self.cloud_uploader.check_and_upload()
+                if uploaded > 0:
+                    self.log_message.emit(f"⚡ Срочная отправка: {uploaded} файлов")
+                    
+            except Exception as e:
+                pass
+    
+    async def agent_main(self):
+        reconnect_delay = 5
         
-        try:
-            with connection.cursor() as cursor:
-                hostname = socket.gethostname()
-                mac_address = HardwareIDGenerator.get_mac_address()
-                unique_hardware_id = HardwareIDGenerator.generate_unique_id()
-                
-                computer_login = f"comp_{unique_hardware_id[:16]}"
-                computer_password = unique_hardware_id
-                password_hash = hashlib.sha256(computer_password.encode()).hexdigest()
-                
-                cursor.execute("""
-                    SELECT c.computer_id, c.hostname, c.mac_address, cred.login, cred.password_hash
-                    FROM computer c
-                    INNER JOIN credential cred ON c.credential_id = cred.credential_id
-                    WHERE c.mac_address = %s
-                """, (mac_address,))
-                
-                existing = cursor.fetchone()
-                
-                if existing:
-                    if existing['password_hash'] == password_hash:
-                        if existing['hostname'] != hostname:
-                            cursor.execute("""
-                                UPDATE computer SET hostname = %s
-                                WHERE computer_id = %s
-                            """, (hostname, existing['computer_id']))
-                            connection.commit()
-                        
-                        ip_address = DatabaseManager.get_local_ip()
-                        DatabaseManager.update_ip_address(existing['computer_id'], ip_address)
-                        DatabaseManager.update_hardware_config(existing['computer_id'])
-                        
-                        session_id = DatabaseManager.create_session(existing['computer_id'])
-                        
-                        # Сохраняем начальные метрики при создании сессии
-                        if session_id:
-                            metrics = SystemInfoCollector.get_performance_metrics()
-                            DatabaseManager.save_metrics(existing['computer_id'], session_id, metrics)
-                        
-                        return {
-                            'computer_id': existing['computer_id'],
-                            'hostname': hostname,
-                            'mac_address': existing['mac_address'],
-                            'login': existing['login'],
-                            'password': computer_password,
-                            'is_new': False,
-                            'session_id': session_id
+        # Проверяем и отправляем файлы при старте
+        await self.check_and_upload_on_startup()
+        
+        # Собираем начальные метрики и события Windows
+        await self.collect_initial_metrics_and_events()
+        
+        # Запускаем периодические задачи
+        tasks = [
+            asyncio.create_task(self.collect_metrics_periodically()),
+            asyncio.create_task(self.collect_new_windows_events_periodically()),
+            asyncio.create_task(self.update_activity_periodically()),
+            asyncio.create_task(self.check_and_upload_at_midnight()),
+            asyncio.create_task(self.check_urgent_upload())
+        ]
+        
+        while self.is_running:
+            try:
+                async with websockets.connect(self.relay_server) as ws:
+                    self.ws = ws
+                    self.is_connected = True
+                    
+                    # Регистрация агента
+                    register_msg = {
+                        "type": "register_agent",
+                        "data": {
+                            "computer_id": self.computer_id,
+                            "session_id": self.session_id,
+                            "session_token": self.session_token,
+                            "agent_id": self.hostname,
+                            "hostname": self.hostname
                         }
-                    return None
-                
-                cursor.execute("""
-                    INSERT INTO credential (login, password_hash, credential_type, is_active)
-                    VALUES (%s, %s, 'computer', 1)
-                """, (computer_login, password_hash))
-                credential_id = cursor.lastrowid
-                
-                os_id = DatabaseManager.get_or_create_os()
-                
-                cursor.execute("""
-                    INSERT INTO computer 
-                    (credential_id, os_id, hostname, mac_address, is_online, first_seen, last_online)
-                    VALUES (%s, %s, %s, %s, 1, NOW(), NOW())
-                """, (credential_id, os_id, hostname, mac_address))
-                computer_id = cursor.lastrowid
-                
-                connection.commit()
-                
-                ip_address = DatabaseManager.get_local_ip()
-                DatabaseManager.update_ip_address(computer_id, ip_address)
-                DatabaseManager.update_hardware_config(computer_id)
-                
-                session_id = DatabaseManager.create_session(computer_id)
-                
-                # Сохраняем начальные метрики для новой сессии
-                if session_id:
-                    metrics = SystemInfoCollector.get_performance_metrics()
-                    DatabaseManager.save_metrics(computer_id, session_id, metrics)
-                
-                HardwareIDGenerator.save_credentials(computer_login, computer_password)
-                
-                return {
-                    'computer_id': computer_id,
-                    'hostname': hostname,
-                    'mac_address': mac_address,
-                    'login': computer_login,
-                    'password': computer_password,
-                    'is_new': True,
-                    'session_id': session_id
-                }
-        except:
-            return None
-        finally:
-            connection.close()
-    
-    @staticmethod
-    def authenticate_computer() -> Optional[Dict[str, Any]]:
-        unique_id = HardwareIDGenerator.generate_unique_id()
-        computer_login = f"comp_{unique_id[:16]}"
-        computer_password = unique_id
-        password_hash = hashlib.sha256(computer_password.encode()).hexdigest()
-        
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return None
-        
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT 
-                        c.computer_id, c.hostname, c.mac_address,
-                        cred.credential_id, cred.login,
-                        os.os_name, os.os_version
-                    FROM credential cred
-                    INNER JOIN computer c ON c.credential_id = cred.credential_id
-                    LEFT JOIN operating_system os ON c.os_id = os.os_id
-                    WHERE cred.login = %s AND cred.password_hash = %s
-                        AND cred.credential_type = 'computer' AND cred.is_active = 1
-                """, (computer_login, password_hash))
-                
-                computer_data = cursor.fetchone()
-                
-                if computer_data:
-                    hostname = socket.gethostname()
-                    if computer_data['hostname'] != hostname:
-                        cursor.execute("""
-                            UPDATE computer SET hostname = %s
-                            WHERE computer_id = %s
-                        """, (hostname, computer_data['computer_id']))
-                        connection.commit()
-                    
-                    ip_address = DatabaseManager.get_local_ip()
-                    DatabaseManager.update_ip_address(computer_data['computer_id'], ip_address)
-                    DatabaseManager.update_hardware_config(computer_data['computer_id'])
-                    
-                    session_id = DatabaseManager.create_session(computer_data['computer_id'])
-                    
-                    # Сохраняем начальные метрики для сессии
-                    if session_id:
-                        metrics = SystemInfoCollector.get_performance_metrics()
-                        DatabaseManager.save_metrics(computer_data['computer_id'], session_id, metrics)
-                    
-                    return {
-                        'computer_id': computer_data['computer_id'],
-                        'hostname': hostname,
-                        'mac_address': computer_data['mac_address'],
-                        'login': computer_data['login'],
-                        'os_name': computer_data.get('os_name', 'Unknown'),
-                        'os_version': computer_data.get('os_version', 'Unknown'),
-                        'session_id': session_id,
-                        'is_new': False
                     }
-                return None
-        except:
-            return None
-        finally:
-            connection.close()
-    
-    @staticmethod
-    def update_computer_status(computer_id: int, is_online: bool, session_id: int = None):
-        """Обновить статус компьютера и завершить сессию"""
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return
+                    await ws.send(json.dumps(register_msg))
+                    self.log_message.emit(f"✅ Зарегистрирован на сервере")
+                    
+                    self.connection_status_changed.emit(True, self.connected_clients)
+                    
+                    # Основной цикл приема команд
+                    await self.receive_commands(ws)
+                    
+            except Exception as e:
+                self.log_message.emit(f"❌ Ошибка подключения: {e}")
+            
+            self.is_connected = False
+            self.connection_status_changed.emit(False, 0)
+            
+            if self.is_running:
+                await asyncio.sleep(reconnect_delay)
         
+        # Останавливаем задачи
+        for task in tasks:
+            task.cancel()
+    
+    async def send_system_info(self, ws):
         try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    UPDATE computer SET is_online = %s, last_online = NOW()
-                    WHERE computer_id = %s
-                """, (1 if is_online else 0, computer_id))
+            system_info = {
+                "basic": SystemInfoCollector.get_basic_info(),
+                "metrics": SystemInfoCollector.get_performance_metrics(),
+                "timestamp": datetime.now().isoformat(),
+                "computer_id": self.computer_id,
+                "session_token": self.session_token
+            }
+            
+            message = {
+                "type": "system_info",
+                "data": system_info,
+                "computer_id": self.computer_id,
+                "agent_id": self.hostname
+            }
+            
+            await ws.send(json.dumps(message))
+            return True
+        except Exception as e:
+            self.log_message.emit(f"Ошибка отправки system_info: {e}")
+            return False
+    
+    async def screenshot_loop(self, ws):
+        self.sending_screenshots = True
+        
+        while self.sending_screenshots and self.is_connected and len(self.streaming_clients) > 0:
+            try:
+                start_time = time.time()
                 
-                if session_id:
-                    cursor.execute("""
-                        UPDATE client_session 
-                        SET status_id = 3, end_time = NOW()
-                        WHERE session_id = %s
-                    """, (session_id,))
-                elif not is_online:
-                    cursor.execute("""
-                        UPDATE client_session 
-                        SET status_id = 3, end_time = NOW()
-                        WHERE computer_id = %s AND status_id IN (1, 2)
-                    """, (computer_id,))
+                with mss.mss() as sct:
+                    monitor = sct.monitors[1]
+                    sct_img = sct.grab(monitor)
+                    img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                    
+                    buffer = BytesIO()
+                    img.save(buffer, format="JPEG", quality=self.quality, optimize=True)
+                    img_data = buffer.getvalue()
+                    img_b64 = base64.b64encode(img_data).decode()
+                    
+                    message = {
+                        "type": "screenshot",
+                        "data": img_b64,
+                        "computer_id": self.computer_id,
+                        "agent_id": self.hostname
+                    }
+                    
+                    await ws.send(json.dumps(message))
                 
-                connection.commit()
+                elapsed = time.time() - start_time
+                sleep_time = max(0, self.screenshot_interval - elapsed)
+                
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+                    
+            except Exception as e:
+                self.log_message.emit(f"Ошибка в screenshot_loop: {e}")
+                break
+        
+        self.sending_screenshots = False
+    
+    async def receive_commands(self, ws):
+        try:
+            async for msg in ws:
+                data = json.loads(msg)
+                cmd_type = data.get("type")
+                client_id = data.get("client_id", "unknown")
+                
+                if cmd_type == "register_client":
+                    if client_id not in self.connected_clients_list:
+                        self.connected_clients += 1
+                        self.connected_clients_list.append(client_id)
+                        self.connection_status_changed.emit(True, self.connected_clients)
+                        self.client_connected.emit(client_id)
+                        await self.send_system_info(ws)
+                
+                elif cmd_type == "start_stream":
+                    self.streaming_clients.add(client_id)
+                    if not self.sending_screenshots and len(self.streaming_clients) > 0:
+                        asyncio.create_task(self.screenshot_loop(ws))
+                
+                elif cmd_type == "stop_stream":
+                    if client_id in self.streaming_clients:
+                        self.streaming_clients.remove(client_id)
+                    if len(self.streaming_clients) == 0:
+                        self.sending_screenshots = False
+                
+                elif cmd_type == "request_system_info":
+                    await self.send_system_info(ws)
+                
+                elif cmd_type == "mouse_move":
+                    await self.handle_mouse_move(data.get("data", {}))
+                
+                elif cmd_type == "mouse_click":
+                    await self.handle_mouse_click(data.get("data", {}))
+                
+                elif cmd_type == "mouse_wheel":
+                    await self.handle_mouse_wheel(data.get("data", {}))
+                
+                elif cmd_type == "keyboard_input":
+                    await self.handle_keyboard_input(data.get("data", {}))
+                
+        except Exception as e:
+            self.log_message.emit(f"Ошибка в receive_commands: {e}")
+    
+    async def handle_mouse_move(self, command_data):
+        try:
+            x = command_data.get("x")
+            y = command_data.get("y")
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
         except:
             pass
-        finally:
-            connection.close()
     
-    @staticmethod
-    def update_session_activity(session_id: int, data_sent: int = 0, data_received: int = 0, 
-                                force: bool = False, activity_desc: str = None):
-        """Обновить активность сессии"""
-        connection = DatabaseManager.get_connection()
-        if not connection:
-            return
-        
+    async def handle_mouse_click(self, command_data):
         try:
-            with connection.cursor() as cursor:
-                if force or data_sent > 0 or data_received > 0:
-                    cursor.execute("""
-                        UPDATE client_session 
-                        SET last_activity = NOW(),
-                            last_heartbeat = NOW(),
-                            data_sent = data_sent + %s,
-                            data_received = data_received + %s
-                        WHERE session_id = %s
-                    """, (data_sent, data_received, session_id))
+            button_name = command_data.get("button", "left")
+            x = command_data.get("x")
+            y = command_data.get("y")
+            
+            if x is not None and y is not None:
+                self.mouse.position = (x, y)
+                await asyncio.sleep(0.01)
+            
+            button = Button.left if button_name == "left" else Button.right
+            self.mouse.click(button)
+        except:
+            pass
+    
+    async def handle_mouse_wheel(self, command_data):
+        try:
+            delta = command_data.get("delta", 0)
+            self.mouse.scroll(0, delta)
+        except:
+            pass
+    
+    async def handle_keyboard_input(self, command_data):
+        try:
+            text = command_data.get("text", "")
+            if text:
+                if text == '\b':
+                    self.keyboard.press(Key.backspace)
+                    self.keyboard.release(Key.backspace)
+                elif text == '\r' or text == '\n':
+                    self.keyboard.press(Key.enter)
+                    self.keyboard.release(Key.enter)
                 else:
-                    cursor.execute("""
-                        UPDATE client_session 
-                        SET last_activity = NOW(),
-                            last_heartbeat = NOW()
-                        WHERE session_id = %s
-                    """, (session_id,))
-                
-                connection.commit()
+                    self.keyboard.type(text)
         except:
             pass
-        finally:
-            connection.close()
     
-    @staticmethod
-    def get_local_ip() -> str:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except:
-            return "Unknown"
+    def stop(self):
+        self.log_message.emit("🛑 Остановка агента...")
+        self.is_running = False
+        self.is_connected = False
+        self.streaming_clients.clear()
+        self.connected_clients_list.clear()
+        self.sending_screenshots = False
+        
+        DatabaseManager.update_computer_status(self.computer_id, False, self.session_id)
+        self.log_message.emit(f"✅ Агент остановлен")
 
 
+# ==================== ДИАЛОГ АВТОРИЗАЦИИ ====================
 class AutoAuthDialog(QDialog):
-    """Диалог автоматической авторизации"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.auth_success = False
@@ -954,13 +1769,8 @@ class AutoAuthDialog(QDialog):
     def init_ui(self):
         self.setFixedSize(450, 350)
         self.setStyleSheet("""
-            QDialog {
-                background-color: white;
-                border-radius: 10px;
-            }
-            QLabel {
-                color: #333333;
-            }
+            QDialog { background-color: white; border-radius: 10px; }
+            QLabel { color: #333333; }
         """)
         
         layout = QVBoxLayout(self)
@@ -974,7 +1784,6 @@ class AutoAuthDialog(QDialog):
         title.setStyleSheet("color: white; font-size: 18px; font-weight: bold; padding: 15px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_layout.addWidget(title)
-        
         layout.addWidget(title_frame)
         
         info_frame = QFrame()
@@ -995,7 +1804,6 @@ class AutoAuthDialog(QDialog):
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         info_label.setWordWrap(True)
         info_layout.addWidget(info_label)
-        
         layout.addWidget(info_frame)
         
         self.progress_bar = QProgressBar()
@@ -1046,7 +1854,8 @@ class AutoAuthDialog(QDialog):
                         "Регистрация успешна",
                         f"Компьютер зарегистрирован!\n\n"
                         f"ID: {computer_data['computer_id']}\n"
-                        f"Логин: {computer_data['login']}\n\n"
+                        f"Логин: {computer_data['login']}\n"
+                        f"Токен сессии: {computer_data.get('session_token', 'N/A')}\n\n"
                         f"Данные сохранены в:\n~/remote_access_credentials.txt"
                     )
                 
@@ -1062,8 +1871,8 @@ class AutoAuthDialog(QDialog):
             QTimer.singleShot(3000, self.reject)
 
 
+# ==================== ДИАЛОГ НАСТРОЕК ====================
 class SettingsDialog(QDialog):
-    """Диалог настроек"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Настройки")
@@ -1078,54 +1887,32 @@ class SettingsDialog(QDialog):
         
         conn_tab = QWidget()
         conn_layout = QFormLayout(conn_tab)
-        
         self.server_edit = QLineEdit()
         self.server_edit.setPlaceholderText("ws://127.0.0.1:9001")
         conn_layout.addRow("Сервер:", self.server_edit)
-        
         tab_widget.addTab(conn_tab, "Подключение")
         
         stream_tab = QWidget()
         stream_layout = QFormLayout(stream_tab)
-        
         self.quality_spin = QSpinBox()
         self.quality_spin.setRange(30, 100)
         self.quality_spin.setSuffix("%")
         stream_layout.addRow("Качество JPEG:", self.quality_spin)
-        
         self.fps_spin = QDoubleSpinBox()
         self.fps_spin.setRange(1, 60)
         self.fps_spin.setSingleStep(1)
         self.fps_spin.setSuffix(" FPS")
         stream_layout.addRow("Частота кадров:", self.fps_spin)
-        
         tab_widget.addTab(stream_tab, "Трансляция")
         
         system_tab = QWidget()
         system_layout = QFormLayout(system_tab)
-        
         self.auto_start_check = QCheckBox("Запускать при загрузке Windows")
         system_layout.addRow(self.auto_start_check)
-        
         self.minimize_to_tray_check = QCheckBox("Сворачивать в трей при закрытии")
         system_layout.addRow(self.minimize_to_tray_check)
-        
         self.auto_reconnect_check = QCheckBox("Автоматически подключаться к серверу")
         system_layout.addRow(self.auto_reconnect_check)
-        
-        self.disconnect_btn = QPushButton("🔌 ОТКЛЮЧИТЬСЯ ОТ СЕРВЕРА")
-        self.disconnect_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e74c3c;
-                padding: 10px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #c0392b;
-            }
-        """)
-        system_layout.addRow(self.disconnect_btn)
-        
         tab_widget.addTab(system_tab, "Система")
         
         layout.addWidget(tab_widget)
@@ -1160,11 +1947,7 @@ class SettingsDialog(QDialog):
     
     def add_to_startup(self):
         try:
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Run",
-                0, winreg.KEY_SET_VALUE
-            )
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
             winreg.SetValueEx(key, "RemoteAccessAgent", 0, winreg.REG_SZ, sys.executable + " " + __file__)
             winreg.CloseKey(key)
         except:
@@ -1172,428 +1955,25 @@ class SettingsDialog(QDialog):
     
     def remove_from_startup(self):
         try:
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Run",
-                0, winreg.KEY_SET_VALUE
-            )
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
             winreg.DeleteValue(key, "RemoteAccessAgent")
             winreg.CloseKey(key)
         except:
             pass
 
 
-class SystemInfoCollector:
-    @staticmethod
-    def get_basic_info():
-        return {
-            "hostname": socket.gethostname(),
-            "ip_address": DatabaseManager.get_local_ip(),
-            "mac_address": HardwareIDGenerator.get_mac_address(),
-            "os_version": f"{platform.system()} {platform.release()}"
-        }
-    
-    @staticmethod
-    def get_hardware_config():
-        try:
-            return {
-                "cpu_model": platform.processor() or "Unknown",
-                "cpu_cores": psutil.cpu_count(logical=True),
-                "ram_total": round(psutil.virtual_memory().total / (1024**3), 2),
-                "storage_total": round(psutil.disk_usage('/').total / (1024**3), 2),
-                "gpu_model": "Unknown"
-            }
-        except:
-            return {}
-    
-    @staticmethod
-    def get_performance_metrics():
-        try:
-            return {
-                "cpu_usage": psutil.cpu_percent(interval=0.5),
-                "ram_usage": psutil.virtual_memory().percent,
-                "ram_used_gb": round(psutil.virtual_memory().used / (1024**3), 2),
-                "ram_total_gb": round(psutil.virtual_memory().total / (1024**3), 2),
-                "disk_usage": psutil.disk_usage('/').percent,
-                "disk_used_gb": round(psutil.disk_usage('/').used / (1024**3), 2),
-                "disk_total_gb": round(psutil.disk_usage('/').total / (1024**3), 2),
-                "timestamp": datetime.now().isoformat()
-            }
-        except:
-            return {}
-
-
-class RemoteAgentThread(QThread):
-    log_message = pyqtSignal(str)
-    connection_status_changed = pyqtSignal(bool, int)
-    client_connected = pyqtSignal(str)
-    client_disconnected = pyqtSignal(str)
-    activity_status = pyqtSignal(str)
-    
-    def __init__(self, relay_server, computer_data, screenshot_interval, quality=70):
-        super().__init__()
-        self.relay_server = relay_server
-        self.computer_data = computer_data
-        self.computer_id = computer_data['computer_id']
-        self.session_id = computer_data['session_id']
-        self.hostname = computer_data['hostname']
-        self.screenshot_interval = screenshot_interval
-        self.quality = quality
-        self.is_running = True
-        self.is_connected = False
-        self.connected_clients = 0
-        self.connected_clients_list = []
-        self.streaming_clients = set()
-        self.ws = None
-        self.sending_screenshots = False
-        self.heartbeat_task = None
-        self.activity_task = None
-        self.metrics_task = None  # Задача для сбора метрик
-        
-        self.mouse = MouseController()
-        self.keyboard = KeyboardController()
-        
-        try:
-            self.screen_width, self.screen_height = pyautogui.size()
-        except:
-            self.screen_width, self.screen_height = 1920, 1080
-        
-        self.KEY_MAPPING = {
-            'enter': Key.enter, 'space': Key.space, 'tab': Key.tab,
-            'backspace': Key.backspace, 'escape': Key.esc, 'esc': Key.esc,
-            'up': Key.up, 'down': Key.down, 'left': Key.left, 'right': Key.right,
-            'delete': Key.delete, 'home': Key.home, 'end': Key.end,
-        }
-    
-    def update_settings(self, screenshot_interval=None, quality=None):
-        if screenshot_interval is not None:
-            self.screenshot_interval = screenshot_interval
-        if quality is not None:
-            self.quality = quality
-    
-    def run(self):
-        asyncio.run(self.agent_main())
-    
-    def start_heartbeat_updater(self):
-        """Запускает периодическое обновление heartbeat (каждые 10 минут)"""
-        async def update_heartbeat_periodically():
-            while self.is_connected and self.is_running:
-                try:
-                    await asyncio.sleep(600)  # 10 минут
-                    if self.is_connected and self.session_id:
-                        DatabaseManager.update_heartbeat(self.session_id)
-                        self.log_message.emit("Обновлен heartbeat сессии")
-                except:
-                    pass
-        
-        self.heartbeat_task = asyncio.create_task(update_heartbeat_periodically())
-    
-    def start_activity_updater(self):
-        """Запускает периодическое обновление активности (каждые 15 минут)"""
-        async def update_activity_periodically():
-            while self.is_connected and self.is_running:
-                try:
-                    await asyncio.sleep(900)  # 15 минут
-                    
-                    if self.is_connected and self.session_id:
-                        is_active = SystemActivityMonitor.is_system_active()
-                        activity_desc = SystemActivityMonitor.get_activity_description()
-                        
-                        if is_active:
-                            DatabaseManager.update_session_activity(
-                                self.session_id, 
-                                force=True,
-                                activity_desc=activity_desc
-                            )
-                            self.activity_status.emit(f"🟢 Система активна: {activity_desc}")
-                            self.log_message.emit(f"Обновлена активность: {activity_desc}")
-                        else:
-                            self.activity_status.emit("🟡 Система неактивна")
-                            self.log_message.emit("Система неактивна")
-                            
-                except Exception as e:
-                    self.log_message.emit(f"Ошибка обновления активности: {e}")
-        
-        self.activity_task = asyncio.create_task(update_activity_periodically())
-    
-    def start_metrics_collector(self):
-        """Запускает периодический сбор метрик (каждые 15 минут)"""
-        async def collect_metrics_periodically():
-            # Ждем 15 минут перед первым сбором
-            await asyncio.sleep(900)  # 15 минут
-            
-            while self.is_connected and self.is_running:
-                try:
-                    if self.is_connected and self.session_id:
-                        # Получаем текущие метрики
-                        metrics = SystemInfoCollector.get_performance_metrics()
-                        # Создаем новую запись в БД
-                        DatabaseManager.save_metrics(self.computer_id, self.session_id, metrics)
-                        self.log_message.emit(f"📊 Сохранены метрики: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%, DISK={metrics['disk_usage']}%")
-                        
-                        # Ждем еще 15 минут
-                        await asyncio.sleep(900)
-                except Exception as e:
-                    self.log_message.emit(f"Ошибка сбора метрик: {e}")
-                    await asyncio.sleep(300)  # При ошибке ждем 5 минут и пробуем снова
-        
-        self.metrics_task = asyncio.create_task(collect_metrics_periodically())
-    
-    def stop_updaters(self):
-        """Останавливает периодические обновления"""
-        if self.heartbeat_task:
-            self.heartbeat_task.cancel()
-        if self.activity_task:
-            self.activity_task.cancel()
-        if self.metrics_task:
-            self.metrics_task.cancel()
-    
-    async def agent_main(self):
-        reconnect_delay = 5
-        while self.is_running:
-            try:
-                async with websockets.connect(self.relay_server) as ws:
-                    self.ws = ws
-                    
-                    # Запускаем все периодические задачи
-                    self.start_heartbeat_updater()
-                    self.start_activity_updater()
-                    self.start_metrics_collector()  # Запускаем сбор метрик каждые 15 минут
-                    
-                    # Регистрация агента
-                    register_msg = {
-                        "type": "register_agent",
-                        "data": {
-                            "computer_id": self.computer_id,
-                            "session_id": self.session_id,
-                            "agent_id": self.hostname,
-                            "hostname": self.hostname
-                        }
-                    }
-                    await ws.send(json.dumps(register_msg))
-                    self.log_message.emit(f"Регистрация агента: computer_id={self.computer_id}, session_id={self.session_id}")
-                    
-                    self.is_connected = True
-                    self.connection_status_changed.emit(True, self.connected_clients)
-                    self.log_message.emit(f"Подключен к серверу")
-                    
-                    await self.receive_commands(ws)
-                    
-            except Exception as e:
-                self.log_message.emit(f"Ошибка: {e}")
-            
-            self.is_connected = False
-            self.connection_status_changed.emit(False, 0)
-            
-            # Останавливаем все задачи
-            self.stop_updaters()
-            
-            if self.is_running:
-                await asyncio.sleep(reconnect_delay)
-    
-    async def send_system_info(self, ws):
-        try:
-            system_info = {
-                "basic": SystemInfoCollector.get_basic_info(),
-                "hardware": SystemInfoCollector.get_hardware_config(),
-                "metrics": SystemInfoCollector.get_performance_metrics(),
-                "timestamp": datetime.now().isoformat(),
-                "computer_id": self.computer_id,
-                "session_id": self.session_id
-            }
-            
-            # Отправляем информацию клиенту (НЕ сохраняем в БД, так как это запрос клиента)
-            message = {
-                "type": "system_info",
-                "data": system_info,
-                "computer_id": self.computer_id,
-                "agent_id": self.hostname
-            }
-            
-            await ws.send(json.dumps(message))
-            self.log_message.emit(f"Отправлена system_info клиенту")
-            return True
-        except Exception as e:
-            self.log_message.emit(f"Ошибка отправки system_info: {e}")
-            return False
-    
-    async def screenshot_loop(self, ws):
-        self.sending_screenshots = True
-        frame_count = 0
-        
-        while self.sending_screenshots and self.is_connected and len(self.streaming_clients) > 0:
-            try:
-                start_time = time.time()
-                
-                with mss.mss() as sct:
-                    monitor = sct.monitors[1]
-                    sct_img = sct.grab(monitor)
-                    img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
-                    
-                    buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=self.quality, optimize=True)
-                    img_data = buffer.getvalue()
-                    img_b64 = base64.b64encode(img_data).decode()
-                    
-                    message = {
-                        "type": "screenshot",
-                        "data": img_b64,
-                        "computer_id": self.computer_id,
-                        "agent_id": self.hostname
-                    }
-                    
-                    await ws.send(json.dumps(message))
-                    frame_count += 1
-                    
-                    if frame_count % 30 == 0:
-                        DatabaseManager.update_session_activity(self.session_id, data_sent=len(img_data))
-                
-                elapsed = time.time() - start_time
-                sleep_time = max(0, self.screenshot_interval - elapsed)
-                
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time)
-                    
-            except Exception as e:
-                self.log_message.emit(f"Ошибка в screenshot_loop: {e}")
-                break
-        
-        self.sending_screenshots = False
-    
-    async def receive_commands(self, ws):
-        try:
-            async for msg in ws:
-                data = json.loads(msg)
-                cmd_type = data.get("type")
-                client_id = data.get("client_id", "unknown")
-                
-                self.log_message.emit(f"Получена команда: {cmd_type} от {client_id}")
-                
-                if cmd_type == "register_client":
-                    if client_id not in self.connected_clients_list:
-                        self.connected_clients += 1
-                        self.connected_clients_list.append(client_id)
-                        self.connection_status_changed.emit(True, self.connected_clients)
-                        self.client_connected.emit(client_id)
-                        await self.send_system_info(ws)
-                
-                elif cmd_type == "start_stream":
-                    self.streaming_clients.add(client_id)
-                    self.log_message.emit(f"Клиент {client_id} начал стриминг")
-                    
-                    if not self.sending_screenshots and len(self.streaming_clients) > 0:
-                        asyncio.create_task(self.screenshot_loop(ws))
-                
-                elif cmd_type == "stop_stream":
-                    if client_id in self.streaming_clients:
-                        self.streaming_clients.remove(client_id)
-                        self.log_message.emit(f"Клиент {client_id} остановил стриминг")
-                    
-                    if len(self.streaming_clients) == 0:
-                        self.sending_screenshots = False
-                
-                elif cmd_type == "request_system_info":
-                    self.log_message.emit(f"Запрос system_info от {client_id}")
-                    await self.send_system_info(ws)
-                
-                elif cmd_type == "mouse_move":
-                    await self.handle_mouse_move(data.get("data", {}))
-                
-                elif cmd_type == "mouse_click":
-                    await self.handle_mouse_click(data.get("data", {}))
-                
-                elif cmd_type == "mouse_wheel":
-                    await self.handle_mouse_wheel(data.get("data", {}))
-                
-                elif cmd_type == "keyboard_input":
-                    await self.handle_keyboard_input(data.get("data", {}))
-                
-                DatabaseManager.update_session_activity(self.session_id, data_received=len(msg))
-                    
-        except Exception as e:
-            self.log_message.emit(f"Ошибка в receive_commands: {e}")
-    
-    async def handle_mouse_move(self, command_data):
-        try:
-            x = command_data.get("x")
-            y = command_data.get("y")
-            if x is not None and y is not None:
-                self.mouse.position = (x, y)
-        except:
-            pass
-    
-    async def handle_mouse_click(self, command_data):
-        try:
-            button_name = command_data.get("button", "left")
-            x = command_data.get("x")
-            y = command_data.get("y")
-            
-            if x is not None and y is not None:
-                self.mouse.position = (x, y)
-                time.sleep(0.01)
-            
-            button = Button.left if button_name == "left" else Button.right
-            self.mouse.click(button)
-        except:
-            pass
-    
-    async def handle_mouse_wheel(self, command_data):
-        try:
-            delta = command_data.get("delta", 0)
-            self.mouse.scroll(0, delta)
-        except:
-            pass
-    
-    async def handle_keyboard_input(self, command_data):
-        try:
-            text = command_data.get("text", "")
-            if text:
-                if text == '\b':
-                    self.keyboard.press(Key.backspace)
-                    self.keyboard.release(Key.backspace)
-                elif text == '\r' or text == '\n':
-                    self.keyboard.press(Key.enter)
-                    self.keyboard.release(Key.enter)
-                elif text == '\t':
-                    self.keyboard.press(Key.tab)
-                    self.keyboard.release(Key.tab)
-                else:
-                    self.keyboard.type(text)
-        except:
-            pass
-    
-    def stop(self):
-        self.is_running = False
-        self.is_connected = False
-        self.streaming_clients.clear()
-        self.connected_clients_list.clear()
-        self.sending_screenshots = False
-        self.stop_updaters()
-        
-        DatabaseManager.update_computer_status(self.computer_id, False, self.session_id)
-        self.log_message.emit(f"Агент остановлен: computer_id={self.computer_id}")
-
-
+# ==================== ГЛАВНОЕ ОКНО ====================
 class RemoteAgentWindow(QMainWindow):
     def __init__(self, computer_data):
         super().__init__()
         self.computer_data = computer_data
         self.agent_thread = None
         self.tray_icon = None
-        self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self.update_system_data)
-        self.update_timer.start(1800000)  # 30 минут
         
-        # Сохраняем текущую сессию
-        if computer_data.get('session_id'):
-            DatabaseManager.set_current_session(
-                computer_data['computer_id'], 
-                computer_data['session_id']
-            )
+        DatabaseManager.set_current_session(computer_data['computer_id'], computer_data['session_id'])
         
         self.init_ui()
         self.load_settings()
-        self.update_system_data()
         
         if self.auto_reconnect:
             QTimer.singleShot(1000, self.connect_to_server)
@@ -1601,13 +1981,41 @@ class RemoteAgentWindow(QMainWindow):
         if self.minimize_to_tray:
             self.hide()
             self.create_tray_icon()
-        
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     
     def init_ui(self):
         self.setWindowTitle("Remote Access Agent")
         self.setGeometry(300, 300, 550, 450)
-        self.setStyleSheet(APP_STYLE)
+        self.setStyleSheet("""
+            QMainWindow { background-color: #f5f5f5; }
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #ff8c42;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: white;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                color: #ff8c42;
+            }
+            QPushButton {
+                background-color: #ff8c42;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #ff6b2c; }
+            QLineEdit, QTextEdit {
+                border: 1px solid #ff8c42;
+                border-radius: 4px;
+                padding: 5px;
+            }
+        """)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -1631,29 +2039,25 @@ class RemoteAgentWindow(QMainWindow):
         self.settings_btn.setFixedSize(40, 40)
         self.settings_btn.setStyleSheet("""
             QPushButton {
-                background-color: rgba(255, 255, 255, 0.2);
+                background-color: rgba(255,255,255,0.2);
                 color: white;
                 font-size: 20px;
                 border-radius: 20px;
-                padding: 0px;
             }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.3);
-            }
+            QPushButton:hover { background-color: rgba(255,255,255,0.3); }
         """)
         self.settings_btn.clicked.connect(self.open_settings)
         header_layout.addWidget(self.settings_btn)
         header_layout.setContentsMargins(10, 5, 15, 5)
-        
         main_layout.addWidget(header_frame)
         
         info_group = QGroupBox("ИНФОРМАЦИЯ О СИСТЕМЕ")
         info_layout = QVBoxLayout()
-        info_layout.setSpacing(10)
         
         self.computer_label = QLabel()
         self.computer_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #ff8c42;")
         self.computer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.computer_label.setText(f"🖥️ {self.computer_data['hostname']}")
         info_layout.addWidget(self.computer_label)
         
         status_frame = QFrame()
@@ -1666,7 +2070,6 @@ class RemoteAgentWindow(QMainWindow):
         status_layout.addWidget(self.status_label)
         
         info_layout.addWidget(status_frame)
-        
         info_group.setLayout(info_layout)
         main_layout.addWidget(info_group)
         
@@ -1677,13 +2080,6 @@ class RemoteAgentWindow(QMainWindow):
         self.log_text.setFont(QFont("Consolas", 9))
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(200)
-        self.log_text.setStyleSheet("""
-            QTextEdit {
-                border: 1px solid #ff8c42;
-                border-radius: 5px;
-                background-color: #fafafa;
-            }
-        """)
         log_layout.addWidget(self.log_text)
         
         log_group.setLayout(log_layout)
@@ -1700,31 +2096,15 @@ class RemoteAgentWindow(QMainWindow):
                 background-color: #e74c3c;
                 padding: 8px;
             }
-            QPushButton:hover {
-                background-color: #c0392b;
-            }
+            QPushButton:hover { background-color: #c0392b; }
         """)
         self.exit_btn.clicked.connect(self.quit_application)
         exit_layout.addWidget(self.exit_btn)
-        
         main_layout.addWidget(exit_frame)
         
         self.status_bar = QStatusBar()
-        self.status_bar.setStyleSheet("background-color: #f0f0f0; color: #666666;")
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Готов к работе")
-        
-        self.update_computer_info()
-    
-    def update_computer_info(self):
-        computer_name = self.computer_data['hostname']
-        self.computer_label.setText(f"🖥️ {computer_name}")
-    
-    def update_system_data(self):
-        if self.computer_data.get('computer_id'):
-            ip = DatabaseManager.get_local_ip()
-            DatabaseManager.update_ip_address(self.computer_data['computer_id'], ip)
-            DatabaseManager.update_hardware_config(self.computer_data['computer_id'])
     
     def create_tray_icon(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -1738,7 +2118,6 @@ class RemoteAgentWindow(QMainWindow):
         self.tray_icon.setToolTip("Remote Access Agent")
         
         tray_menu = QMenu()
-        
         show_action = QAction("👁 Показать окно", self)
         show_action.triggered.connect(self.show_window)
         tray_menu.addAction(show_action)
@@ -1765,36 +2144,6 @@ class RemoteAgentWindow(QMainWindow):
     def tray_icon_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_window()
-    
-    def quit_application(self):
-        reply = QMessageBox.question(
-            self, 
-            "Подтверждение", 
-            "Вы уверены, что хотите выйти?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            if self.agent_thread:
-                self.agent_thread.stop()
-                self.agent_thread.wait(2000)
-            if self.computer_data.get('computer_id'):
-                DatabaseManager.update_computer_status(
-                    self.computer_data['computer_id'], 
-                    False, 
-                    self.computer_data.get('session_id')
-                )
-            QApplication.quit()
-    
-    def show_about(self):
-        QMessageBox.about(
-            self,
-            "О программе",
-            "<h3 style='color: #ff8c42;'>Remote Access Agent</h3>"
-            "<p>Версия: 2.0.0</p>"
-            "<p>Автоматическая регистрация компьютера в системе</p>"
-            "<p>Мониторинг системной активности</p>"
-            "<p>© Remote Access System</p>"
-        )
     
     def load_settings(self):
         settings = QSettings("RemoteAccess", "Agent")
@@ -1842,22 +2191,8 @@ class RemoteAgentWindow(QMainWindow):
         self.agent_thread.connection_status_changed.connect(self.on_connection_status_changed)
         self.agent_thread.client_connected.connect(self.on_client_connected)
         self.agent_thread.client_disconnected.connect(self.on_client_disconnected)
-        self.agent_thread.activity_status.connect(self.update_activity_status)
         
         self.agent_thread.start()
-    
-    def disconnect_from_server(self):
-        if self.agent_thread:
-            self.agent_thread.stop()
-            self.agent_thread.wait(2000)
-            self.agent_thread = None
-        self.log("Отключен от сервера")
-        self.status_label.setText("● Не подключен")
-        self.status_label.setStyleSheet("font-size: 13px; color: #e74c3c; font-weight: bold;")
-    
-    def update_activity_status(self, status):
-        if hasattr(self, 'activity_label'):
-            self.activity_label.setText(f"📊 {status}")
     
     def on_connection_status_changed(self, is_connected, clients_count):
         if is_connected:
@@ -1891,6 +2226,22 @@ class RemoteAgentWindow(QMainWindow):
     def on_client_disconnected(self, client_id):
         self.log(f"❌ Клиент отключился: {client_id}")
     
+    def quit_application(self):
+        reply = QMessageBox.question(
+            self, "Подтверждение", "Вы уверены, что хотите выйти?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.agent_thread:
+                self.agent_thread.stop()
+                self.agent_thread.wait(3000)
+            if self.computer_data.get('computer_id'):
+                DatabaseManager.update_computer_status(
+                    self.computer_data['computer_id'], False,
+                    self.computer_data.get('session_id')
+                )
+            QApplication.quit()
+    
     def closeEvent(self, event):
         if self.minimize_to_tray and self.tray_icon:
             event.ignore()
@@ -1898,37 +2249,38 @@ class RemoteAgentWindow(QMainWindow):
         else:
             if self.agent_thread:
                 self.agent_thread.stop()
-                self.agent_thread.wait(2000)
+                self.agent_thread.wait(3000)
             if self.computer_data.get('computer_id'):
                 DatabaseManager.update_computer_status(
-                    self.computer_data['computer_id'], 
-                    False, 
+                    self.computer_data['computer_id'], False,
                     self.computer_data.get('session_id')
                 )
             event.accept()
 
 
+# ==================== ТОЧКА ВХОДА ====================
 def main():
+    # Сначала создаем QApplication
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     app.setApplicationName("Remote Access Agent")
-    app.setWindowIcon(QIcon())
     
-    def on_about_to_quit():
-        if hasattr(app, 'window') and app.window:
-            if app.window.computer_data.get('computer_id'):
-                DatabaseManager.update_computer_status(
-                    app.window.computer_data['computer_id'], 
-                    False, 
-                    app.window.computer_data.get('session_id')
-                )
-    
-    app.aboutToQuit.connect(on_about_to_quit)
+    # Проверяем права администратора
+    if not is_admin():
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setWindowTitle("Требуются права администратора")
+        msg.setText("Для сбора событий из журнала Windows требуются права администратора.")
+        msg.setInformativeText("Перезапустить программу с правами администратора?")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if msg.exec() == QMessageBox.StandardButton.Yes:
+            run_as_admin()
+            sys.exit(0)
     
     auth_dialog = AutoAuthDialog()
     if auth_dialog.exec() == QDialog.DialogCode.Accepted:
         window = RemoteAgentWindow(auth_dialog.computer_data)
-        app.window = window
         window.show()
         sys.exit(app.exec())
     else:

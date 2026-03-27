@@ -1,6 +1,8 @@
 import json
 import re
 import threading
+import sys
+import os
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from typing import List, Dict
@@ -8,16 +10,23 @@ from typing import List, Dict
 from utils.constants import ANOMALY_THRESHOLDS
 
 
+def get_base_path() -> Path:
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    else:
+        return Path(__file__).parent.parent
+
+
 class JSONLogger:
     
     def __init__(self, temps_folder: str = None):
         if temps_folder is None:
-            base_path = Path(__file__).parent.parent
+            base_path = get_base_path()
             self.temps_folder = base_path / "temps"
         else:
             self.temps_folder = Path(temps_folder)
         
-        self.temps_folder.mkdir(exist_ok=True)
+        self.temps_folder.mkdir(parents=True, exist_ok=True)
         
         self.current_file = None
         self.current_date = None
@@ -29,7 +38,7 @@ class JSONLogger:
         self.anomaly_threshold = ANOMALY_THRESHOLDS
         
         self.markers_folder = self.temps_folder / ".markers"
-        self.markers_folder.mkdir(exist_ok=True)
+        self.markers_folder.mkdir(parents=True, exist_ok=True)
         
         self.events_info_file = self.markers_folder / "events_collection_info.json"
         self._load_events_info()
@@ -98,8 +107,8 @@ class JSONLogger:
             with self.lock:
                 with open(self.current_file, 'w', encoding='utf-8') as f:
                     json.dump(records, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"Ошибка сохранения JSON файла: {e}")
+        except Exception:
+            pass
     
     def load_records(self) -> List[Dict]:
         if not self.current_file or not self.current_file.exists():
@@ -135,6 +144,7 @@ class JSONLogger:
     
     def add_windows_events(self, events: List[Dict], is_initial: bool = False):
         records = self.load_records()
+        MAX_RECORDS = 2000
         
         for event in events:
             if event.get('is_grouped'):
@@ -151,7 +161,7 @@ class JSONLogger:
                         'first_time': event.get('first_time'),
                         'last_time': event.get('last_time'),
                         'count': event.get('count'),
-                        'message': event.get('message'),
+                        'message': event.get('message')[:300] if event.get('message') else '',
                         'category': event.get('category'),
                         'user': event.get('user')
                     }
@@ -168,12 +178,15 @@ class JSONLogger:
                         'source': event.get('source'),
                         'severity': event.get('severity'),
                         'event_type': event.get('event_type'),
-                        'message': event.get('message', ''),
+                        'message': event.get('message', '')[:300],
                         'category': event.get('category', 0),
                         'user': event.get('user', None)
                     }
                 }
             records.append(record)
+        
+        if len(records) > MAX_RECORDS:
+            records = records[-MAX_RECORDS:]
         
         self.save_records(records)
         

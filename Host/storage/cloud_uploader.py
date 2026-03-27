@@ -1,10 +1,17 @@
 import json
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
 from pathlib import Path
+import sys
 
 from utils.constants import CLOUD_CONFIG
+
+
+def get_base_path() -> Path:
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    else:
+        return Path(__file__).parent.parent
 
 
 class CloudUploader:
@@ -16,8 +23,12 @@ class CloudUploader:
         self.bucket_name = CLOUD_CONFIG['bucket_name']
         
         self.s3 = None
-        self.temps_folder = Path(__file__).parent.parent / "temps"
+        base_path = get_base_path()
+        self.temps_folder = base_path / "temps"
         self.markers_folder = self.temps_folder / ".markers"
+        
+        self.temps_folder.mkdir(parents=True, exist_ok=True)
+        self.markers_folder.mkdir(parents=True, exist_ok=True)
         
         self.init_s3_client()
     
@@ -28,8 +39,7 @@ class CloudUploader:
                 endpoint_url=self.endpoint_url,
                 aws_access_key_id=self.access_key,
                 aws_secret_access_key=self.secret_key,
-                config=Config(signature_version='s3v4'),
-                verify=True
+                config=Config(signature_version='s3v4')
             )
         except Exception as e:
             print(f"Ошибка инициализации S3: {e}")
@@ -41,33 +51,10 @@ class CloudUploader:
         
         try:
             object_name = file_path.name
-            self.s3.upload_file(
-                str(file_path), 
-                self.bucket_name, 
-                object_name,
-                ExtraArgs={'ContentType': 'application/json'}
-            )
-            
-            try:
-                self.s3.head_object(Bucket=self.bucket_name, Key=object_name)
-                return True
-            except ClientError:
-                return False
-                    
+            self.s3.upload_file(str(file_path), self.bucket_name, object_name)
+            return True
         except Exception:
             return False
-    
-    def list_bucket_files(self):
-        if not self.s3:
-            return []
-        
-        try:
-            response = self.s3.list_objects_v2(Bucket=self.bucket_name)
-            if 'Contents' in response:
-                return [obj['Key'] for obj in response['Contents']]
-            return []
-        except Exception:
-            return []
     
     def upload_end_of_day_files(self) -> int:
         uploaded = 0
@@ -87,8 +74,7 @@ class CloudUploader:
                         uploaded += 1
                         marker_file.unlink()
                 else:
-                    if not file_path.exists() or sent_marker.exists():
-                        marker_file.unlink()
+                    marker_file.unlink()
             except Exception:
                 pass
         

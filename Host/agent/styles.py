@@ -29,6 +29,22 @@ QPushButton {
 QPushButton:hover { background-color: #ff6b2c; }
 QPushButton:pressed { background-color: #e55a1a; }
 
+QPushButton#settingsButton {
+    background-color: rgba(255,255,255,0.2);
+    color: white;
+    font-size: 20px;
+    border-radius: 20px;
+    padding: 0px;
+    margin: 0px;
+    font-weight: normal;
+}
+QPushButton#settingsButton:hover { 
+    background-color: rgba(255,255,255,0.3); 
+}
+QPushButton#settingsButton:pressed { 
+    background-color: rgba(255,255,255,0.4); 
+}
+
 QLineEdit, QTextEdit {
     border: 1px solid #ff8c42;
     border-radius: 4px;

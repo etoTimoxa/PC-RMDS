@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any, List
 from ctypes import wintypes
 import threading
 import boto3
+from pathlib import Path
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QLabel, QPushButton, QTextEdit, QGroupBox, 
@@ -67,7 +68,6 @@ class RemoteAgentThread(QThread):
         self.ws = None
         self.sending_screenshots = False
         
-        # Инициализация компонентов
         self.json_logger = JSONLogger()
         self.json_logger.set_session(self.hostname, self.session_token)
         self.cloud_uploader = CloudUploader()
@@ -91,147 +91,89 @@ class RemoteAgentThread(QThread):
         asyncio.run(self.agent_main())
     
     async def collect_initial_metrics_and_events(self):
-        """Сбор начальных метрик и событий Windows"""
-        # Метрики
         metrics = SystemInfoCollector.get_performance_metrics()
         self.json_logger.add_metric(metrics)
-        self.log_message.emit(f"📊 Начальные метрики: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%")
         
-        # События Windows (только если еще не загружены сегодня)
-        if not self.json_logger.events_loaded_today():
-            self.log_message.emit("📋 Сбор событий Windows за последние 24 часа...")
-            events = WindowsEventCollector.get_all_events_last_24h()
-            
+        if self.json_logger.should_collect_events():
+            events = WindowsEventCollector.get_events_last_30min()
             if events:
                 grouped_events = self.event_grouper.group_events(events)
                 self.json_logger.add_windows_events(grouped_events, is_initial=True)
-                
-                critical = len([e for e in grouped_events if e.get('severity') == 'critical'])
-                errors = len([e for e in grouped_events if e.get('severity') == 'error'])
-                warnings = len([e for e in grouped_events if e.get('severity') == 'warning'])
-                self.log_message.emit(f"📋 События Windows: {len(grouped_events)} (критических: {critical}, ошибок: {errors}, предупреждений: {warnings})")
-            else:
-                self.log_message.emit("📋 События Windows: нет")
-        else:
-            self.log_message.emit("📋 События Windows уже загружены сегодня")
     
     async def collect_metrics_periodically(self):
-        """Периодический сбор метрик"""
         while self.is_running:
             try:
                 await asyncio.sleep(METRICS_INTERVAL)
                 if not self.is_running:
                     break
-                
                 metrics = SystemInfoCollector.get_performance_metrics()
                 self.json_logger.add_metric(metrics)
-                self.log_message.emit(f"📊 Метрики: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%")
             except Exception as e:
                 self.log_message.emit(f"Ошибка сбора метрик: {e}")
     
     async def collect_new_windows_events_periodically(self):
-        """Периодический сбор новых событий Windows"""
         while self.is_running:
             try:
                 await asyncio.sleep(WINDOWS_EVENTS_INTERVAL)
                 if not self.is_running:
                     break
-                
-                self.log_message.emit("📋 Сбор новых событий Windows...")
                 events = WindowsEventCollector.get_new_events()
-                
                 if events:
                     grouped_events = self.event_grouper.group_events(events)
                     self.json_logger.add_windows_events(grouped_events, is_initial=False)
-                    
-                    critical = len([e for e in grouped_events if e.get('severity') == 'critical'])
-                    errors = len([e for e in grouped_events if e.get('severity') == 'error'])
-                    warnings = len([e for e in grouped_events if e.get('severity') == 'warning'])
-                    self.log_message.emit(f"📋 Новые события: {len(grouped_events)} (критических: {critical}, ошибок: {errors}, предупреждений: {warnings})")
-                else:
-                    self.log_message.emit("📋 Новых событий Windows: нет")
             except Exception as e:
-                self.log_message.emit(f"Ошибка сбора событий: {e}")
+                self.log_message.emit(f"Ошибка сбора событий Windows: {e}")
     
     async def update_activity_periodically(self):
-        """Обновление last_activity в БД"""
         while self.is_running and self.is_connected:
             try:
                 await asyncio.sleep(ACTIVITY_UPDATE_INTERVAL)
                 if self.session_id:
                     DatabaseManager.update_session_activity(self.session_id)
-                    self.log_message.emit("💓 Обновлена last_activity")
             except Exception as e:
                 self.log_message.emit(f"Ошибка обновления активности: {e}")
     
     async def check_and_upload_at_midnight(self):
-        """Проверка и отправка файлов в полночь"""
         while self.is_running:
             try:
                 now = datetime.now()
                 next_midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
                 seconds_until_midnight = (next_midnight - now).total_seconds()
-                
-                self.log_message.emit(f"⏰ До полуночи: {seconds_until_midnight:.0f} секунд")
                 await asyncio.sleep(seconds_until_midnight)
                 
                 if not self.is_running:
                     break
                 
-                self.log_message.emit("🌙 Полночь - начинаем обработку")
-                
-                # 1. Сначала переключаемся на новый день (это помечает старый файл для отправки)
                 self.json_logger.switch_to_new_day()
-                
-                # 2. Отправляем все помеченные файлы
                 uploaded = self.cloud_uploader.check_and_upload()
                 if uploaded > 0:
-                    self.log_message.emit(f"☁️ Загружено {uploaded} файлов в облако")
                     DatabaseManager.update_json_sent_count(self.session_id, uploaded)
                 
-                # 3. Загружаем события за последние 24 часа для нового дня
-                self.log_message.emit("📋 Сбор событий Windows для нового дня...")
-                events = WindowsEventCollector.get_all_events_last_24h()
-                
+                events = WindowsEventCollector.get_events_last_30min()
                 if events:
                     grouped_events = self.event_grouper.group_events(events)
                     self.json_logger.add_windows_events(grouped_events, is_initial=True)
-                    
-                    critical = len([e for e in grouped_events if e.get('severity') == 'critical'])
-                    errors = len([e for e in grouped_events if e.get('severity') == 'error'])
-                    warnings = len([e for e in grouped_events if e.get('severity') == 'warning'])
-                    self.log_message.emit(f"📋 События для нового дня: {len(grouped_events)} (критических: {critical}, ошибок: {errors}, предупреждений: {warnings})")
-                else:
-                    self.log_message.emit("📋 Новых событий Windows за 24 часа нет")
                 
-                # 4. Сохраняем первую метрику нового дня
                 metrics = SystemInfoCollector.get_performance_metrics()
                 self.json_logger.add_metric(metrics)
-                self.log_message.emit(f"📊 Первая метрика нового дня: CPU={metrics['cpu_usage']}%, RAM={metrics['ram_usage']}%")
                 
             except Exception as e:
-                self.log_message.emit(f"❌ Ошибка проверки полуночи: {e}")
+                self.log_message.emit(f"Ошибка проверки полуночи: {e}")
     
     async def check_and_upload_on_startup(self):
-        """Проверка и отправка файлов при запуске"""
         uploaded = self.cloud_uploader.check_and_upload()
         if uploaded > 0:
-            self.log_message.emit(f"☁️ Загружено {uploaded} файлов из прошлых сессий")
             DatabaseManager.update_json_sent_count(self.session_id, uploaded)
     
     async def check_urgent_upload(self):
-        """Проверка срочных отправок"""
         while self.is_running:
             try:
                 await asyncio.sleep(60)
-                uploaded = self.cloud_uploader.check_and_upload()
-                if uploaded > 0:
-                    self.log_message.emit(f"⚡ Срочная отправка: {uploaded} файлов")
+                self.cloud_uploader.check_and_upload()
             except:
                 pass
     
     async def agent_main(self):
-        """Основной цикл агента"""
         reconnect_delay = 5
         
         await self.check_and_upload_on_startup()
@@ -265,10 +207,11 @@ class RemoteAgentThread(QThread):
                     self.log_message.emit(f"✅ Зарегистрирован на сервере")
                     
                     self.connection_status_changed.emit(True, self.connected_clients)
+                    
                     await self.receive_commands(ws)
                     
             except Exception as e:
-                self.log_message.emit(f"❌ Ошибка подключения: {e}")
+                self.log_message.emit(f"Ошибка подключения: {e}")
             
             self.is_connected = False
             self.connection_status_changed.emit(False, 0)
@@ -280,7 +223,6 @@ class RemoteAgentThread(QThread):
             task.cancel()
     
     async def send_system_info(self, ws):
-        """Отправить системную информацию"""
         try:
             system_info = {
                 "basic": SystemInfoCollector.get_basic_info(),
@@ -304,7 +246,6 @@ class RemoteAgentThread(QThread):
             return False
     
     async def screenshot_loop(self, ws):
-        """Цикл отправки скриншотов"""
         self.sending_screenshots = True
         
         while self.sending_screenshots and self.is_connected and len(self.streaming_clients) > 0:
@@ -342,7 +283,6 @@ class RemoteAgentThread(QThread):
         self.sending_screenshots = False
     
     async def receive_commands(self, ws):
-        """Прием и обработка команд"""
         try:
             async for msg in ws:
                 data = json.loads(msg)
@@ -433,7 +373,6 @@ class RemoteAgentThread(QThread):
             pass
     
     def stop(self):
-        """Остановка агента"""
         self.log_message.emit("🛑 Остановка агента...")
         self.is_running = False
         self.is_connected = False
@@ -446,13 +385,14 @@ class RemoteAgentThread(QThread):
 
 
 class RemoteAgentWindow(QMainWindow):
-    """Главное окно агента"""
     
     def __init__(self, computer_data: Dict):
         super().__init__()
         self.computer_data = computer_data
         self.agent_thread = None
         self.tray_icon = None
+        
+        self.setWindowIcon(self.get_app_icon())
         
         DatabaseManager.set_current_session(computer_data['computer_id'], computer_data['session_id'])
         
@@ -466,6 +406,22 @@ class RemoteAgentWindow(QMainWindow):
             self.hide()
             self.create_tray_icon()
     
+    def get_app_icon(self) -> QIcon:
+        icon_path = Path(__file__).parent.parent / "app_icon.ico"
+        
+        if not icon_path.exists():
+            icon_path = Path(__file__).parent / "app_icon.ico"
+        
+        if not icon_path.exists():
+            icon_path = Path.cwd() / "app_icon.ico"
+        
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+        
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(QColor(255, 140, 66))
+        return QIcon(pixmap)
+    
     def init_ui(self):
         self.setWindowTitle("Remote Access Agent")
         self.setGeometry(300, 300, 550, 450)
@@ -478,7 +434,6 @@ class RemoteAgentWindow(QMainWindow):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(20, 20, 20, 20)
         
-        # Заголовок
         header_frame = QFrame()
         header_frame.setStyleSheet("background-color: #ff8c42; border-radius: 10px;")
         header_layout = QHBoxLayout(header_frame)
@@ -491,22 +446,25 @@ class RemoteAgentWindow(QMainWindow):
         header_layout.addStretch()
         
         self.settings_btn = QPushButton("⚙")
-        self.settings_btn.setFixedSize(40, 40)
+        self.settings_btn.setObjectName("settingsButton")  
+        self.settings_btn.setFixedSize(36, 36)  
+        self.settings_btn.setFont(QFont("Segoe UI", 14)) 
         self.settings_btn.setStyleSheet("""
             QPushButton {
                 background-color: rgba(255,255,255,0.2);
                 color: white;
-                font-size: 20px;
-                border-radius: 20px;
+                border-radius: 18px;
+                padding: 0px;
+                margin: 0px;
             }
             QPushButton:hover { background-color: rgba(255,255,255,0.3); }
+            QPushButton:pressed { background-color: rgba(255,255,255,0.4); }
         """)
         self.settings_btn.clicked.connect(self.open_settings)
         header_layout.addWidget(self.settings_btn)
         header_layout.setContentsMargins(10, 5, 15, 5)
         main_layout.addWidget(header_frame)
         
-        # Информация
         info_group = QGroupBox("ИНФОРМАЦИЯ О СИСТЕМЕ")
         info_layout = QVBoxLayout()
         
@@ -529,7 +487,6 @@ class RemoteAgentWindow(QMainWindow):
         info_group.setLayout(info_layout)
         main_layout.addWidget(info_group)
         
-        # Лог
         log_group = QGroupBox("ЖУРНАЛ СОБЫТИЙ")
         log_layout = QVBoxLayout()
         
@@ -542,7 +499,6 @@ class RemoteAgentWindow(QMainWindow):
         log_group.setLayout(log_layout)
         main_layout.addWidget(log_group)
         
-        # Кнопка выхода
         exit_frame = QFrame()
         exit_layout = QHBoxLayout(exit_frame)
         exit_layout.addStretch()
@@ -568,9 +524,7 @@ class RemoteAgentWindow(QMainWindow):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         
-        pixmap = QPixmap(16, 16)
-        pixmap.fill(QColor(255, 140, 66))
-        icon = QIcon(pixmap)
+        icon = self.windowIcon()
         
         self.tray_icon = QSystemTrayIcon(icon, self)
         self.tray_icon.setToolTip("Remote Access Agent")
@@ -622,7 +576,7 @@ class RemoteAgentWindow(QMainWindow):
             if self.agent_thread and self.agent_thread.is_connected:
                 interval = 1.0 / self.fps if self.fps > 0 else 0.05
                 self.agent_thread.update_settings(interval, self.quality)
-                self.log(f"Настройки обновлены: FPS={self.fps}, Качество={self.quality}%")
+                self.log(f"Настройки обновлены")
     
     def log(self, message):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -658,7 +612,7 @@ class RemoteAgentWindow(QMainWindow):
         if is_connected:
             self.status_label.setText("● Подключен к серверу")
             self.status_label.setStyleSheet("font-size: 13px; color: #27ae60; font-weight: bold;")
-            self.log("Успешно подключен к серверу")
+            self.log("Подключен к серверу")
             self.status_bar.showMessage("Подключен к серверу")
             
             if self.tray_icon:
@@ -672,9 +626,6 @@ class RemoteAgentWindow(QMainWindow):
                 self.tray_icon.setToolTip("Remote Access Agent - Отключен")
     
     def on_client_connected(self, client_id):
-        self.log(f"✅ Клиент подключился: {client_id}")
-        self.status_bar.showMessage(f"Клиент {client_id} подключился", 5000)
-        
         if self.tray_icon:
             self.tray_icon.showMessage(
                 "Новое подключение",
@@ -684,7 +635,7 @@ class RemoteAgentWindow(QMainWindow):
             )
     
     def on_client_disconnected(self, client_id):
-        self.log(f"❌ Клиент отключился: {client_id}")
+        pass
     
     def quit_application(self):
         reply = QMessageBox.question(

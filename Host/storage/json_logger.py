@@ -1,5 +1,3 @@
-"""Работа с JSON логами"""
-
 import json
 import re
 import threading
@@ -11,7 +9,6 @@ from utils.constants import ANOMALY_THRESHOLDS
 
 
 class JSONLogger:
-    """Класс для записи метрик и событий Windows в JSON файлы"""
     
     def __init__(self, temps_folder: str = None):
         if temps_folder is None:
@@ -31,79 +28,69 @@ class JSONLogger:
         self.previous_metrics = None
         self.anomaly_threshold = ANOMALY_THRESHOLDS
         
-        # Служебная папка для маркеров
         self.markers_folder = self.temps_folder / ".markers"
         self.markers_folder.mkdir(exist_ok=True)
         
-        # Файл флага - были ли уже записаны события за 24 часа
-        self.events_flag_file = self.markers_folder / "events_24h_loaded.json"
-        self._load_events_flag()
+        self.events_info_file = self.markers_folder / "events_collection_info.json"
+        self._load_events_info()
     
-    def _load_events_flag(self):
-        """Загрузить флаг о загрузке событий за 24 часа"""
-        self._events_loaded_date = None
-        if self.events_flag_file.exists():
+    def _load_events_info(self):
+        self._last_collection_time = None
+        if self.events_info_file.exists():
             try:
-                with open(self.events_flag_file, 'r', encoding='utf-8') as f:
+                with open(self.events_info_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self._events_loaded_date = data.get('date')
+                    if data.get('date') == self.current_date.isoformat() if self.current_date else None:
+                        last_time_str = data.get('last_collection_time')
+                        if last_time_str:
+                            self._last_collection_time = datetime.fromisoformat(last_time_str)
             except:
                 pass
     
-    def _save_events_flag(self, date_str: str):
-        """Сохранить флаг о загрузке событий за 24 часа"""
-        try:
-            with open(self.events_flag_file, 'w', encoding='utf-8') as f:
-                json.dump({'date': date_str}, f)
-        except:
-            pass
-    
-    def _clear_events_flag(self):
-        """Очистить флаг о загрузке событий"""
-        if self.events_flag_file.exists():
+    def _save_events_info(self, last_collection_time: datetime):
+        if self.current_date:
             try:
-                self.events_flag_file.unlink()
+                with open(self.events_info_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'date': self.current_date.isoformat(),
+                        'last_collection_time': last_collection_time.isoformat() if last_collection_time else None
+                    }, f)
             except:
                 pass
-        self._events_loaded_date = None
+    
+    def _clear_events_info(self):
+        self._last_collection_time = None
+        if self.events_info_file.exists():
+            try:
+                self.events_info_file.unlink()
+            except:
+                pass
     
     def set_session(self, computer_name: str, session_token: str):
-        """Установить данные сессии"""
         self.current_computer_name = computer_name
         self.current_session_token = session_token
         
         old_date = self.current_date
         self.current_date = datetime.now().date()
         
-        # Если день изменился, очищаем флаг
         if old_date is not None and old_date != self.current_date:
-            print(f"📅 День изменился: {old_date} -> {self.current_date}")
-            self._clear_events_flag()
+            self._clear_events_info()
         else:
-            self._load_events_flag()
+            self._load_events_info()
         
         self.create_daily_file()
-        
-        # Проверяем, не нужно ли отправить файл за вчерашний день
-        self.check_and_mark_yesterday_file()
-        
-        # Удаляем старые файлы (старше 2 дней)
+        self.mark_all_unsent_files()
         self.cleanup_old_files()
     
     def create_daily_file(self):
-        """Создать файл для текущей даты (один файл на день)"""
         clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', self.current_computer_name)
         file_name = f"{clean_name}_{self.current_date.isoformat()}.json"
         self.current_file = self.temps_folder / file_name
         
         if not self.current_file.exists():
             self.save_records([])
-            print(f"📁 Создан новый файл: {file_name}")
-        else:
-            print(f"📁 Используется существующий файл: {file_name}")
     
     def save_records(self, records: List[Dict]):
-        """Сохранить записи в файл"""
         if not self.current_file:
             return
         
@@ -115,7 +102,6 @@ class JSONLogger:
             print(f"Ошибка сохранения JSON файла: {e}")
     
     def load_records(self) -> List[Dict]:
-        """Загрузить все записи из файла"""
         if not self.current_file or not self.current_file.exists():
             return []
         
@@ -129,7 +115,6 @@ class JSONLogger:
             return []
     
     def add_metric(self, metrics: Dict):
-        """Добавить метрики системы"""
         records = self.load_records()
         
         record = {
@@ -149,7 +134,6 @@ class JSONLogger:
         self.previous_metrics = metrics.copy()
     
     def add_windows_events(self, events: List[Dict], is_initial: bool = False):
-        """Добавить события из журнала Windows"""
         records = self.load_records()
         
         for event in events:
@@ -194,11 +178,11 @@ class JSONLogger:
         self.save_records(records)
         
         if is_initial:
-            self._save_events_flag(self.current_date.isoformat())
-            print(f"✅ Сохранен флаг: события за 24 часа загружены для {self.current_date}")
+            collection_time = datetime.now()
+            self._last_collection_time = collection_time
+            self._save_events_info(collection_time)
     
     def check_anomalies(self, current_metrics: Dict):
-        """Проверить наличие аномалий в метриках"""
         anomalies = []
         
         for key, threshold in self.anomaly_threshold.items():
@@ -238,23 +222,19 @@ class JSONLogger:
             self.mark_for_urgent_upload()
     
     def get_file_path_for_date(self, target_date: date) -> Path:
-        """Получить путь к файлу за определенную дату"""
         clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', self.current_computer_name)
         return self.temps_folder / f"{clean_name}_{target_date.isoformat()}.json"
     
     def mark_for_urgent_upload(self):
-        """Пометить текущий файл для срочной отправки"""
         if self.current_file:
             marker_file = self.markers_folder / f"urgent_{self.current_file.name}"
             try:
                 with open(marker_file, 'w') as f:
                     f.write(self.current_file.name)
-                print(f"⚡ Помечен для срочной отправки: {self.current_file.name}")
             except:
                 pass
     
     def mark_for_end_of_day_upload(self, file_name: str = None):
-        """Пометить файл для отправки в конце дня"""
         if file_name is None and self.current_file:
             file_name = self.current_file.name
         
@@ -263,12 +243,34 @@ class JSONLogger:
             try:
                 with open(marker_file, 'w') as f:
                     f.write(file_name)
-                print(f"📁 Помечен для отправки в конце дня: {file_name}")
             except:
                 pass
     
+    def mark_all_unsent_files(self):
+        current_date = self.current_date
+        files_marked = 0
+        
+        for file_path in self.temps_folder.glob("*.json"):
+            if file_path.name.startswith('.'):
+                continue
+            
+            try:
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})\.json$', file_path.name)
+                if not date_match:
+                    continue
+                
+                file_date_str = date_match.group(1)
+                file_date = datetime.fromisoformat(file_date_str).date()
+                
+                if file_date < current_date:
+                    sent_marker = self.markers_folder / f"sent_{file_path.name}"
+                    if not sent_marker.exists():
+                        self.mark_for_end_of_day_upload(file_path.name)
+                        files_marked += 1
+            except Exception:
+                pass
+    
     def check_and_mark_yesterday_file(self) -> bool:
-        """Проверить и пометить файл за вчерашний день для отправки"""
         yesterday = datetime.now().date() - timedelta(days=1)
         yesterday_file = self.get_file_path_for_date(yesterday)
         
@@ -280,21 +282,17 @@ class JSONLogger:
         return False
     
     def mark_as_sent(self, file_name: str):
-        """Пометить файл как отправленный"""
         sent_marker = self.markers_folder / f"sent_{file_name}"
         try:
             sent_marker.touch()
-            print(f"✅ Файл помечен как отправленный: {file_name}")
         except:
             pass
     
     def mark_today_as_sent(self):
-        """Пометить сегодняшний файл как отправленный"""
         if self.current_file:
             self.mark_as_sent(self.current_file.name)
     
     def cleanup_old_files(self):
-        """Удалить файлы старше 2 дней"""
         try:
             current_date = self.current_date
             files_to_keep = set()
@@ -311,44 +309,34 @@ class JSONLogger:
                 if file_path.name not in files_to_keep:
                     try:
                         file_path.unlink()
-                        print(f"🗑️ Удален старый файл: {file_path.name}")
                     except:
                         pass
-        except Exception as e:
-            print(f"Ошибка очистки старых файлов: {e}")
+        except Exception:
+            pass
     
-    def events_loaded_today(self) -> bool:
-        """Проверить, были ли загружены события за 24 часа в этом дне"""
-        return self._events_loaded_date == self.current_date.isoformat() if self.current_date else False
+    def should_collect_events(self) -> bool:
+        if self._last_collection_time is None:
+            return True
+        minutes_since_last = (datetime.now() - self._last_collection_time).total_seconds() / 60
+        return minutes_since_last >= 30
+    
+    def get_last_collection_time(self) -> datetime:
+        return self._last_collection_time
     
     def switch_to_new_day(self):
-        """Переключиться на новый день (вызывается в полночь)"""
-        print("🌙 Переключение на новый день")
-        
-        # Сохраняем имя старого файла перед созданием нового
         old_file_name = self.current_file.name if self.current_file else None
         old_file_path = self.current_file if self.current_file else None
         
-        # Проверяем, есть ли данные в старом файле
         if old_file_path and old_file_path.exists():
             records = self.load_records()
             if records:
-                # Если есть данные - помечаем старый файл для отправки
                 self.mark_for_end_of_day_upload(old_file_name)
-                print(f"📁 Старый файл {old_file_name} помечен для отправки (содержит {len(records)} записей)")
             else:
-                # Если файл пустой - удаляем его
                 try:
                     old_file_path.unlink()
-                    print(f"🗑️ Удален пустой файл: {old_file_name}")
                 except:
                     pass
         
-        # Очищаем флаг загрузки событий для нового дня
-        self._clear_events_flag()
-        
-        # Обновляем дату и создаем новый файл
+        self._clear_events_info()
         self.current_date = datetime.now().date()
         self.create_daily_file()
-        
-        print(f"📁 Создан новый файл для дня: {self.current_file.name}")

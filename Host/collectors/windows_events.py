@@ -3,13 +3,15 @@ import win32evtlogutil
 import win32security
 from datetime import datetime, timedelta
 from typing import List, Dict
+import re
 
-from utils.constants import CRITICAL_EVENT_IDS 
+from utils.constants import CRITICAL_EVENT_IDS
 
 
 class WindowsEventCollector:
     
     _last_record_numbers: Dict[str, int] = {}
+    _last_collection_time: datetime = None
     
     @staticmethod
     def get_severity(event_type: int, event_id: int = None) -> str:
@@ -89,23 +91,28 @@ class WindowsEventCollector:
             except Exception as e:
                 print(f"Ошибка чтения журнала {log_name}: {e}")
         
+        if all_events:
+            cls._last_collection_time = datetime.now()
+        
         return all_events
     
     @classmethod
-    def get_all_events_last_24h(cls) -> List[Dict]:
+    def get_events_last_30min(cls) -> List[Dict]:
         logs = ['System', 'Application']
         all_events = []
-        cutoff_time = datetime.now() - timedelta(hours=24)
+        cutoff_time = datetime.now() - timedelta(minutes=30)
+        MAX_EVENTS = 500
         
         for log_name in logs:
             try:
                 hand = win32evtlog.OpenEventLog(None, log_name)
+                
                 num_records = win32evtlog.GetNumberOfEventLogRecords(hand)
                 cls._last_record_numbers[log_name] = num_records
                 
                 flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
                 
-                while True:
+                while len(all_events) < MAX_EVENTS:
                     events_data = win32evtlog.ReadEventLog(hand, flags, 0)
                     if not events_data:
                         break
@@ -137,6 +144,14 @@ class WindowsEventCollector:
                             except:
                                 user_info = str(event.Sid)
                         
+                        if event.EventID == 1073742828:
+                            license_match = re.search(r'Название лицензии=([^\n\r]+)', message)
+                            if license_match:
+                                license_name = license_match.group(1)
+                                license_name = re.sub(r'\([^)]+\)', '', license_name)
+                                license_name = license_name.strip()
+                                message = f"Установлена лицензия: {license_name}"
+                        
                         all_events.append({
                             'log': log_name.lower(),
                             'event_id': event.EventID,
@@ -144,21 +159,32 @@ class WindowsEventCollector:
                             'severity': severity,
                             'event_type': 'error' if severity in ['critical', 'error'] else severity,
                             'time': event_time.strftime('%Y-%m-%d %H:%M:%S'),
-                            'message': message[:2000] if message else '',
+                            'message': message[:500] if message else '',
                             'category': event.EventCategory,
                             'user': user_info,
                             'record_number': event.RecordNumber
                         })
                         
-                        if len(all_events) > 5000:
+                        if len(all_events) >= MAX_EVENTS:
                             break
-                    
-                    if len(all_events) > 5000:
-                        break
                 
                 win32evtlog.CloseEventLog(hand)
                 
             except Exception as e:
                 print(f"Ошибка чтения журнала {log_name}: {e}")
         
+        if all_events:
+            cls._last_collection_time = datetime.now()
+        
         return all_events
+    
+    @classmethod
+    def get_last_collection_time(cls) -> datetime:
+        return cls._last_collection_time
+    
+    @classmethod
+    def should_collect_events(cls) -> bool:
+        if cls._last_collection_time is None:
+            return True
+        minutes_since_last = (datetime.now() - cls._last_collection_time).total_seconds() / 60
+        return minutes_since_last >= 30

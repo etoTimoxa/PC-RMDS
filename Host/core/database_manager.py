@@ -1,5 +1,3 @@
-"""Управление подключением к базе данных"""
-
 import pymysql
 import pymysql.cursors
 import hashlib
@@ -16,16 +14,13 @@ from core.hardware_id import HardwareIDGenerator
 
 
 class DatabaseManager:
-    """Класс для работы с базой данных"""
     
     current_session_id: Optional[int] = None
     current_computer_id: Optional[int] = None
     
     @classmethod
     def get_connection(cls):
-        """Получить соединение с БД"""
         try:
-            # Убеждаемся, что cursorclass установлен правильно
             config = DB_CONFIG.copy()
             if 'cursorclass' not in config:
                 config['cursorclass'] = pymysql.cursors.DictCursor
@@ -53,7 +48,6 @@ class DatabaseManager:
         
         try:
             with connection.cursor() as cursor:
-                # Завершаем предыдущие активные сессии
                 cursor.execute("""
                     UPDATE session 
                     SET status_id = %s,
@@ -71,7 +65,6 @@ class DatabaseManager:
                 
                 session_id = cursor.lastrowid
                 connection.commit()
-                print(f"✅ Создана сессия: id={session_id}, token={session_token}")
                 return session_id
         except Exception as e:
             print(f"Ошибка создания сессии: {e}")
@@ -116,7 +109,6 @@ class DatabaseManager:
                     WHERE session_id = %s
                 """, (status_id, session_id))
                 connection.commit()
-                print(f"✅ Завершена сессия: id={session_id}, status={status_id}")
         except Exception as e:
             print(f"Ошибка завершения сессии: {e}")
         finally:
@@ -291,7 +283,6 @@ class DatabaseManager:
                 computer_password = unique_hardware_id
                 password_hash = hashlib.sha256(computer_password.encode()).hexdigest()
                 
-                # Проверяем существующий компьютер
                 cursor.execute("""
                     SELECT c.computer_id, c.hostname, c.mac_address, cred.login, cred.password_hash
                     FROM computer c
@@ -329,7 +320,6 @@ class DatabaseManager:
                         }
                     return None
                 
-                # Создаем учетные данные
                 cursor.execute("""
                     INSERT INTO credential (login, password_hash, is_active, created_at)
                     VALUES (%s, %s, 1, NOW())

@@ -29,26 +29,18 @@ class CloudUploader:
                 aws_access_key_id=self.access_key,
                 aws_secret_access_key=self.secret_key,
                 config=Config(signature_version='s3v4'),
-                verify=True  # Проверка SSL сертификата
+                verify=True
             )
-            # Проверяем подключение, получая список бакетов
-            buckets = self.s3.list_buckets()
-            print(f"✅ S3 клиент инициализирован. Доступные бакеты: {[b['Name'] for b in buckets['Buckets']]}")
         except Exception as e:
-            print(f"❌ Ошибка инициализации S3: {e}")
+            print(f"Ошибка инициализации S3: {e}")
             self.s3 = None
     
     def upload_file(self, file_path: Path) -> bool:
-        """Загрузить файл с проверкой"""
         if not self.s3 or not file_path.exists():
             return False
         
         try:
             object_name = file_path.name
-            file_size = file_path.stat().st_size / 1024
-            print(f"📤 Загрузка: {object_name} ({file_size:.1f} KB)")
-            
-            # Загружаем файл
             self.s3.upload_file(
                 str(file_path), 
                 self.bucket_name, 
@@ -56,50 +48,30 @@ class CloudUploader:
                 ExtraArgs={'ContentType': 'application/json'}
             )
             
-            # ПРОВЕРЯЕМ, что файл действительно загружен
             try:
-                # Пытаемся получить информацию о файле
-                head = self.s3.head_object(Bucket=self.bucket_name, Key=object_name)
-                print(f"   ✅ {object_name} - загружен (размер в облаке: {head['ContentLength']} байт)")
+                self.s3.head_object(Bucket=self.bucket_name, Key=object_name)
                 return True
-            except ClientError as e:
-                error_code = e.response['Error']['Code']
-                if error_code == '404':
-                    print(f"   ❌ Файл не найден в облаке после загрузки!")
-                    return False
-                else:
-                    print(f"   ⚠️ Не удалось проверить загрузку: {e}")
-                    return True  # Возвращаем True, но с предупреждением
+            except ClientError:
+                return False
                     
-        except Exception as e:
-            print(f"   ❌ Ошибка загрузки {object_name}: {e}")
+        except Exception:
             return False
     
     def list_bucket_files(self):
-        """Вывести список файлов в бакете (для отладки)"""
         if not self.s3:
-            print("S3 клиент не инициализирован")
             return []
         
         try:
             response = self.s3.list_objects_v2(Bucket=self.bucket_name)
             if 'Contents' in response:
-                files = [obj['Key'] for obj in response['Contents']]
-                print(f"📋 Файлы в бакете {self.bucket_name}:")
-                for f in files:
-                    print(f"   - {f}")
-                return files
-            else:
-                print(f"📋 Бакет {self.bucket_name} пуст")
-                return []
-        except Exception as e:
-            print(f"Ошибка получения списка файлов: {e}")
+                return [obj['Key'] for obj in response['Contents']]
+            return []
+        except Exception:
             return []
     
     def upload_end_of_day_files(self) -> int:
         uploaded = 0
         endofday_files = list(self.markers_folder.glob("endofday_*.json"))
-        print(f"📋 Найдено маркеров endofday: {len(endofday_files)}")
         
         for marker_file in endofday_files:
             try:
@@ -109,25 +81,16 @@ class CloudUploader:
                 file_path = self.temps_folder / file_name
                 sent_marker = self.markers_folder / f"sent_{file_name}"
                 
-                print(f"   Обработка: {file_name} (существует: {file_path.exists()}, отправлен: {sent_marker.exists()})")
-                
                 if file_path.exists() and not sent_marker.exists():
                     if self.upload_file(file_path):
                         sent_marker.touch()
                         uploaded += 1
                         marker_file.unlink()
-                        print(f"   ✅ Отправлен и удален маркер: {file_name}")
-                    else:
-                        print(f"   ❌ Ошибка загрузки, маркер сохранен для повторной попытки: {file_name}")
                 else:
-                    if not file_path.exists():
-                        print(f"   ⚠️ Файл не найден, удаляем маркер: {file_name}")
+                    if not file_path.exists() or sent_marker.exists():
                         marker_file.unlink()
-                    elif sent_marker.exists():
-                        print(f"   ℹ️ Файл уже отправлен, удаляем маркер: {file_name}")
-                        marker_file.unlink()
-            except Exception as e:
-                print(f"   ❌ Ошибка обработки маркера: {e}")
+            except Exception:
+                pass
         
         return uploaded
     
@@ -149,7 +112,7 @@ class CloudUploader:
                         uploaded += 1
                 
                 marker_file.unlink()
-            except:
+            except Exception:
                 pass
         return uploaded
     
@@ -157,10 +120,4 @@ class CloudUploader:
         uploaded = 0
         uploaded += self.upload_end_of_day_files()
         uploaded += self.upload_urgent_files()
-        
-        # Для отладки - показываем список файлов в бакете после загрузки
-        if uploaded > 0:
-            print("📋 Проверка содержимого облака после загрузки:")
-            self.list_bucket_files()
-        
         return uploaded

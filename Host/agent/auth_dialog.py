@@ -45,7 +45,7 @@ class AutoAuthDialog(QDialog):
         computer_name = socket.gethostname()
         info_text = f"""
         <div style='text-align: center;'>
-            <h3 style='color: #ff8c42;'>Автоматическая регистрация</h3>
+            <h3 style='color: #ff8c42;'>Автоматическая авторизация в системе</h3>
             <p><b>Компьютер:</b> {computer_name}</p>
             <p><b>MAC адрес:</b> {HardwareIDGenerator.get_mac_address()}</p>
             <p><b>Статус:</b> Выполняется регистрация...</p>

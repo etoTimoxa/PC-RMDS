@@ -126,14 +126,13 @@ class RemoteAgentThread(QThread):
     
     async def update_activity_periodically(self):
         """Обновляет активность сессии на основе активности системы"""
-        while self.is_running and self.is_connected:
+        while self.is_running:
             try:
                 await asyncio.sleep(ACTIVITY_UPDATE_INTERVAL)
                 if self.session_id:
                     # Проверяем активность системы
                     if SystemActivityMonitor.is_system_active():
                         DatabaseManager.update_session_activity(self.session_id)
-                        self.log_message.emit(f"Активность системы подтверждена, сессия обновлена")
             except Exception as e:
                 self.log_message.emit(f"Ошибка обновления активности: {e}")
     

@@ -1270,5 +1270,293 @@
       "network_recv_mb": 72.37,
       "uptime_seconds": 1774610718.682735
     }
+  },
+  {
+    "timestamp": "2026-03-30T13:51:03.078915",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_13-51-00",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 0.4,
+      "ram_usage": 63.1,
+      "ram_used_gb": 9.73,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.5,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 19.11,
+      "network_recv_mb": 121.69,
+      "uptime_seconds": 1774610718.6827352
+    }
+  },
+  {
+    "timestamp": "2026-03-30 13:44:27",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_13-51-00",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1014,
+      "source": "Microsoft-Windows-DNS-Client",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "Разрешение имен для имени avatars.steamstatic.com истекло после отсутствия ответа от настроенных серверов DNS.\r\n",
+      "category": 1014,
+      "user": "NETWORK SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 13:45:49",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_13-51-00",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 10016,
+      "source": "DCOM",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "<The description for Event ID ( 10016 ) in Source ( 'DCOM' ) could not be found. It contains the following insertion string(s):'по умолчанию для компьютера, Локально, Активация, {C2F03A33-21F5-47FA-B4BB-156362A2F239}, {316CDED5-E4AE-4B15-9113-7055D84DCC97}, DESKTOP-NIOUKC3, etotimoxa, S-1-5-21-27167",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30T13:52:02.240402",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_13-51-59",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 4.1,
+      "ram_usage": 63.0,
+      "ram_used_gb": 9.71,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.5,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 19.29,
+      "network_recv_mb": 122.77,
+      "uptime_seconds": 1774610718.6827352
+    }
+  },
+  {
+    "timestamp": "2026-03-30T14:48:47.162016",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 7.3,
+      "ram_usage": 68.3,
+      "ram_used_gb": 10.53,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.5,
+      "disk_used_gb": 421.71,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 19.77,
+      "network_recv_mb": 14.98,
+      "uptime_seconds": 1774610718.6827352
+    }
+  },
+  {
+    "timestamp": "2026-03-30 14:22:57",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 10016,
+      "source": "DCOM",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "<The description for Event ID ( 10016 ) in Source ( 'DCOM' ) could not be found. It contains the following insertion string(s):'для конкретного приложения, Локально, Активация, {2593F8B9-4EAF-457C-B68A-50F6B8EA6B54}, {15C20B67-12E7-4BB6-92BB-7AFF07997402}, DESKTOP-NIOUKC3, etotimoxa, S-1-5-21-271679",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 14:25:49",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1014,
+      "source": "Microsoft-Windows-DNS-Client",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "Разрешение имен для имени go-eu.trouter.teams.microsoft.com истекло после отсутствия ответа от настроенных серверов DNS.\r\n",
+      "category": 1014,
+      "user": "NETWORK SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 14:36:48",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1073748869,
+      "source": "Service Control Manager",
+      "severity": "info",
+      "event_type": "info",
+      "message": "В системе установлена служба.\r\n\r\nИмя службы:  zapret\r\nИмя файла службы:  \"C:\\Users\\Тимофей\\Desktop\\zapret-discord-youtube-1.9.7b\\bin\\winws.exe\"   --wf-tcp 80,443,2053,2083,2087,2096,8443,12 --wf-udp 443,19294-19344,50000-50100,12  --filter-udp 443 --hostlist \"C:\\Users\\Тимофей\\Desktop\\zapret-discord-",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 14:39:46",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1165242669,
+      "source": "WinDivert",
+      "severity": "info",
+      "event_type": "info",
+      "message": "WinDivert2.2 UNLOAD (processId=4)\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 14:39:57",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1165242669,
+      "source": "WinDivert",
+      "severity": "info",
+      "event_type": "info",
+      "message": "WinDivert2.2 LOAD (processId=8068)\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 14:39:57",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1073748869,
+      "source": "Service Control Manager",
+      "severity": "info",
+      "event_type": "info",
+      "message": "В системе установлена служба.\r\n\r\nИмя службы:  WinDivert\r\nИмя файла службы:  C:\\Users\\Тимофей\\Desktop\\zapret-discord-youtube-1.9.7b\\bin\\WinDivert64.sys\r\nТип службы:  драйвер режима ядра\r\nТип запуска службы:  Вручную\r\nУчетная запись службы:  \r\n",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 14:41:21",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-48-44",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1014,
+      "source": "Microsoft-Windows-DNS-Client",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "Разрешение имен для имени api.steampowered.com истекло после отсутствия ответа от настроенных серверов DNS.\r\n",
+      "category": 1014,
+      "user": "NETWORK SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30T14:56:12.170681",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_14-56-09",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 1.4,
+      "ram_usage": 66.8,
+      "ram_used_gb": 10.29,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.5,
+      "disk_used_gb": 421.72,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 20.84,
+      "network_recv_mb": 21.45,
+      "uptime_seconds": 1774610718.6827347
+    }
+  },
+  {
+    "timestamp": "2026-03-30T15:02:31.038242",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_15-02-28",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 1.7,
+      "ram_usage": 67.2,
+      "ram_used_gb": 10.36,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.5,
+      "disk_used_gb": 421.72,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 21.81,
+      "network_recv_mb": 26.88,
+      "uptime_seconds": 1774610718.6827352
+    }
+  },
+  {
+    "timestamp": "2026-03-30T15:05:12.752134",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_15-05-09",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 5.1,
+      "ram_usage": 67.8,
+      "ram_used_gb": 10.44,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.5,
+      "disk_used_gb": 421.72,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 22.25,
+      "network_recv_mb": 29.51,
+      "uptime_seconds": 1774610718.682735
+    }
+  },
+  {
+    "timestamp": "2026-03-30T15:10:27.467488",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_15-10-24",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 0.8,
+      "ram_usage": 68.6,
+      "ram_used_gb": 10.57,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.5,
+      "disk_used_gb": 421.93,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 27.28,
+      "network_recv_mb": 136.73,
+      "uptime_seconds": 1774610718.682735
+    }
+  },
+  {
+    "timestamp": "2026-03-30T15:12:14.537946",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_15-12-11",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 2.8,
+      "ram_usage": 70.3,
+      "ram_used_gb": 10.83,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.5,
+      "disk_used_gb": 421.93,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 27.7,
+      "network_recv_mb": 138.64,
+      "uptime_seconds": 1774610718.6827347
+    }
   }
 ]

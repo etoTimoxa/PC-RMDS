@@ -1,11 +1,16 @@
 import ctypes
 import psutil
-from ctypes import wintypes
-import win32process
-import win32api
-import win32con
+import sys
+import os
 from datetime import datetime, timedelta
 import time
+
+# Импортируем Windows-специфичные модули только на Windows
+if sys.platform == 'win32':
+    from ctypes import wintypes
+    import win32process
+    import win32api
+    import win32con
 
 
 class SystemActivityMonitor:
@@ -13,8 +18,8 @@ class SystemActivityMonitor:
     class LASTINPUTINFO(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
     
-    # Системные процессы, которые считаются активностью
-    SYSTEM_PROCESSES = [
+    # Системные процессы, которые считаются активностью (Windows)
+    SYSTEM_PROCESSES_WIN = [
         'svchost.exe',      # Службы Windows
         'services.exe',     # Диспетчер служб
         'lsass.exe',        # Local Security Authority
@@ -39,6 +44,42 @@ class SystemActivityMonitor:
         'cmd.exe',          # Command Prompt
     ]
     
+    # Системные процессы для Linux
+    SYSTEM_PROCESSES_LINUX = [
+        'systemd',          # Init система
+        'init',             # Init процесс
+        'kthreadd',         # Ядро Linux
+        'rcu_sched',        # RCU планировщик
+        'migration',        # Миграция задач
+        'ksoftirqd',        # Обработка прерываний
+        'kworker',          # Рабочий поток ядра
+        'gnome-shell',      # GNOME оболочка
+        'plasmashell',      # KDE Plasma оболочка
+        'Xorg',             # X сервер
+        'wayland',          # Wayland сервер
+        'bash',             # Bash оболочка
+        'sh',               # Shell
+        'cron',             # Планировщик задач
+        'sshd',             # SSH демон
+        'NetworkManager',   # Сетевой менеджер
+        'dbus-daemon',      # D-Bus демон
+        'polkitd',          # PolicyKit демон
+        'accounts-daemon',  # Accounts демон
+        'udisksd',          # Disk management daemon
+        'firefox',          # Firefox
+        'chrome',           # Chrome
+        'code',             # VS Code
+        'python',           # Python
+    ]
+    
+    @staticmethod
+    def get_system_processes():
+        """Возвращает список системных процессов для текущей ОС"""
+        if sys.platform == 'win32':
+            return SystemActivityMonitor.SYSTEM_PROCESSES_WIN
+        else:
+            return SystemActivityMonitor.SYSTEM_PROCESSES_LINUX
+    
     # События Windows, которые считаются активностью
     SYSTEM_EVENTS = [
         'Application',      # Приложения
@@ -56,14 +97,64 @@ class SystemActivityMonitor:
     @staticmethod
     def get_last_input_time() -> float:
         """Время с последнего ввода мыши/клавиатуры"""
-        try:
-            lastInputInfo = SystemActivityMonitor.LASTINPUTINFO()
-            lastInputInfo.cbSize = ctypes.sizeof(lastInputInfo)
-            ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lastInputInfo))
-            tickCount = ctypes.windll.kernel32.GetTickCount()
-            return (tickCount - lastInputInfo.dwTime) / 1000.0
-        except:
-            return 0
+        if sys.platform == 'win32':
+            try:
+                lastInputInfo = SystemActivityMonitor.LASTINPUTINFO()
+                lastInputInfo.cbSize = ctypes.sizeof(lastInputInfo)
+                ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lastInputInfo))
+                tickCount = ctypes.windll.kernel32.GetTickCount()
+                return (tickCount - lastInputInfo.dwTime) / 1000.0
+            except:
+                return 0
+        else:
+            # Linux версия - проверяем время последней активности
+            try:
+                # Способ 1: Через команду w (если есть)
+                result = os.popen("w 2>/dev/null | head -1").read()
+                if result and 'idle' in result:
+                    idle_part = result.split('idle=')[1].split(',')[0] if 'idle=' in result else None
+                    if idle_part:
+                        idle_time = idle_part.replace('s', '').replace('m', '').strip()
+                        try:
+                            return float(idle_time)
+                        except:
+                            pass
+                
+                # Способ 2: Через xprintidle (если есть X11)
+                try:
+                    result = os.popen("xprintidle 2>/dev/null").read().strip()
+                    if result and result.isdigit():
+                        return int(result) / 1000.0  # миллисекунды в секунды
+                except:
+                    pass
+                
+                # Способ 3: Через /proc/stat (загрузка CPU)
+                try:
+                    with open('/proc/stat', 'r') as f:
+                        line = f.readline()
+                        if line.startswith('cpu '):
+                            # Если CPU активен, считаем что система активна
+                            return 0
+                except:
+                    pass
+                
+                # Способ 4: Через время последней модификации файлов в /tmp
+                try:
+                    import pathlib
+                    tmp_path = pathlib.Path('/tmp')
+                    if tmp_path.exists():
+                        # Проверяем время последней модификации файлов
+                        recent_files = sorted(tmp_path.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+                        if recent_files:
+                            last_mod = recent_files[0].stat().st_mtime
+                            time_diff = time.time() - last_mod
+                            return time_diff
+                except:
+                    pass
+                
+                return 0
+            except:
+                return 0
     
     @staticmethod
     def get_cpu_usage() -> float:
@@ -77,13 +168,14 @@ class SystemActivityMonitor:
     def get_system_processes_activity() -> bool:
         """Проверяет наличие системных процессов"""
         try:
+            system_processes = SystemActivityMonitor.get_system_processes()
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
                     proc_info = proc.info
                     proc_name = proc_info['name'].lower() if proc_info['name'] else ''
                     
                     # Проверяем, является ли процесс системным
-                    is_system = any(sys_proc.lower() in proc_name for sys_proc in SystemActivityMonitor.SYSTEM_PROCESSES)
+                    is_system = any(sys_proc.lower() in proc_name for sys_proc in system_processes)
                     
                     if is_system:
                         return True

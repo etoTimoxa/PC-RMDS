@@ -8,9 +8,16 @@ from PyQt6.QtWidgets import QApplication
 
 from agent.auth_dialog import AuthDialog
 from agent.remote_agent import RemoteAgentWindow
+from utils.dependencies import DependencyChecker
 
 
 def main():
+    # Проверяем зависимости при запуске
+    try:
+        DependencyChecker.print_check_results()
+    except Exception as e:
+        print(f"Ошибка проверки зависимостей: {e}")
+    
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     app.setApplicationName("Remote Access Agent")

@@ -1,11 +1,14 @@
 import sys
 import os
-import winreg
 from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                             QSpinBox, QDoubleSpinBox, QCheckBox, QTabWidget, 
                             QWidget, QDialogButtonBox)
 from PyQt6.QtCore import QSettings
+
+# Импортируем winreg только для Windows
+if sys.platform == 'win32':
+    import winreg
 
 
 class SettingsDialog(QDialog):
@@ -99,6 +102,14 @@ class SettingsDialog(QDialog):
             return os.path.dirname(os.path.abspath(__file__))
     
     def add_to_startup(self):
+        """Добавляет приложение в автозагрузку (кроссплатформенно)"""
+        if sys.platform == 'win32':
+            self._add_to_startup_windows()
+        else:
+            self._add_to_startup_linux()
+    
+    def _add_to_startup_windows(self):
+        """Добавляет в автозагрузку Windows"""
         try:
             app_path = self.get_app_path()
             app_dir = self.get_app_dir()
@@ -121,10 +132,47 @@ class SettingsDialog(QDialog):
                 f.write(f'cd /d "{app_dir}"\n')
                 f.write(f'start "" "{app_path}"\n')
             
-        except:
-            pass
+        except Exception as e:
+            print(f"Ошибка добавления в автозагрузку Windows: {e}")
+    
+    def _add_to_startup_linux(self):
+        """Добавляет в автозагрузку Linux через .desktop файл"""
+        try:
+            app_path = self.get_app_path()
+            
+            # Создаем .desktop файл для автозагрузки
+            desktop_content = f"""[Desktop Entry]
+Type=Application
+Name=Remote Access Agent
+Comment=Remote Access Agent
+Exec={app_path}
+Terminal=false
+X-GNOME-Autostart-enabled=true
+"""
+            
+            # Путь к автозагрузке пользователя
+            autostart_dir = os.path.expanduser("~/.config/autostart")
+            os.makedirs(autostart_dir, exist_ok=True)
+            
+            desktop_file = os.path.join(autostart_dir, "remote-access-agent.desktop")
+            with open(desktop_file, 'w') as f:
+                f.write(desktop_content)
+            
+            # Делаем файл исполняемым
+            os.chmod(desktop_file, 0o755)
+            
+        except Exception as e:
+            print(f"Ошибка добавления в автозагрузку Linux: {e}")
     
     def remove_from_startup(self):
+        """Удаляет приложение из автозагрузки (кроссплатформенно)"""
+        if sys.platform == 'win32':
+            self._remove_from_startup_windows()
+        else:
+            self._remove_from_startup_linux()
+    
+    def _remove_from_startup_windows(self):
+        """Удаляет из автозагрузки Windows"""
         try:
             key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
                                 r"Software\Microsoft\Windows\CurrentVersion\Run", 
@@ -140,5 +188,16 @@ class SettingsDialog(QDialog):
                                           "remote_access_agent_start.bat")
             if os.path.exists(startup_script):
                 os.remove(startup_script)
-        except:
-            pass
+        except Exception as e:
+            print(f"Ошибка удаления из автозагрузки Windows: {e}")
+    
+    def _remove_from_startup_linux(self):
+        """Удаляет из автозагрузки Linux"""
+        try:
+            autostart_dir = os.path.expanduser("~/.config/autostart")
+            desktop_file = os.path.join(autostart_dir, "remote-access-agent.desktop")
+            
+            if os.path.exists(desktop_file):
+                os.remove(desktop_file)
+        except Exception as e:
+            print(f"Ошибка удаления из автозагрузки Linux: {e}")

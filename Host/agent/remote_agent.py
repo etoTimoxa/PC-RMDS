@@ -13,12 +13,14 @@ from datetime import datetime, timedelta
 import pyautogui
 import os
 import re
-import ctypes
-from typing import Optional, Dict, Any, List
-from ctypes import wintypes
 import threading
 import boto3
 from pathlib import Path
+
+# Импортируем Windows-специфичные модули только на Windows
+if sys.platform == 'win32':
+    import ctypes
+    from ctypes import wintypes
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QLabel, QPushButton, QTextEdit, QGroupBox, 
@@ -630,6 +632,14 @@ class RemoteAgentWindow(QMainWindow):
             self.add_to_startup_on_first_run()
     
     def add_to_startup_on_first_run(self):
+        """Добавляет приложение в автозагрузку (кроссплатформенно)"""
+        if sys.platform == 'win32':
+            self._add_to_startup_windows()
+        else:
+            self._add_to_startup_linux()
+    
+    def _add_to_startup_windows(self):
+        """Добавляет в автозагрузку Windows"""
         try:
             import winreg
             import os
@@ -657,8 +667,40 @@ class RemoteAgentWindow(QMainWindow):
                 f.write(f'cd /d "{app_dir}"\n')
                 f.write(f'start "" "{app_path}"\n')
                 
-        except:
-            pass
+        except Exception as e:
+            print(f"Ошибка добавления в автозагрузку Windows: {e}")
+    
+    def _add_to_startup_linux(self):
+        """Добавляет в автозагрузку Linux через .desktop файл"""
+        try:
+            import os
+            
+            app_path = sys.executable if getattr(sys, 'frozen', False) else sys.executable
+            app_dir = os.path.dirname(app_path) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+            
+            # Создаем .desktop файл для автозагрузки
+            desktop_content = f"""[Desktop Entry]
+Type=Application
+Name=Remote Access Agent
+Comment=Remote Access Agent
+Exec={app_path}
+Terminal=false
+X-GNOME-Autostart-enabled=true
+"""
+            
+            # Путь к автозагрузке пользователя
+            autostart_dir = os.path.expanduser("~/.config/autostart")
+            os.makedirs(autostart_dir, exist_ok=True)
+            
+            desktop_file = os.path.join(autostart_dir, "remote-access-agent.desktop")
+            with open(desktop_file, 'w') as f:
+                f.write(desktop_content)
+            
+            # Делаем файл исполняемым
+            os.chmod(desktop_file, 0o755)
+            
+        except Exception as e:
+            print(f"Ошибка добавления в автозагрузку Linux: {e}")
     
     def open_settings(self):
         from agent.settings_dialog import SettingsDialog

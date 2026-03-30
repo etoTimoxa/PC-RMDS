@@ -16,6 +16,7 @@ import re
 import threading
 import boto3
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 # Импортируем Windows-специфичные модули только на Windows
 if sys.platform == 'win32':
@@ -51,7 +52,7 @@ class RemoteAgentThread(QThread):
     client_connected = pyqtSignal(str)
     client_disconnected = pyqtSignal(str)
     
-    def __init__(self, relay_server: str, computer_data: Dict, 
+    def __init__(self, relay_server: str, computer_data: dict, 
                  screenshot_interval: float, quality: int = 60, max_resolution: tuple = (1280, 720)):
         super().__init__()
         self.relay_server = relay_server
@@ -438,7 +439,7 @@ class RemoteAgentThread(QThread):
 
 class RemoteAgentWindow(QMainWindow):
     
-    def __init__(self, computer_data: Dict):
+    def __init__(self, computer_data: dict):
         super().__init__()
         self.computer_data = computer_data
         self.agent_thread = None

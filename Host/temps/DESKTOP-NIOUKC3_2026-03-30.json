@@ -1,0 +1,1274 @@
+[
+  {
+    "timestamp": "2026-03-30T10:53:37.546368",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 25.4,
+      "ram_usage": 81.8,
+      "ram_used_gb": 12.61,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.8,
+      "disk_used_gb": 423.39,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 23.78,
+      "network_recv_mb": 475.23,
+      "uptime_seconds": 1774610720.3429263
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "system",
+      "event_id": -2147482947,
+      "source": "Win32k",
+      "severity": "warning",
+      "event_type": "warning",
+      "first_time": "2026-03-30 10:49:17",
+      "last_time": "2026-03-30 10:49:17",
+      "count": 2,
+      "message": "Диспетчер питания не запросил подавление всех входных данных (INPUT_SUPPRESS_REQUEST=0)\r\n [повторяется 2 раз, 2026-03-30 10:49:17 - 2026-03-30 10:49:17]",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:17",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1,
+      "source": "Microsoft-Windows-Kernel-General",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Возможное обнаружение CVE: 2026-03-30T07:49:17.5000000Z\r\nДополнительные сведения: 2026-03-29T10:17:28.1910661Z\r\n\r\nЭто событие создано после выявления попытки воспользоваться известной уязвимостью (2026-03-30T07:49:17.5000000Z).\r\nЭто событие создано процессом в режиме пользователя.\r\n\r\n",
+      "category": 5,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:18",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": -1073479668,
+      "source": "VBoxNetLwf",
+      "severity": "error",
+      "event_type": "error",
+      "message": "Драйвер обнаружил внутреннюю ошибку драйвера на \\Device\\VBoxNetLwf.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:18",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 27,
+      "source": "Microsoft-Windows-Kernel-Boot",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 33,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:18",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 25,
+      "source": "Microsoft-Windows-Kernel-Boot",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 32,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:18",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 32,
+      "source": "Microsoft-Windows-Kernel-Boot",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 58,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:18",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 18,
+      "source": "Microsoft-Windows-Kernel-Boot",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 57,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:18",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 30,
+      "source": "Microsoft-Windows-Kernel-Boot",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 21,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:19",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1074069522,
+      "source": "BTHUSB",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Система Windows не может сохранить коды проверки подлинности Bluetooth (ключи связи) на локальном адаптере. Клавиатуры Bluetooth могут не работать с BIOS компьютера во время загрузки.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:21",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 105,
+      "source": "Microsoft-Windows-Kernel-Power",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 100,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:22",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1,
+      "source": "Microsoft-Windows-Power-Troubleshooter",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Система вышла из состояния пониженного энергопотребления.\r\n\r\nВремя перехода в спящий режим: 2026-03-29T10:17:19.9407919Z\r\nВремя выхода из спящего режима: 2026-03-30T07:49:18.5886387Z\r\n\r\nИсточник выхода: 0\r\n",
+      "category": 0,
+      "user": "LOCAL SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:22",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:22Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:28",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1001,
+      "source": "Windows Error Reporting",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Контейнер ошибки , тип 0\r\nИмя события: StoreAgentScanForUpdatesFailure0\r\nОтклик: Нет данных\r\nИдентификатор CAB: 0\r\n\r\nСигнатура проблемы:\r\nP1: Update;\r\nP2: 8024402c\r\nP3: 19045\r\nP4: 6456\r\nP5: Windows.Desktop\r\nP6: \r\nP7: \r\nP8: \r\nP9: \r\nP10: \r\n\r\nВложенные файлы:\r\n\r\nЭти файлы можно найти здесь:\r\n\\\\?\\C:\\Pro",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "application",
+      "event_id": 1001,
+      "source": "Windows Error Reporting",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:49:30",
+      "last_time": "2026-03-30 10:49:30",
+      "count": 2,
+      "message": "Контейнер ошибки , тип 0\r\nИмя события: StoreAgentScanForUpdatesFailure0\r\nОтклик: Нет данных\r\nИдентификатор CAB: 0\r\n\r\nСигнатура проблемы:\r\nP1: Update;\r... [повторяется 2 раз, 2026-03-30 10:49:30 - 2026-03-30 10:49:30]",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "application",
+      "event_id": 1001,
+      "source": "Windows Error Reporting",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:49:30",
+      "last_time": "2026-03-30 10:49:26",
+      "count": 3,
+      "message": "Контейнер ошибки , тип 0\r\nИмя события: APPCRASH\r\nОтклик: Нет данных\r\nИдентификатор CAB: 0\r\n\r\nСигнатура проблемы:\r\nP1: FileCoAuth.exe\r\nP2: 26.35.222.2\r... [повторяется 3 раз, 2026-03-30 10:49:30 - 2026-03-30 10:49:26]",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:49:43",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 10016,
+      "source": "DCOM",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "<The description for Event ID ( 10016 ) in Source ( 'DCOM' ) could not be found. It contains the following insertion string(s):'по умолчанию для компьютера, Локально, Активация, {C2F03A33-21F5-47FA-B4BB-156362A2F239}, {316CDED5-E4AE-4B15-9113-7055D84DCC97}, DESKTOP-NIOUKC3, etotimoxa, S-1-5-21-27167",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:50:00",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:00Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:50:18",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": -1056899039,
+      "source": "SideBySide",
+      "severity": "error",
+      "event_type": "error",
+      "message": "Ошибка при создании контекста активации для \"C:\\Windows\\SystemTemp\\sdwra_5224_142578486\\browser.exe\".\r\nНе найдена зависимая сборка \"26.3.1.981,language=\"&#x2a;\",type=\"win32\",version=\"26.3.1.981\"\".\r\nИспользуйте sxstrace.exe для подробной диагностики.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:50:42",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 0,
+      "source": "edgeupdate",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Service stopped.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:50:45",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1001,
+      "source": "Windows Error Reporting",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Контейнер ошибки 1308695896003250197, тип 4\r\nИмя события: APPCRASH\r\nОтклик: Нет данных\r\nИдентификатор CAB: 0\r\n\r\nСигнатура проблемы:\r\nP1: FileCoAuth.exe\r\nP2: 26.35.222.2\r\nP3: fe7b44e9\r\nP4: combase.dll\r\nP5: 10.0.19041.6456\r\nP6: 089be9fd\r\nP7: c00000fd\r\nP8: 000000000005bd49\r\nP9: \r\nP10: \r\n\r\nВложенные фай",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:50:47",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1001,
+      "source": "Windows Error Reporting",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Контейнер ошибки 1969291181199259084, тип 5\r\nИмя события: StoreAgentScanForUpdatesFailure0\r\nОтклик: Нет данных\r\nИдентификатор CAB: 0\r\n\r\nСигнатура проблемы:\r\nP1: Update;\r\nP2: 8024402c\r\nP3: 19045\r\nP4: 6456\r\nP5: Windows.Desktop\r\nP6: \r\nP7: \r\nP8: \r\nP9: \r\nP10: \r\n\r\nВложенные файлы:\r\n\\\\?\\C:\\ProgramData\\Micr",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:51:03",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1014,
+      "source": "Microsoft-Windows-DNS-Client",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "Разрешение имен для имени cmp1-fra1.steamserver.net истекло после отсутствия ответа от настроенных серверов DNS.\r\n",
+      "category": 1014,
+      "user": "NETWORK SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:05",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:05Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "application",
+      "event_id": 1073742864,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:52:20",
+      "last_time": "2026-03-30 10:49:24",
+      "count": 4,
+      "message": "Конфигурация оборудования изменилась (по сравнению с последней загрузкой).\r\n ИД приложения: 55c92734-d682-4d71-983e-d6ec3f16059f; ИД SKU: 2de67392-b7a... [повторяется 4 раз, 2026-03-30 10:52:20 - 2026-03-30 10:49:24]",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "application",
+      "event_id": -1073725430,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:52:20",
+      "last_time": "2026-03-30 10:49:23",
+      "count": 3,
+      "message": "Миграция прежних версий без подключения к сети прошла успешно.\r\n [повторяется 3 раз, 2026-03-30 10:52:20 - 2026-03-30 10:49:23]",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:44",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1014,
+      "source": "Microsoft-Windows-DNS-Client",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "Разрешение имен для имени p2p-fra2.discovery.steamserver.net истекло после отсутствия ответа от настроенных серверов DNS.\r\n",
+      "category": 1014,
+      "user": "NETWORK SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:47",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 43,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка начата: ОС Windows начала устанавливать следующее обновление: 9WZDNCRFJBMP-MICROSOFT.WINDOWSSTORE\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 19,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка завершена: следующее обновление было успешно установлено: 9WZDNCRFJBMP-MICROSOFT.WINDOWSSTORE\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:58",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 43,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка начата: ОС Windows начала устанавливать следующее обновление: 9NBLGGH4LS1F-Microsoft.StorePurchaseApp\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "system",
+      "event_id": 44,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:52:58",
+      "last_time": "2026-03-30 10:50:25",
+      "count": 36,
+      "message": "Центр обновления Windows начал скачивать обновление.\r\n [повторяется 36 раз, 2026-03-30 10:52:58 - 2026-03-30 10:50:25]",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:59",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 19,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка завершена: следующее обновление было успешно установлено: 9NBLGGH4LS1F-Microsoft.StorePurchaseApp\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "system",
+      "event_id": 16,
+      "source": "Microsoft-Windows-Kernel-General",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:53:00",
+      "last_time": "2026-03-30 10:52:45",
+      "count": 5,
+      "message": " [повторяется 5 раз, 2026-03-30 10:53:00 - 2026-03-30 10:52:45]",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:53:00",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 43,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка начата: ОС Windows начала устанавливать следующее обновление: 9WZDNCRFHWD2-Microsoft.MicrosoftSolitaireCollection\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:53:01",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 19,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка завершена: следующее обновление было успешно установлено: 9WZDNCRFHWD2-Microsoft.MicrosoftSolitaireCollection\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:53:30",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:30Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:50:47",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1001,
+      "source": "Windows Error Reporting",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Контейнер ошибки 1969291181199259084, тип 5\r\nИмя события: StoreAgentScanForUpdatesFailure0\r\nОтклик: Нет данных\r\nИдентификатор CAB: 0\r\n\r\nСигнатура проблемы:\r\nP1: Update;\r\nP2: 8024402c\r\nP3: 19045\r\nP4: 6456\r\nP5: Windows.Desktop\r\nP6: \r\nP7: \r\nP8: \r\nP9: \r\nP10: \r\n\r\nВложенные файлы:\r\n\\\\?\\C:\\ProgramData\\Micr",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "application",
+      "event_id": -1073725430,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:50:58",
+      "last_time": "2026-03-30 10:53:58",
+      "count": 3,
+      "message": "Миграция прежних версий без подключения к сети прошла успешно.\r\n [повторяется 3 раз, 2026-03-30 10:50:58 - 2026-03-30 10:53:58]",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "application",
+      "event_id": 1073742864,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:50:58",
+      "last_time": "2026-03-30 10:52:20",
+      "count": 2,
+      "message": "Конфигурация оборудования изменилась (по сравнению с последней загрузкой).\r\n ИД приложения: 55c92734-d682-4d71-983e-d6ec3f16059f; ИД SKU: 2de67392-b7a... [повторяется 2 раз, 2026-03-30 10:50:58 - 2026-03-30 10:52:20]",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:05",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:05Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "system",
+      "event_id": 16,
+      "source": "Microsoft-Windows-Kernel-General",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 10:52:58",
+      "last_time": "2026-03-30 10:53:56",
+      "count": 4,
+      "message": " [повторяется 4 раз, 2026-03-30 10:52:58 - 2026-03-30 10:53:56]",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:52:59",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 19,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка завершена: следующее обновление было успешно установлено: 9NBLGGH4LS1F-Microsoft.StorePurchaseApp\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:53:00",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 43,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка начата: ОС Windows начала устанавливать следующее обновление: 9WZDNCRFHWD2-Microsoft.MicrosoftSolitaireCollection\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:53:01",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 19,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка завершена: следующее обновление было успешно установлено: 9WZDNCRFHWD2-Microsoft.MicrosoftSolitaireCollection\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:53:30",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:30Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:53:59",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 43,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка начата: ОС Windows начала устанавливать следующее обновление: 9WZDNCRD29V9-MICROSOFT.MICROSOFTOFFICEHUB\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:54:01",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 19,
+      "source": "Microsoft-Windows-WindowsUpdateClient",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Установка завершена: следующее обновление было успешно установлено: 9WZDNCRD29V9-MICROSOFT.MICROSOFTOFFICEHUB\r\n",
+      "category": 1,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:54:29",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:29Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 10:54:32",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 0,
+      "source": "edgeupdate",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Service stopped.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30T11:23:39.930231",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_10-53-33",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 4.2,
+      "ram_usage": 65.8,
+      "ram_used_gb": 10.13,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.19,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 29.15,
+      "network_recv_mb": 523.91,
+      "uptime_seconds": 1774610720.3429263
+    }
+  },
+  {
+    "timestamp": "2026-03-30T11:47:04.525015",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 1.4,
+      "ram_usage": 60.3,
+      "ram_used_gb": 9.3,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.29,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 1.43,
+      "network_recv_mb": 5.56,
+      "uptime_seconds": 1774610718.682735
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:41:47",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 1014,
+      "source": "Microsoft-Windows-DNS-Client",
+      "severity": "warning",
+      "event_type": "warning",
+      "message": "Разрешение имен для имени api.steampowered.com истекло после отсутствия ответа от настроенных серверов DNS.\r\n",
+      "category": 1014,
+      "user": "NETWORK SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:52",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 158,
+      "source": "Microsoft-Windows-Time-Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Поставщик времени \"VMICTimeProvider\" указал, что текущее аппаратное обеспечение и операционная среда не поддерживаются, и их работа остановлена. Это поведение ожидаемо для VMICTimeProvider в средах non-HyperV-guest. Это поведение может быть ожидаемо для текущего поставщика в текущей операционной сре",
+      "category": 0,
+      "user": "LOCAL SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 326,
+      "source": "ESENT",
+      "severity": "info",
+      "event_type": "info",
+      "message": "svchost (22060,D,50) DS_Token_DB: The database engine attached a database (1, C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\DataSharing\\Storage\\DSTokenDB2.dat). (Time=0 seconds)\r\n\r\n\r\n\r\nSaved Cache: 1 0\r\n\r\nAdditional Data: lgposAttach = 000001C0:0002:0268,\ndbv = 1568.110.240\r\n\r\n\r\n\r\nInternal ",
+      "category": 1,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 105,
+      "source": "ESENT",
+      "severity": "info",
+      "event_type": "info",
+      "message": "svchost (22060,D,0) DS_Token_DB: The database engine started a new instance (0). (Time=0 seconds)\r\n\r\n\r\n\r\nAdditional Data:\r\n\r\nlgposV2[] = 000001BF:0001:0000 - 000001BF:000D:0A50 - 000001BF:000E:0000 - 000001BF:000E:0000 (00000000:0000:0000)\ncReInits = 1\n\r\n\r\n\r\n\r\nInternal Timing Sequence: \n[1] 0.000748",
+      "category": 1,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 302,
+      "source": "ESENT",
+      "severity": "info",
+      "event_type": "info",
+      "message": "svchost (22060,U,98) DS_Token_DB: СУБД успешно завершила восстановление.\r\n",
+      "category": 3,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 301,
+      "source": "ESENT",
+      "severity": "info",
+      "event_type": "info",
+      "message": "svchost (22060,R,98) DS_Token_DB: The database engine has finished replaying logfile C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\DataSharing\\Storage\\DSS.log.\r\n\r\n\r\n\r\nProcessing Stats: \n[1] 0.013460 -0.004024 (23) CM -0.004739 (30) WT +J(CM:23, PgRf:29, Rd:0/23, Dy:3/3, Lg:52633/475) +M(C:1",
+      "category": 3,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": -1073725430,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Миграция прежних версий без подключения к сети прошла успешно.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 300,
+      "source": "ESENT",
+      "severity": "info",
+      "event_type": "info",
+      "message": "svchost (22060,R,98) DS_Token_DB: СУБД осуществляет подготовку к восстановлению.\r\n",
+      "category": 3,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:53",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 102,
+      "source": "ESENT",
+      "severity": "info",
+      "event_type": "info",
+      "message": "svchost (22060,P,98) DS_Token_DB: Запущен новый экземпляр (0) СУБД (10.00.19045.0000).\r\n",
+      "category": 1,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:45:54",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 37,
+      "source": "Microsoft-Windows-Time-Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "NTP-клиент поставщика времени получает действительные данные о времени от time.windows.com,0x9 (ntp.m|0x9|0.0.0.0:123->20.101.57.9:123).\r\n",
+      "category": 0,
+      "user": "LOCAL SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "system",
+      "event_id": 1,
+      "source": "Microsoft-Windows-Kernel-General",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 11:46:07",
+      "last_time": "2026-03-30 11:46:07",
+      "count": 3,
+      "message": "Возможное обнаружение CVE: 2026-03-30T08:46:07.3177098Z\r\nДополнительные сведения: 2026-03-30T08:46:07.3172252Z\r\n\r\nЭто событие создано после выявления ... [повторяется 3 раз, 2026-03-30 11:46:07 - 2026-03-30 11:46:07]",
+      "category": 5,
+      "user": "LOCAL SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event_grouped",
+    "data": {
+      "log": "system",
+      "event_id": 24,
+      "source": "Microsoft-Windows-Kernel-General",
+      "severity": "info",
+      "event_type": "info",
+      "first_time": "2026-03-30 11:46:07",
+      "last_time": "2026-03-30 11:46:07",
+      "count": 3,
+      "message": " [повторяется 3 раз, 2026-03-30 11:46:07 - 2026-03-30 11:46:07]",
+      "category": 11,
+      "user": "LOCAL SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:46:07",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 35,
+      "source": "Microsoft-Windows-Time-Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Служба времени выполняет синхронизацию системного времени с источником времени time.windows.com,0x9 (ntp.m|0x9|0.0.0.0:123->20.101.57.9:123) с идентификатором ссылки 154756372. Текущий номер локальной страты: 4.\r\n",
+      "category": 0,
+      "user": "LOCAL SERVICE\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:46:12",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 16,
+      "source": "Microsoft-Windows-Kernel-General",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 0,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:46:13",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 10000,
+      "source": "Microsoft-Windows-RestartManager",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Запуск сеанса 1 - 2026-03-30T08:46:13.7778774Z.\r\n",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:46:22",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 10001,
+      "source": "Microsoft-Windows-RestartManager",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Завершение сеанса 1, запущенного 2026-03-30T08:46:13.7778774Z.\r\n",
+      "category": 0,
+      "user": "etotimoxa\\DESKTOP-NIOUKC3"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 11:46:22",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-47-00",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1073758208,
+      "source": "Software Protection Platform Service",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Перезапуск службы защиты программного обеспечения успешно запланирован на 2026-04-02T08:35:22Z. Причина: RulesEngine.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30T11:48:17.525083",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_11-48-14",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 2.7,
+      "ram_usage": 60.5,
+      "ram_used_gb": 9.32,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.29,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 1.61,
+      "network_recv_mb": 6.53,
+      "uptime_seconds": 1774610718.6827347
+    }
+  },
+  {
+    "timestamp": "2026-03-30T12:40:39.475344",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-40-26",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 21.2,
+      "ram_usage": 61.6,
+      "ram_used_gb": 9.49,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.46,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 9.56,
+      "network_recv_mb": 55.69,
+      "uptime_seconds": 1774610718.682735
+    }
+  },
+  {
+    "timestamp": "2026-03-30 12:11:25",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-40-26",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 507,
+      "source": "Microsoft-Windows-Kernel-Power",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 158,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30 12:11:28",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-40-26",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": -1056899039,
+      "source": "SideBySide",
+      "severity": "error",
+      "event_type": "error",
+      "message": "Ошибка при создании контекста активации для \"C:\\Windows\\SystemTemp\\sdwra_13232_821143490\\browser.exe\".\r\nНе найдена зависимая сборка \"26.3.1.981,language=\"&#x2a;\",type=\"win32\",version=\"26.3.1.981\"\".\r\nИспользуйте sxstrace.exe для подробной диагностики.\r\n",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 12:14:12",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-40-26",
+    "type": "windows_event",
+    "data": {
+      "log": "application",
+      "event_id": 1001,
+      "source": "Windows Error Reporting",
+      "severity": "info",
+      "event_type": "info",
+      "message": "Контейнер ошибки 1390395951838734559, тип 5\r\nИмя события: RADAR_PRE_LEAK_64\r\nОтклик: Нет данных\r\nИдентификатор CAB: 0\r\n\r\nСигнатура проблемы:\r\nP1: browser.exe\r\nP2: 26.3.1.981\r\nP3: 10.0.19045.2.0.0\r\nP4: \r\nP5: \r\nP6: \r\nP7: \r\nP8: \r\nP9: \r\nP10: \r\n\r\nВложенные файлы:\r\n\\\\?\\C:\\Users\\898F~1\\AppData\\Local\\Temp\\R",
+      "category": 0,
+      "user": null
+    }
+  },
+  {
+    "timestamp": "2026-03-30 12:31:24",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-40-26",
+    "type": "windows_event",
+    "data": {
+      "log": "system",
+      "event_id": 16,
+      "source": "Microsoft-Windows-Kernel-General",
+      "severity": "info",
+      "event_type": "info",
+      "message": "",
+      "category": 0,
+      "user": "СИСТЕМА\\NT AUTHORITY"
+    }
+  },
+  {
+    "timestamp": "2026-03-30T12:41:57.915092",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-41-55",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 1.8,
+      "ram_usage": 62.0,
+      "ram_used_gb": 9.55,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.46,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 9.77,
+      "network_recv_mb": 56.95,
+      "uptime_seconds": 1774610718.682735
+    }
+  },
+  {
+    "timestamp": "2026-03-30T12:42:36.237283",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-42-33",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 4.7,
+      "ram_usage": 61.9,
+      "ram_used_gb": 9.54,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.46,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 9.87,
+      "network_recv_mb": 57.53,
+      "uptime_seconds": 1774610718.6827347
+    }
+  },
+  {
+    "timestamp": "2026-03-30T12:56:34.334705",
+    "computer_name": "DESKTOP-NIOUKC3",
+    "session_token": "DESKTOP-NIOUKC3_2026-03-30_12-56-06",
+    "type": "metric",
+    "data": {
+      "cpu_usage": 2.1,
+      "ram_usage": 60.8,
+      "ram_used_gb": 9.36,
+      "ram_total_gb": 15.41,
+      "disk_usage": 89.6,
+      "disk_used_gb": 422.46,
+      "disk_total_gb": 471.3,
+      "network_sent_mb": 12.03,
+      "network_recv_mb": 72.37,
+      "uptime_seconds": 1774610718.682735
+    }
+  }
+]

@@ -23,7 +23,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QLabel, QPushButton, QTextEdit, QGroupBox, 
                             QMessageBox, QSystemTrayIcon, QMenu, QStatusBar, 
-                            QFrame)
+                            QFrame, QCheckBox, QDialog)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
 from PyQt6.QtGui import QFont, QTextCursor, QAction, QIcon, QPixmap, QColor
 
@@ -125,11 +125,15 @@ class RemoteAgentThread(QThread):
                 self.log_message.emit(f"Ошибка сбора событий Windows: {e}")
     
     async def update_activity_periodically(self):
+        """Обновляет активность сессии на основе активности системы"""
         while self.is_running and self.is_connected:
             try:
                 await asyncio.sleep(ACTIVITY_UPDATE_INTERVAL)
                 if self.session_id:
-                    DatabaseManager.update_session_activity(self.session_id)
+                    # Проверяем активность системы
+                    if SystemActivityMonitor.is_system_active():
+                        DatabaseManager.update_session_activity(self.session_id)
+                        self.log_message.emit(f"Активность системы подтверждена, сессия обновлена")
             except Exception as e:
                 self.log_message.emit(f"Ошибка обновления активности: {e}")
     
@@ -144,10 +148,13 @@ class RemoteAgentThread(QThread):
                 if not self.is_running:
                     break
                 
+                self.log_message.emit("Полночь, переключение на новый файл...")
                 self.json_logger.switch_to_new_day()
+                
                 uploaded = self.cloud_uploader.check_and_upload()
                 if uploaded > 0:
                     DatabaseManager.update_json_sent_count(self.session_id, uploaded)
+                    self.log_message.emit(f"Загружено файлов в облако: {uploaded}")
                 
                 events = WindowsEventCollector.get_events_last_30min()
                 if events:
@@ -157,19 +164,31 @@ class RemoteAgentThread(QThread):
                 metrics = SystemInfoCollector.get_performance_metrics()
                 self.json_logger.add_metric(metrics)
                 
+                # Проверяем и помечаем вчерашний файл для отправки
+                if self.json_logger.check_and_mark_yesterday_file():
+                    self.log_message.emit("Вчерашний файл помечен для отправки")
+                
             except Exception as e:
                 self.log_message.emit(f"Ошибка проверки полуночи: {e}")
     
     async def check_and_upload_on_startup(self):
+        """Проверяет и загружает файлы при запуске"""
         uploaded = self.cloud_uploader.check_and_upload()
         if uploaded > 0:
             DatabaseManager.update_json_sent_count(self.session_id, uploaded)
+            self.log_message.emit(f"Загружено файлов при старте: {uploaded}")
+        
+        # Проверяем и помечаем вчерашний файл
+        if self.json_logger.check_and_mark_yesterday_file():
+            self.log_message.emit("Вчерашний файл помечен для отправки")
     
     async def check_urgent_upload(self):
         while self.is_running:
             try:
                 await asyncio.sleep(60)
-                self.cloud_uploader.check_and_upload()
+                uploaded = self.cloud_uploader.check_and_upload()
+                if uploaded > 0:
+                    DatabaseManager.update_json_sent_count(self.session_id, uploaded)
             except:
                 pass
     
@@ -384,6 +403,99 @@ class RemoteAgentThread(QThread):
         self.log_message.emit(f"✅ Агент остановлен")
 
 
+class HardwareChangeDialog(QDialog):
+    """Диалог для выбора действия при изменении железа"""
+    
+    def __init__(self, computer_data: Dict, new_hardware_config_id: int, parent=None):
+        super().__init__(parent)
+        self.computer_data = computer_data
+        self.new_hardware_config_id = new_hardware_config_id
+        self.choice = None  # 'update' или 'new'
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("Изменение конфигурации оборудования")
+        self.setFixedSize(500, 300)
+        self.setStyleSheet("""
+            QDialog { background-color: white; border-radius: 10px; }
+            QLabel { color: #333333; }
+            QPushButton { 
+                background-color: #ff8c42; 
+                color: white; 
+                border: none; 
+                padding: 10px; 
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #ff6b2c; }
+            QPushButton#cancelBtn {
+                background-color: #e74c3c;
+            }
+            QPushButton#cancelBtn:hover {
+                background-color: #c0392b;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(20)
+        
+        title = QLabel("⚠️ Изменение конфигурации оборудования")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #ff8c42;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        info_text = f"""
+        <div style='text-align: center;'>
+            <p>Обнаружено изменение аппаратной конфигурации компьютера.</p>
+            <p><b>Компьютер:</b> {self.computer_data.get('hostname', 'Unknown')}</p>
+            <p><b>MAC адрес:</b> {self.computer_data.get('mac_address', 'Unknown')}</p>
+            <p><b>Старая конфигурация ID:</b> {self.computer_data.get('hardware_config_id', 'None')}</p>
+            <p><b>Новая конфигурация ID:</b> {self.new_hardware_config_id}</p>
+            <br>
+            <p>Выберите действие:</p>
+        </div>
+        """
+        
+        info_label = QLabel(info_text)
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        btn_layout = QHBoxLayout()
+        
+        update_btn = QPushButton("Обновить конфигурацию")
+        update_btn.clicked.connect(lambda: self.on_choice('update'))
+        btn_layout.addWidget(update_btn)
+        
+        new_btn = QPushButton("Зарегистрировать как новый компьютер")
+        new_btn.clicked.connect(lambda: self.on_choice('new'))
+        btn_layout.addWidget(new_btn)
+        
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setObjectName("cancelBtn")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        auto_check = QCheckBox("Запомнить выбор и больше не спрашивать")
+        auto_check.setStyleSheet("color: #666666;")
+        auto_check.clicked.connect(lambda checked: self.save_choice(checked))
+        layout.addWidget(auto_check)
+    
+    def on_choice(self, choice: str):
+        self.choice = choice
+        self.accept()
+    
+    def save_choice(self, remember: bool):
+        if remember and self.choice:
+            settings = QSettings("RemoteAccess", "Agent")
+            settings.setValue("hardware_change_action", self.choice)
+    
+    def get_choice(self):
+        return self.choice
+
+
 class RemoteAgentWindow(QMainWindow):
     
     def __init__(self, computer_data: Dict):
@@ -565,6 +677,50 @@ class RemoteAgentWindow(QMainWindow):
         self.fps = float(settings.value("fps", 20))
         self.auto_reconnect = settings.value("auto_reconnect", True, type=bool)
         self.minimize_to_tray = settings.value("minimize_to_tray", True, type=bool)
+        self.auto_auth = settings.value("auto_auth", True, type=bool)
+        self.first_run = settings.value("first_run", True, type=bool)
+        
+        if self.first_run:
+            settings.setValue("first_run", False)
+            settings.setValue("auto_start", True)
+            settings.setValue("minimize_to_tray", True)
+            settings.setValue("auto_reconnect", True)
+            settings.setValue("auto_auth", True)
+            self.auto_reconnect = True
+            self.minimize_to_tray = True
+            self.auto_auth = True
+            self.add_to_startup_on_first_run()
+    
+    def add_to_startup_on_first_run(self):
+        try:
+            import winreg
+            import os
+            
+            app_path = sys.executable if getattr(sys, 'frozen', False) else sys.executable
+            app_dir = os.path.dirname(app_path) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+            
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                                r"Software\Microsoft\Windows\CurrentVersion\Run", 
+                                0, winreg.KEY_SET_VALUE)
+            
+            winreg.SetValueEx(key, "RemoteAccessAgent", 0, winreg.REG_SZ, 
+                            f'"{app_path}"')
+            
+            winreg.CloseKey(key)
+            
+            startup_script = os.path.join(os.environ.get("APPDATA", ""), 
+                                          r"Microsoft\Windows\Start Menu\Programs\Startup",
+                                          "remote_access_agent_start.bat")
+            
+            os.makedirs(os.path.dirname(startup_script), exist_ok=True)
+            
+            with open(startup_script, 'w') as f:
+                f.write(f'@echo off\n')
+                f.write(f'cd /d "{app_dir}"\n')
+                f.write(f'start "" "{app_path}"\n')
+                
+        except:
+            pass
     
     def open_settings(self):
         from agent.settings_dialog import SettingsDialog

@@ -18,7 +18,7 @@ def get_base_path() -> Path:
 
 class CloudUploader:
     
-    def __init__(self):
+    def __init__(self, json_logger=None):
         self.access_key = CLOUD_CONFIG['access_key']
         self.secret_key = CLOUD_CONFIG['secret_key']
         self.endpoint_url = CLOUD_CONFIG['endpoint_url']
@@ -32,7 +32,12 @@ class CloudUploader:
         self.temps_folder.mkdir(parents=True, exist_ok=True)
         self.markers_folder.mkdir(parents=True, exist_ok=True)
         
+        self.json_logger = json_logger  # Ссылка на JSONLogger для сброса флага
         self.init_s3_client()
+    
+    def set_json_logger(self, json_logger):
+        """Устанавливает ссылку на JSONLogger для сброса флага после отправки"""
+        self.json_logger = json_logger
     
     def init_s3_client(self):
         try:
@@ -111,6 +116,9 @@ class CloudUploader:
                     if self.upload_file(file_path):
                         sent_marker.touch()
                         uploaded += 1
+                        # Сбрасываем флаг срочной отправки если это urgent файл
+                        if self.json_logger:
+                            self.json_logger.reset_urgent_flag()
                 
                 # Удаляем маркер в любом случае, чтобы не пытаться снова
                 marker_file.unlink()
@@ -152,6 +160,9 @@ class CloudUploader:
                     if self.upload_file(file_path):
                         sent_marker.touch()
                         uploaded += 1
+                        # Сбрасываем флаг срочной отправки
+                        if self.json_logger:
+                            self.json_logger.reset_urgent_flag()
                 
                 # Удаляем маркер после попытки отправки
                 marker_file.unlink()

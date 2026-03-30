@@ -50,7 +50,7 @@ class RemoteAgentThread(QThread):
     client_disconnected = pyqtSignal(str)
     
     def __init__(self, relay_server: str, computer_data: Dict, 
-                 screenshot_interval: float, quality: int = 70):
+                 screenshot_interval: float, quality: int = 60, max_resolution: tuple = (1280, 720)):
         super().__init__()
         self.relay_server = relay_server
         self.computer_data = computer_data
@@ -60,6 +60,7 @@ class RemoteAgentThread(QThread):
         self.hostname = computer_data['hostname']
         self.screenshot_interval = screenshot_interval
         self.quality = quality
+        self.max_resolution = max_resolution  # Максимальное разрешение для оптимизации
         self.is_running = True
         self.is_connected = False
         self.connected_clients = 0
@@ -67,10 +68,13 @@ class RemoteAgentThread(QThread):
         self.streaming_clients = set()
         self.ws = None
         self.sending_screenshots = False
+        self.adaptive_quality = quality  # Адаптивное качество
+        self.network_speed_test_counter = 0  # Счетчик для проверки скорости сети
+        self.fast_network = True  # Флаг быстрой сети
         
         self.json_logger = JSONLogger()
         self.json_logger.set_session(self.hostname, self.session_token)
-        self.cloud_uploader = CloudUploader()
+        self.cloud_uploader = CloudUploader(self.json_logger)
         self.event_grouper = EventGrouper()
         
         self.mouse = MouseController()
@@ -81,11 +85,15 @@ class RemoteAgentThread(QThread):
         except:
             self.screen_width, self.screen_height = 1920, 1080
     
-    def update_settings(self, screenshot_interval: float = None, quality: int = None):
+    def update_settings(self, screenshot_interval: float = None, quality: int = None, 
+                       max_resolution: tuple = None):
         if screenshot_interval is not None:
             self.screenshot_interval = screenshot_interval
         if quality is not None:
             self.quality = quality
+            self.adaptive_quality = quality
+        if max_resolution is not None:
+            self.max_resolution = max_resolution
     
     def run(self):
         asyncio.run(self.agent_main())
@@ -240,28 +248,45 @@ class RemoteAgentThread(QThread):
         for task in tasks:
             task.cancel()
     
-    async def send_system_info(self, ws):
-        try:
-            system_info = {
-                "basic": SystemInfoCollector.get_basic_info(),
-                "metrics": SystemInfoCollector.get_performance_metrics(),
-                "timestamp": datetime.now().isoformat(),
-                "computer_id": self.computer_id,
-                "session_token": self.session_token
-            }
+    def _optimize_screenshot(self, img):
+        """Оптимизирует скриншот: уменьшает разрешение и подбирает качество"""
+        # Уменьшаем разрешение если оно больше максимального
+        max_width, max_height = self.max_resolution
+        width, height = img.size
+        
+        if width > max_width or height > max_height:
+            # Сохраняем пропорции
+            ratio = min(max_width / width, max_height / height)
+            new_width = int(width * ratio)
+            new_height = int(height * ratio)
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        return img
+    
+    async def _adaptive_quality_control(self, send_time):
+        """Адаптивная подстройка качества на основе времени отправки"""
+        self.network_speed_test_counter += 1
+        
+        # Проверяем каждые 10 кадров
+        if self.network_speed_test_counter >= 10:
+            self.network_speed_test_counter = 0
             
-            message = {
-                "type": "system_info",
-                "data": system_info,
-                "computer_id": self.computer_id,
-                "agent_id": self.hostname
-            }
-            
-            await ws.send(json.dumps(message))
-            return True
-        except Exception as e:
-            self.log_message.emit(f"Ошибка отправки system_info: {e}")
-            return False
+            # Если отправка занимает больше 200мс - сеть медленная
+            if send_time > 0.2:
+                if self.fast_network:
+                    self.fast_network = False
+                    self.adaptive_quality = max(30, self.quality - 20)
+                    self.log_message.emit(f"📉 Сеть медленная, качество: {self.adaptive_quality}%")
+                else:
+                    self.adaptive_quality = max(30, self.adaptive_quality - 5)
+            else:
+                # Если отправка быстрая - повышаем качество
+                if not self.fast_network:
+                    self.fast_network = True
+                    self.adaptive_quality = min(self.quality, self.adaptive_quality + 10)
+                    self.log_message.emit(f"📈 Сеть быстрая, качество: {self.adaptive_quality}%")
+                else:
+                    self.adaptive_quality = min(self.quality, self.adaptive_quality + 5)
     
     async def screenshot_loop(self, ws):
         self.sending_screenshots = True
@@ -275,8 +300,14 @@ class RemoteAgentThread(QThread):
                     sct_img = sct.grab(monitor)
                     img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
                     
+                    # Оптимизируем изображение
+                    img = self._optimize_screenshot(img)
+                    
+                    # Используем адаптивное качество
+                    current_quality = self.adaptive_quality
+                    
                     buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=self.quality, optimize=True)
+                    img.save(buffer, format="JPEG", quality=current_quality, optimize=True, progressive=True)
                     img_data = buffer.getvalue()
                     img_b64 = base64.b64encode(img_data).decode()
                     
@@ -288,6 +319,11 @@ class RemoteAgentThread(QThread):
                     }
                     
                     await ws.send(json.dumps(message))
+                
+                send_time = time.time() - start_time
+                
+                # Адаптивная подстройка качества
+                await self._adaptive_quality_control(send_time)
                 
                 elapsed = time.time() - start_time
                 sleep_time = max(0, self.screenshot_interval - elapsed)
@@ -313,7 +349,6 @@ class RemoteAgentThread(QThread):
                         self.connected_clients_list.append(client_id)
                         self.connection_status_changed.emit(True, self.connected_clients)
                         self.client_connected.emit(client_id)
-                        await self.send_system_info(ws)
                 
                 elif cmd_type == "start_stream":
                     self.streaming_clients.add(client_id)
@@ -325,9 +360,6 @@ class RemoteAgentThread(QThread):
                         self.streaming_clients.remove(client_id)
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
-                
-                elif cmd_type == "request_system_info":
-                    await self.send_system_info(ws)
                 
                 elif cmd_type == "mouse_move":
                     await self.handle_mouse_move(data.get("data", {}))
@@ -400,99 +432,6 @@ class RemoteAgentThread(QThread):
         
         DatabaseManager.update_computer_status(self.computer_id, False, self.session_id)
         self.log_message.emit(f"✅ Агент остановлен")
-
-
-class HardwareChangeDialog(QDialog):
-    """Диалог для выбора действия при изменении железа"""
-    
-    def __init__(self, computer_data: Dict, new_hardware_config_id: int, parent=None):
-        super().__init__(parent)
-        self.computer_data = computer_data
-        self.new_hardware_config_id = new_hardware_config_id
-        self.choice = None  # 'update' или 'new'
-        self.init_ui()
-    
-    def init_ui(self):
-        self.setWindowTitle("Изменение конфигурации оборудования")
-        self.setFixedSize(500, 300)
-        self.setStyleSheet("""
-            QDialog { background-color: white; border-radius: 10px; }
-            QLabel { color: #333333; }
-            QPushButton { 
-                background-color: #ff8c42; 
-                color: white; 
-                border: none; 
-                padding: 10px; 
-                border-radius: 6px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #ff6b2c; }
-            QPushButton#cancelBtn {
-                background-color: #e74c3c;
-            }
-            QPushButton#cancelBtn:hover {
-                background-color: #c0392b;
-            }
-        """)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        
-        title = QLabel("⚠️ Изменение конфигурации оборудования")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #ff8c42;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-        
-        info_text = f"""
-        <div style='text-align: center;'>
-            <p>Обнаружено изменение аппаратной конфигурации компьютера.</p>
-            <p><b>Компьютер:</b> {self.computer_data.get('hostname', 'Unknown')}</p>
-            <p><b>MAC адрес:</b> {self.computer_data.get('mac_address', 'Unknown')}</p>
-            <p><b>Старая конфигурация ID:</b> {self.computer_data.get('hardware_config_id', 'None')}</p>
-            <p><b>Новая конфигурация ID:</b> {self.new_hardware_config_id}</p>
-            <br>
-            <p>Выберите действие:</p>
-        </div>
-        """
-        
-        info_label = QLabel(info_text)
-        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        btn_layout = QHBoxLayout()
-        
-        update_btn = QPushButton("Обновить конфигурацию")
-        update_btn.clicked.connect(lambda: self.on_choice('update'))
-        btn_layout.addWidget(update_btn)
-        
-        new_btn = QPushButton("Зарегистрировать как новый компьютер")
-        new_btn.clicked.connect(lambda: self.on_choice('new'))
-        btn_layout.addWidget(new_btn)
-        
-        cancel_btn = QPushButton("Отмена")
-        cancel_btn.setObjectName("cancelBtn")
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(cancel_btn)
-        
-        layout.addLayout(btn_layout)
-        
-        auto_check = QCheckBox("Запомнить выбор и больше не спрашивать")
-        auto_check.setStyleSheet("color: #666666;")
-        auto_check.clicked.connect(lambda checked: self.save_choice(checked))
-        layout.addWidget(auto_check)
-    
-    def on_choice(self, choice: str):
-        self.choice = choice
-        self.accept()
-    
-    def save_choice(self, remember: bool):
-        if remember and self.choice:
-            settings = QSettings("RemoteAccess", "Agent")
-            settings.setValue("hardware_change_action", self.choice)
-    
-    def get_choice(self):
-        return self.choice
 
 
 class RemoteAgentWindow(QMainWindow):
@@ -672,8 +611,8 @@ class RemoteAgentWindow(QMainWindow):
     def load_settings(self):
         settings = QSettings("RemoteAccess", "Agent")
         self.server = settings.value("server", "ws://localhost:9001")
-        self.quality = int(settings.value("quality", 70))
-        self.fps = float(settings.value("fps", 20))
+        self.quality = int(settings.value("quality", 60))
+        self.fps = float(settings.value("fps", 30))
         self.auto_reconnect = settings.value("auto_reconnect", True, type=bool)
         self.minimize_to_tray = settings.value("minimize_to_tray", True, type=bool)
         self.auto_auth = settings.value("auto_auth", True, type=bool)

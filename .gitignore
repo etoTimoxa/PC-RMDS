@@ -1,2 +1,4 @@
-.utils\constants.py
-.temps
+Host/credentials.txt
+/Host/temps
+Host/utils/constants.py
+

@@ -10,7 +10,7 @@ ENDPOINT_URL = "https://s3.regru.cloud"
 BUCKET_NAME = "metrics-errors-logs"
 
 # Папка куда скачивать файлы
-DOWNLOAD_FOLDER = r"C:\Users\Тимофей\Desktop\metric_out"
+DOWNLOAD_FOLDER = r"C:\metric_out"
 
 # ==================== ПОДКЛЮЧЕНИЕ ====================
 s3 = boto3.client(

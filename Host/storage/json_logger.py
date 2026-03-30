@@ -45,6 +45,7 @@ class JSONLogger:
         
         # Флаг для отслеживания, был ли файл отправлен срочно
         self.urgent_sent = False
+        self.last_urgent_upload_time = None  # Время последней срочной отправки
     
     def _load_events_info(self):
         self._last_collection_time = None
@@ -129,7 +130,13 @@ class JSONLogger:
         except:
             return []
     
-    def add_metric(self, metrics: Dict):
+    def add_metric(self, metrics: Dict, force_write: bool = False):
+        """Добавляет метрику в файл.
+        
+        Args:
+            metrics: Словарь с метриками
+            force_write: Если True, принудительно записывает в файл (при скачках)
+        """
         records = self.load_records()
         
         record = {
@@ -151,9 +158,20 @@ class JSONLogger:
         self.previous_metrics = metrics.copy()
         
         # Если обнаружена аномалия, помечаем для срочной отправки
-        if anomaly_detected and not self.urgent_sent:
+        if anomaly_detected and self.should_mark_urgent():
             self.mark_for_urgent_upload()
             self.urgent_sent = True
+        
+        # Если принудительная запись (скачок) - сразу помечаем для отправки
+        if force_write and anomaly_detected:
+            self.mark_for_urgent_upload()
+            self.urgent_sent = True
+    
+    def force_write_metric(self, metrics: Dict):
+        """Принудительно записывает метрику при обнаружении скачка.
+        Используется для немедленной записи важных событий.
+        """
+        self.add_metric(metrics, force_write=True)
     
     def add_windows_events(self, events: List[Dict], is_initial: bool = False):
         records = self.load_records()
@@ -255,12 +273,31 @@ class JSONLogger:
     def mark_for_urgent_upload(self):
         """Помечает текущий файл для срочной отправки (не создавая копию)"""
         if self.current_file:
+            # Сбрасываем флаг, чтобы следующий скачок мог снова триггерить отправку
+            self.urgent_sent = False
             marker_file = self.markers_folder / f"urgent_{self.current_file.name}"
             try:
                 with open(marker_file, 'w') as f:
                     f.write(self.current_file.name)
             except:
                 pass
+    
+    def reset_urgent_flag(self):
+        """Сбрасывает флаг срочной отправки после успешной загрузки"""
+        self.urgent_sent = False
+        self.last_urgent_upload_time = datetime.now()
+    
+    def should_mark_urgent(self) -> bool:
+        """Проверяет, нужно ли помечать файл для срочной отправки"""
+        # Если флаг уже установлен, не помечаем снова
+        if self.urgent_sent:
+            return False
+        # Если последняя отправка была менее 30 секунд назад, не помечаем
+        if self.last_urgent_upload_time:
+            time_since_last = (datetime.now() - self.last_urgent_upload_time).total_seconds()
+            if time_since_last < 30:
+                return False
+        return True
     
     def mark_for_end_of_day_upload(self, file_name: str = None):
         """Помечает файл для отправки в конце дня"""

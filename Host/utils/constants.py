@@ -39,9 +39,9 @@ ACTIVITY_UPDATE_INTERVAL = 900
 URGENT_CHECK_INTERVAL = 60
 
 ANOMALY_THRESHOLDS = {
-    'cpu_usage': 30,
-    'ram_usage': 20,
-    'disk_usage': 15
+    'cpu_usage': 90,
+    'ram_usage': 90,
+    'disk_usage': 100
 }
 
 CRITICAL_EVENT_IDS = [1001, 1003, 1005, 1010, 1011, 1015, 1074, 1076, 1078, 1098, 1099, 1101]

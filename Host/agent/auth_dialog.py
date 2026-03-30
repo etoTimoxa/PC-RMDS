@@ -8,10 +8,21 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                             QFrame, QProgressBar, QMessageBox, QPushButton,
                             QLineEdit, QApplication)
 from PyQt6.QtCore import Qt, QTimer, QSettings
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon, QPixmap, QColor
 
 from core.hardware_id import HardwareIDGenerator
 from core.database_manager import DatabaseManager
+
+
+def get_app_icon() -> QIcon:
+    """Возвращает иконку приложения"""
+    icon_path = Path(__file__).parent.parent / "app_icon.ico"
+    if icon_path.exists():
+        return QIcon(str(icon_path))
+    # Если иконка не найдена, создаем цветной квадрат
+    pixmap = QPixmap(32, 32)
+    pixmap.fill(QColor(255, 140, 66))
+    return QIcon(pixmap)
 
 
 def get_base_path() -> Path:
@@ -31,6 +42,7 @@ class AuthChoiceDialog(QDialog):
         self.init_ui()
     
     def init_ui(self):
+        self.setWindowIcon(get_app_icon())
         self.setWindowTitle("Выбор способа входа")
         self.setFixedSize(450, 350)
         self.setModal(True)
@@ -118,6 +130,7 @@ class ManualAuthDialog(QDialog):
         self.init_ui()
     
     def init_ui(self):
+        self.setWindowIcon(get_app_icon())
         self.setWindowTitle("Ручной вход")
         self.setFixedSize(450, 400)
         self.setModal(True)
@@ -248,11 +261,12 @@ class AutoRegisterDialog(QDialog):
         super().__init__(parent)
         self.computer_data = None
         self.auth_success = False
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setWindowFlags(Qt.WindowType.Dialog)
         self.setModal(True)
         self.init_ui()
     
     def init_ui(self):
+        self.setWindowIcon(get_app_icon())
         self.setFixedSize(450, 350)
         self.setStyleSheet("""
             QDialog { background-color: white; border-radius: 10px; }
@@ -420,10 +434,11 @@ class AuthDialog(QDialog):
         self.computer_data = None
         self.auth_success = False
         self.setModal(True)
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setWindowFlags(Qt.WindowType.Dialog)
         self.init_ui()
     
     def init_ui(self):
+        self.setWindowIcon(get_app_icon())
         self.setFixedSize(450, 400)
         self.setStyleSheet("""
             QDialog { background-color: white; border-radius: 10px; }

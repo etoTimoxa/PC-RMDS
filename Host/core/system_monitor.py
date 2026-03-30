@@ -77,8 +77,6 @@ class SystemActivityMonitor:
     def get_system_processes_activity() -> bool:
         """Проверяет наличие системных процессов"""
         try:
-            found_processes = []  # Список для хранения найденных системных процессов
-            
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
                     proc_info = proc.info
@@ -88,7 +86,7 @@ class SystemActivityMonitor:
                     is_system = any(sys_proc.lower() in proc_name for sys_proc in SystemActivityMonitor.SYSTEM_PROCESSES)
                     
                     if is_system:
-                        found_processes.append(f"{proc_info['name']} (PID: {proc_info['pid']})")
+                        return True
                         
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
@@ -96,6 +94,8 @@ class SystemActivityMonitor:
         except Exception as e:
             print(f"❌ Ошибка проверки системных процессов: {e}")
             return False
+        
+        return False
     
     @staticmethod
     def get_network_activity() -> bool:
@@ -197,10 +197,24 @@ class SystemActivityMonitor:
     
     @staticmethod
     def is_system_active() -> bool:
-        """Проверяет активность системы (работа Windows, процессы, сеть, диск)"""
+        """Проверяет активность системы по нескольким критериям"""
         
-        # 1. Проверяем активность системных процессов
-        if SystemActivityMonitor.get_system_processes_activity():
+        # 1. Проверяем ввод пользователя (мышь/клавиатура)
+        last_input_time = SystemActivityMonitor.get_last_input_time()
+        if last_input_time < 300:  # Если ввод был менее 5 минут назад
+            return True
+        
+        # 2. Проверяем загрузку CPU (если выше 5%)
+        cpu_usage = SystemActivityMonitor.get_cpu_usage()
+        if cpu_usage > 5:
+            return True
+        
+        # 3. Проверяем дисковую активность
+        if SystemActivityMonitor.get_disk_activity():
+            return True
+        
+        # 4. Проверяем сетевую активность
+        if SystemActivityMonitor.get_network_activity():
             return True
         
         return False

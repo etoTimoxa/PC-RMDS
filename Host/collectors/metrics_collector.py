@@ -3,19 +3,9 @@ import socket
 import platform
 
 from core.hardware_id import HardwareIDGenerator
-from core.database_manager import DatabaseManager
 
 
 class SystemInfoCollector:
-    
-    @staticmethod
-    def get_basic_info() -> dict:
-        return {
-            "hostname": socket.gethostname(),
-            "ip_address": DatabaseManager.get_local_ip(),
-            "mac_address": HardwareIDGenerator.get_mac_address(),
-            "os_version": f"{platform.system()} {platform.release()}"
-        }
     
     @staticmethod
     def get_performance_metrics() -> dict:

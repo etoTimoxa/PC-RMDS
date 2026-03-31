@@ -12,10 +12,16 @@ from PyQt6.QtGui import QFont, QIcon, QPixmap, QColor
 
 from core.hardware_id import HardwareIDGenerator
 from core.database_manager import DatabaseManager
+from utils.platform_utils import get_config_dir
 
 
 def get_app_icon() -> QIcon:
-    """Возвращает иконку приложения"""
+    """Возвращает иконку приложения (кроссплатформенно)"""
+    # Пробуем PNG (для Linux/AppImage)
+    icon_path = Path(__file__).parent.parent / "app_icon.png"
+    if icon_path.exists():
+        return QIcon(str(icon_path))
+    # Пробуем ICO (для Windows)
     icon_path = Path(__file__).parent.parent / "app_icon.ico"
     if icon_path.exists():
         return QIcon(str(icon_path))
@@ -363,7 +369,7 @@ class AutoRegisterDialog(QDialog):
                     f"Логин: {computer_data['login']}\n"
                     f"Пароль: {computer_data['password']}\n"
                     f"MAC адрес: {computer_data['mac_address']}\n\n"
-                    f"Учетные данные сохранены в файл:\n{get_base_path() / 'credentials.txt'}"
+                    f"Учетные данные сохранены в файл:\n{get_config_dir() / 'credentials.txt'}"
                 )
                 
                 self.computer_data = computer_data
@@ -404,8 +410,8 @@ class AutoRegisterDialog(QDialog):
     def save_credentials_to_file(self, computer_data: dict):
         """Сохраняет учетные данные в файл"""
         try:
-            base_path = get_base_path()
-            cred_file = base_path / "credentials.txt"
+            config_dir = get_config_dir()
+            cred_file = config_dir / "credentials.txt"
             
             with open(cred_file, 'w', encoding='utf-8') as f:
                 f.write("=" * 60 + "\n")

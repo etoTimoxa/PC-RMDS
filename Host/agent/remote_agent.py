@@ -460,17 +460,27 @@ class RemoteAgentWindow(QMainWindow):
             self.create_tray_icon()
     
     def get_app_icon(self) -> QIcon:
-        icon_path = Path(__file__).parent.parent / "app_icon.ico"
-        
-        if not icon_path.exists():
-            icon_path = Path(__file__).parent / "app_icon.ico"
-        
-        if not icon_path.exists():
-            icon_path = Path.cwd() / "app_icon.ico"
-        
+        """Возвращает иконку приложения (кроссплатформенно)"""
+        # Пробуем PNG (для Linux/AppImage)
+        icon_path = Path(__file__).parent.parent / "app_icon.png"
         if icon_path.exists():
             return QIcon(str(icon_path))
         
+        # Пробуем ICO (для Windows)
+        icon_path = Path(__file__).parent.parent / "app_icon.ico"
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+        
+        # Пробуем в текущей директории
+        icon_path = Path.cwd() / "app_icon.png"
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+        
+        icon_path = Path.cwd() / "app_icon.ico"
+        if icon_path.exists():
+            return QIcon(str(icon_path))
+        
+        # Если иконка не найдена, создаем цветной квадрат
         pixmap = QPixmap(32, 32)
         pixmap.fill(QColor(255, 140, 66))
         return QIcon(pixmap)

@@ -7,13 +7,7 @@ import re
 from datetime import datetime
 
 from utils.constants import CLOUD_CONFIG
-
-
-def get_base_path() -> Path:
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent
-    else:
-        return Path(__file__).parent.parent
+from utils.platform_utils import get_data_dir, ensure_dirs
 
 
 class CloudUploader:
@@ -25,8 +19,9 @@ class CloudUploader:
         self.bucket_name = CLOUD_CONFIG['bucket_name']
         
         self.s3 = None
-        base_path = get_base_path()
-        self.temps_folder = base_path / "temps"
+        # Используем platform_utils для определения правильной директории
+        ensure_dirs()
+        self.temps_folder = get_data_dir() / "temps"
         self.markers_folder = self.temps_folder / ".markers"
         
         self.temps_folder.mkdir(parents=True, exist_ok=True)

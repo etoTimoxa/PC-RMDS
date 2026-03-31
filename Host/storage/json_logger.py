@@ -8,21 +8,18 @@ from pathlib import Path
 from typing import List, Dict
 
 from utils.constants import ANOMALY_THRESHOLDS
-
-
-def get_base_path() -> Path:
-    if getattr(sys, 'frozen', False):
-        return Path(sys.executable).parent
-    else:
-        return Path(__file__).parent.parent
+from utils.platform_utils import get_data_dir, ensure_dirs
 
 
 class JSONLogger:
     
     def __init__(self, temps_folder: str = None):
         if temps_folder is None:
-            base_path = get_base_path()
-            self.temps_folder = base_path / "temps"
+            # Используем platform_utils для определения правильной директории
+            # Windows: %APPDATA%/RemoteAccessAgent/temps/
+            # Linux: ~/.local/share/RemoteAccessAgent/temps/
+            ensure_dirs()  # Создаем все необходимые директории
+            self.temps_folder = get_data_dir() / "temps"
         else:
             self.temps_folder = Path(temps_folder)
         

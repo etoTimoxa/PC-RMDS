@@ -9,9 +9,18 @@ from PyQt6.QtWidgets import QApplication
 from agent.auth_dialog import AuthDialog
 from agent.remote_agent import RemoteAgentWindow
 from utils.dependencies import DependencyChecker
+from utils.platform_utils import ensure_dirs, get_platform_name, get_data_dir
 
 
 def main():
+    # Обеспечиваем создание всех необходимых директорий
+    try:
+        ensure_dirs()
+        print(f"Платформа: {get_platform_name()}")
+        print(f"Директория данных: {get_data_dir()}")
+    except Exception as e:
+        print(f"Ошибка инициализации: {e}")
+    
     # Проверяем зависимости при запуске
     try:
         DependencyChecker.print_check_results()

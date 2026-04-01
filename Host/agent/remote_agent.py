@@ -76,9 +76,12 @@ class RemoteAgentThread(QThread):
         self.fast_network = True  # Флаг быстрой сети
         
         self.json_logger = JSONLogger()
-        self.json_logger.set_session(self.hostname, self.session_token)
         self.cloud_uploader = CloudUploader(self.json_logger)
+        self.json_logger.set_session(self.hostname, self.session_token, self.cloud_uploader)
         self.event_grouper = EventGrouper()
+        
+        # Устанавливаем callback для логирования действий пользователя
+        self._setup_user_action_callback()
         
         self.mouse = MouseController()
         self.keyboard = KeyboardController()
@@ -87,6 +90,73 @@ class RemoteAgentThread(QThread):
             self.screen_width, self.screen_height = pyautogui.size()
         except:
             self.screen_width, self.screen_height = 1920, 1080
+    
+    def _setup_user_action_callback(self):
+        """Настраивает callback для логирования действий пользователя."""
+        def on_user_action(action_type: str, description: str, details: dict):
+            # Определяем тип пользователя (клиент или админ)
+            # Приоритет: user_type из события (если есть) > role_id из computer_data
+            user_type = details.get('user_type')
+            if user_type:
+                # Используем тип пользователя из события (client, admin, system)
+                user_role = user_type
+            else:
+                # Fallback на role_id из computer_data
+                user_role = 'client'
+                if self.computer_data.get('role_id') in (2, 3):  # admin или superadmin
+                    user_role = 'admin'
+            
+            # Определяем, удалённо ли выполнено действие
+            is_remote = details.get('is_remote', False)
+            
+            # Добавляем действие в JSON лог
+            self.json_logger.add_user_action(
+                action_type=action_type,
+                description=description,
+                user_id=self.computer_data.get('computer_id'),
+                user_login=self.computer_data.get('login'),
+                user_role=user_role,
+                is_remote=is_remote,
+                details=details,
+                force_write=True  # Сразу записываем важные события
+            )
+            
+            self.log_message.emit(f"📝 Зафиксировано действие: {description}")
+        
+        # Устанавливаем callback в WindowsEventCollector
+        WindowsEventCollector.set_user_action_callback(on_user_action)
+    
+    def _handle_system_shutdown(self):
+        """Обрабатывает сигнал выключения/перезагрузки системы."""
+        self.log_message.emit("⚠️ Обнаружена команда на выключение/перезагрузку системы")
+        
+        # Записываем событие в лог
+        self.json_logger.add_user_action(
+            action_type='shutdown',
+            description='Выключение системы',
+            user_id=self.computer_data.get('computer_id'),
+            user_login=self.computer_data.get('login'),
+            user_role='system',
+            is_remote=False,
+            details={'reason': 'system_shutdown', 'source': 'system_monitor'},
+            force_write=True
+        )
+        
+        # Останавливаем агент
+        self.stop()
+        
+        # Завершаем приложение
+        self._shutdown_app()
+    
+    def _shutdown_app(self):
+        """Завершает приложение Qt."""
+        try:
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app:
+                app.quit()
+        except Exception as e:
+            print(f"Ошибка завершения приложения: {e}")
     
     def update_settings(self, screenshot_interval: float = None, quality: int = None, 
                        max_resolution: tuple = None):
@@ -130,10 +200,35 @@ class RemoteAgentThread(QThread):
                     break
                 events = WindowsEventCollector.get_new_events()
                 if events:
+                    # Проверяем события перезагрузки/выключения
+                    restart_shutdown_events = WindowsEventCollector.detect_restart_shutdown_events(events)
+                    if restart_shutdown_events:
+                        for action_info in restart_shutdown_events:
+                            action_type = action_info.get('action_type', 'shutdown')
+                            # Вызываем callback для логирования действия
+                            if WindowsEventCollector._user_action_callback:
+                                description = 'Перезагрузка компьютера' if action_type == 'restart' else 'Выключение компьютера'
+                                WindowsEventCollector._user_action_callback(action_type, description, action_info)
+                            
+                            # Если обнаружена перезагрузка или выключение
+                            if action_type in ('restart', 'shutdown'):
+                                self.log_message.emit(f"⚠️ Обнаружено {description}")
+                                # Запускаем обработку в отдельной задаче
+                                asyncio.create_task(self._handle_system_shutdown_async())
+                    
                     grouped_events = self.event_grouper.group_events(events)
                     self.json_logger.add_windows_events(grouped_events, is_initial=False)
             except Exception as e:
                 self.log_message.emit(f"Ошибка сбора событий Windows: {e}")
+    
+    async def _handle_system_shutdown_async(self):
+        """Асинхронная обработка сигнала выключения/перезагрузки системы."""
+        try:
+            # Даем время на запись в лог
+            await asyncio.sleep(2)
+            self._handle_system_shutdown()
+        except Exception as e:
+            print(f"Ошибка обработки выключения системы: {e}")
     
     async def update_activity_periodically(self):
         """Обновляет активность сессии на основе активности системы"""
@@ -629,8 +724,10 @@ class RemoteAgentWindow(QMainWindow):
         self.auto_reconnect = settings.value("auto_reconnect", True, type=bool)
         self.minimize_to_tray = settings.value("minimize_to_tray", True, type=bool)
         self.auto_auth = settings.value("auto_auth", True, type=bool)
+        self.auto_start = settings.value("auto_start", True, type=bool)
         self.first_run = settings.value("first_run", True, type=bool)
         
+        # При первом запуске устанавливаем значения по умолчанию
         if self.first_run:
             settings.setValue("first_run", False)
             settings.setValue("auto_start", True)
@@ -640,7 +737,12 @@ class RemoteAgentWindow(QMainWindow):
             self.auto_reconnect = True
             self.minimize_to_tray = True
             self.auto_auth = True
-            self.add_to_startup_on_first_run()
+            self.auto_start = True
+        
+        # Всегда проверяем автозагрузку при запуске
+        # Если автозагрузка включена, добавляем в реестр
+        if self.auto_start:
+            self.add_to_startup()
     
     def add_to_startup_on_first_run(self):
         """Добавляет приложение в автозагрузку (кроссплатформенно)"""
@@ -648,6 +750,20 @@ class RemoteAgentWindow(QMainWindow):
             self._add_to_startup_windows()
         else:
             self._add_to_startup_linux()
+    
+    def add_to_startup(self):
+        """Добавляет приложение в автозагрузку (кроссплатформенно)"""
+        if sys.platform == 'win32':
+            self._add_to_startup_windows()
+        else:
+            self._add_to_startup_linux()
+    
+    def remove_from_startup(self):
+        """Удаляет приложение из автозагрузки (кроссплатформенно)"""
+        if sys.platform == 'win32':
+            self._remove_from_startup_windows()
+        else:
+            self._remove_from_startup_linux()
     
     def _add_to_startup_windows(self):
         """Добавляет в автозагрузку Windows"""
@@ -712,6 +828,40 @@ X-GNOME-Autostart-enabled=true
             
         except Exception as e:
             print(f"Ошибка добавления в автозагрузку Linux: {e}")
+    
+    def _remove_from_startup_windows(self):
+        """Удаляет из автозагрузки Windows"""
+        try:
+            import winreg
+            import os
+            
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                                r"Software\Microsoft\Windows\CurrentVersion\Run", 
+                                0, winreg.KEY_SET_VALUE)
+            try:
+                winreg.DeleteValue(key, "RemoteAccessAgent")
+            except:
+                pass
+            winreg.CloseKey(key)
+            
+            startup_script = os.path.join(os.environ.get("APPDATA", ""), 
+                                          r"Microsoft\Windows\Start Menu\Programs\Startup",
+                                          "remote_access_agent_start.bat")
+            if os.path.exists(startup_script):
+                os.remove(startup_script)
+        except Exception as e:
+            print(f"Ошибка удаления из автозагрузки Windows: {e}")
+    
+    def _remove_from_startup_linux(self):
+        """Удаляет из автозагрузки Linux"""
+        try:
+            import os
+            autostart_dir = os.path.expanduser("~/.config/autostart")
+            desktop_file = os.path.join(autostart_dir, "remote-access-agent.desktop")
+            if os.path.exists(desktop_file):
+                os.remove(desktop_file)
+        except Exception as e:
+            print(f"Ошибка удаления из автозагрузки Linux: {e}")
     
     def open_settings(self):
         from agent.settings_dialog import SettingsDialog

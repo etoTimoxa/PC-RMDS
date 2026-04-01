@@ -62,18 +62,107 @@ ANOMALY_THRESHOLDS = {
 CRITICAL_EVENT_IDS = [1001, 1003, 1005, 1010, 1011, 1015, 1074, 1076, 1078, 1098, 1099, 1101]
 
 # Типы действий пользователя (для логгирования)
+# Каждое действие содержит: описание, тип пользователя (client/admin/superadmin/system), удалённо или локально
 USER_ACTION_TYPES = {
-    'restart': 'Перезагрузка компьютера',
-    'shutdown': 'Выключение компьютера',
-    'registry_change': 'Изменение реестра',
-    'update_install': 'Установка обновления',
-    'config_change': 'Изменение конфигурации',
-    'service_start': 'Запуск службы',
-    'service_stop': 'Остановка службы',
-    'software_install': 'Установка ПО',
-    'software_uninstall': 'Удаление ПО',
-    'file_download': 'Скачивание файла',
-    'settings_change': 'Изменение настроек'
+    # Перезагрузка/выключение Windows (инициировано пользователем через интерфейс)
+    'windows_restart': {
+        'description': 'Перезагрузка Windows',
+        'user_type': 'any',  # Может быть клиент, админ или система
+        'is_remote_capable': True
+    },
+    'windows_shutdown': {
+        'description': 'Выключение Windows',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    # Перезагрузка/выключение системы (инициировано процессом или обновлением)
+    'system_restart': {
+        'description': 'Перезагрузка системы',
+        'user_type': 'system',
+        'is_remote_capable': False
+    },
+    'system_shutdown': {
+        'description': 'Выключение системы',
+        'user_type': 'system',
+        'is_remote_capable': False
+    },
+    # Удалённая перезагрузка/выключение
+    'remote_restart': {
+        'description': 'Удалённая перезагрузка',
+        'user_type': 'admin',
+        'is_remote_capable': True
+    },
+    'remote_shutdown': {
+        'description': 'Удалённое выключение',
+        'user_type': 'admin',
+        'is_remote_capable': True
+    },
+    # Общие действия (для совместимости)
+    'restart': {
+        'description': 'Перезагрузка компьютера',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'shutdown': {
+        'description': 'Выключение компьютера',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'registry_change': {
+        'description': 'Изменение реестра',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'update_install': {
+        'description': 'Установка обновления',
+        'user_type': 'system',
+        'is_remote_capable': False
+    },
+    'config_change': {
+        'description': 'Изменение конфигурации',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'service_start': {
+        'description': 'Запуск службы',
+        'user_type': 'system',
+        'is_remote_capable': False
+    },
+    'service_stop': {
+        'description': 'Остановка службы',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'software_install': {
+        'description': 'Установка ПО',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'software_uninstall': {
+        'description': 'Удаление ПО',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'file_download': {
+        'description': 'Скачивание файла',
+        'user_type': 'any',
+        'is_remote_capable': True
+    },
+    'settings_change': {
+        'description': 'Изменение настроек',
+        'user_type': 'any',
+        'is_remote_capable': True
+    }
+}
+
+# Роли для логгирования
+USER_ROLE_LOG = {
+    'client': 'Клиент',
+    'admin': 'Администратор',
+    'superadmin': 'Супер-администратор',
+    'system': 'Система',
+    'remote': 'Удалённый доступ',
+    'local': 'Локальный доступ'
 }
 
 # Настройки безопасности

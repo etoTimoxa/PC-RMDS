@@ -4,15 +4,23 @@ import json
 import re
 import os
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Callable, Optional
 
-from utils.constants import CRITICAL_EVENT_IDS
+from utils.constants import CRITICAL_EVENT_IDS, USER_ACTION_TYPES
+
+# ID событий Windows для перезагрузки и выключения
+RESTART_SHUTDOWN_EVENT_IDS = [1074, 1076, 2001, 2004, 1000, 1001, 41, -2147482574]
 
 
 class WindowsEventCollector:
     
     _last_record_numbers: Dict[str, int] = {}
     _last_collection_time: datetime = None
+    _user_action_callback: Optional[Callable] = None
+    _last_system_state: Dict[str, bool] = {
+        'was_shutting_down': False,
+        'last_power_state': None
+    }
     
     @staticmethod
     def get_severity(event_type: int, event_id: int = None) -> str:
@@ -412,3 +420,268 @@ class WindowsEventCollector:
             return True
         minutes_since_last = (datetime.now() - cls._last_collection_time).total_seconds() / 60
         return minutes_since_last >= 30
+    
+    @classmethod
+    def set_user_action_callback(cls, callback: Callable[[str, str, dict], None]):
+        """Устанавливает callback для логирования действий пользователя.
+        
+        Callback принимает: (action_type, description, details)
+        """
+        cls._user_action_callback = callback
+    
+    @classmethod
+    def detect_restart_shutdown_events(cls, events: List[Dict]) -> List[Dict]:
+        """Определяет события перезагрузки/выключения в списке событий.
+        
+        Возвращает список обнаруженных событий с дополнительной информацией.
+        """
+        detected_actions = []
+        
+        for event in events:
+            event_id = event.get('event_id')
+            log_name = event.get('log', '').lower()
+            message = event.get('message', '').lower()
+            user = event.get('user')
+            source = event.get('source', '')
+            time_str = event.get('time', '')
+            
+            # Проверяем ID события
+            is_restart_shutdown = event_id in RESTART_SHUTDOWN_EVENT_IDS
+            
+            # Проверяем сообщение на ключевые слова
+            restart_keywords = ['перезагрузка', 'restart', 'reboot', 'shutdown', 'выключение', 'завершение работы']
+            is_restart_shutdown = is_restart_shutdown or any(kw in message for kw in restart_keywords)
+            
+            # Проверяем код события -2147482574 (User32: перезапуск) - инициировано пользователем/процессом
+            # Это событие "Перезапустить" от RuntimeBroker.exe - пользователь нажал кнопку перезагрузки/выключения
+            if event_id == -2147482574 or event_id == 2147482574:
+                # Определяем тип действия (перезагрузка или выключение) по сообщению
+                message_lower = event.get('message', '').lower()
+                if 'перезапу' in message_lower or 'restart' in message_lower:
+                    action_type = 'windows_restart'
+                else:
+                    action_type = 'windows_shutdown'
+                
+                # Определяем, было ли действие удалённым
+                is_remote = False
+                remote_keywords = ['удаленн', 'remote', 'rstrui']
+                if any(kw in message_lower for kw in remote_keywords):
+                    is_remote = True
+                
+                # Определяем тип пользователя на основе того, кто выполнил действие
+                # Для события от User32 - это локальный пользователь (клиент)
+                user_type = 'client'
+                if user:
+                    user_upper = user.upper()
+                    if 'NT AUTHORITY' in user_upper or 'SYSTEM' in user_upper:
+                        user_type = 'system'
+                    elif 'ADMIN' in user_upper or user in ['Тимоха', 'Administrator']:
+                        user_type = 'admin'
+                
+                action_info = {
+                    'event_id': event_id,
+                    'action_type': action_type,
+                    'user': user,
+                    'user_type': user_type,
+                    'is_remote': is_remote,
+                    'source': source,
+                    'time': time_str,
+                    'message': event.get('message', '')
+                }
+                
+                detected_actions.append(action_info)
+                
+                if cls._user_action_callback:
+                    description = USER_ACTION_TYPES.get(action_type, {}).get('description', 'Перезагрузка Windows')
+                    details = {
+                        'user': user,
+                        'user_type': user_type,
+                        'is_remote': is_remote,
+                        'source': source,
+                        'event_id': event_id,
+                        'message': event.get('message', '')
+                    }
+                    try:
+                        cls._user_action_callback(action_type, description, details)
+                    except Exception as e:
+                        print(f"Ошибка в user_action_callback: {e}")
+            
+            # Проверяем код события 1074 - инициировано процессом или удалённо
+            if event_id == 1074 and log_name == 'system':
+                # Это событие инициированного выключения/перезагрузки
+                # Определяем тип (restart или shutdown)
+                is_restart = 'перезагруз' in message.lower() or 'restart' in message.lower() or 'reboot' in message.lower()
+                
+                # Определяем, было ли действие удалённым
+                is_remote = False
+                remote_keywords = ['удаленн', 'remote', 'rstrui', 'shutdown /i', 'shutdown /m', 'завершение работы удаленн']
+                if any(kw in message.lower() for kw in remote_keywords):
+                    is_remote = True
+                
+                # Определяем тип действия и пользователя
+                if is_remote:
+                    # Удалённая перезагрузка/выключение (через админ-панель)
+                    action_type = 'remote_restart' if is_restart else 'remote_shutdown'
+                    user_type = 'admin'
+                else:
+                    # Системная перезагрузка/выключение (обновление, завершение работы и т.д.)
+                    action_type = 'system_restart' if is_restart else 'system_shutdown'
+                    user_type = 'system'
+                
+                action_info = {
+                    'event_id': event_id,
+                    'action_type': action_type,
+                    'user': user,
+                    'user_type': user_type,
+                    'is_remote': is_remote,
+                    'source': source,
+                    'time': time_str,
+                    'message': event.get('message', '')
+                }
+                
+                detected_actions.append(action_info)
+                
+                # Вызываем callback если установлен
+                if cls._user_action_callback:
+                    description = USER_ACTION_TYPES.get(action_type, {}).get('description', action_type)
+                    details = {
+                        'user': user,
+                        'user_type': user_type,
+                        'is_remote': is_remote,
+                        'source': source,
+                        'event_id': event_id,
+                        'message': event.get('message', '')
+                    }
+                    try:
+                        cls._user_action_callback(action_type, description, details)
+                    except Exception as e:
+                        print(f"Ошибка в user_action_callback: {e}")
+            
+            # Событие 41 - критическое выключение (без корректного завершения)
+            elif event_id == 41 and log_name == 'system':
+                action_type = 'system_shutdown'  # Аварийное выключение системы
+                action_info = {
+                    'event_id': event_id,
+                    'action_type': action_type,
+                    'user': 'SYSTEM',
+                    'user_type': 'system',
+                    'is_remote': False,
+                    'source': 'Kernel-General',
+                    'time': time_str,
+                    'message': 'Критическое выключение без корректного завершения работы'
+                }
+                detected_actions.append(action_info)
+                
+                if cls._user_action_callback:
+                    description = USER_ACTION_TYPES.get(action_type, {}).get('description', 'Аварийное выключение компьютера')
+                    details = {
+                        'user': 'SYSTEM',
+                        'user_type': 'system',
+                        'is_remote': False,
+                        'source': 'Kernel-General',
+                        'event_id': event_id,
+                        'message': 'Критическое выключение без корректного завершения работы'
+                    }
+                    try:
+                        cls._user_action_callback(action_type, description, details)
+                    except Exception as e:
+                        print(f"Ошибка в user_action_callback: {e}")
+        
+        return detected_actions
+    
+    @classmethod
+    def check_for_system_shutdown(cls) -> bool:
+        """Проверяет, началась ли перезагрузка или выключение системы.
+        
+        Использует Windows API для определения состояния системы.
+        Возвращает True если система инициировала выключение.
+        """
+        if sys.platform != 'win32':
+            return False
+        
+        try:
+            import ctypes
+            from ctypes import wintypes
+            
+            # Запрашиваем флаги завершения работы
+            EWX_LOGOFF = 0x00000000
+            EWX_SHUTDOWN = 0x00000001
+            EWX_REBOOT = 0x00000002
+            EWX_FORCE = 0x00000004
+            EWX_FORCEIFHUNG = 0x00000010
+            
+            # Проверяем, был ли инициализирован выход
+            # Использузм GetSystemPowerStatus для проверки состояния
+            class SYSTEM_POWER_STATUS(ctypes.Structure):
+                _fields_ = [
+                    ("ACLineStatus", wintypes.BYTE),
+                    ("BatteryFlag", wintypes.BYTE),
+                    ("BatteryLifePercent", wintypes.BYTE),
+                    ("SystemStatusFlag", wintypes.BYTE),
+                    ("BatteryLifeTime", wintypes.DWORD),
+                    ("BatteryFullLifeTime", wintypes.DWORD)
+                ]
+            
+            status = SYSTEM_POWER_STATUS()
+            ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status))
+            
+            return False
+            
+        except Exception as e:
+            print(f"Ошибка проверки состояния системы: {e}")
+            return False
+    
+    @classmethod
+    def get_system_power_status(cls) -> dict:
+        """Возвращает текущее состояние питания системы."""
+        status = {
+            'ac_line_status': 'Unknown',
+            'battery_flag': 'Unknown',
+            'battery_percent': None,
+            'shutting_down': False
+        }
+        
+        if sys.platform != 'win32':
+            return status
+        
+        try:
+            import ctypes
+            from ctypes import wintypes
+            
+            class SYSTEM_POWER_STATUS(ctypes.Structure):
+                _fields_ = [
+                    ("ACLineStatus", wintypes.BYTE),
+                    ("BatteryFlag", wintypes.BYTE),
+                    ("BatteryLifePercent", wintypes.BYTE),
+                    ("SystemStatusFlag", wintypes.BYTE),
+                    ("BatteryLifeTime", wintypes.DWORD),
+                    ("BatteryFullLifeTime", wintypes.DWORD)
+                ]
+            
+            power_status = SYSTEM_POWER_STATUS()
+            ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(power_status))
+            
+            # ACLineStatus: 0=Offline, 1=Online, 255=Unknown
+            if power_status.ACLineStatus == 0:
+                status['ac_line_status'] = 'Offline'
+            elif power_status.ACLineStatus == 1:
+                status['ac_line_status'] = 'Online'
+            
+            # BatteryFlag
+            if power_status.BatteryFlag & 128:  # High
+                status['battery_flag'] = 'High'
+            elif power_status.BatteryFlag & 48:  # Charging or NoSystemBattery
+                status['battery_flag'] = 'Charging'
+            elif power_status.BatteryFlag & 8:  # Low
+                status['battery_flag'] = 'Low'
+            elif power_status.BatteryFlag & 4:  # Critical
+                status['battery_flag'] = 'Critical'
+            
+            # BatteryLifePercent: 0-100, 255=Unknown
+            if power_status.BatteryLifePercent != 255:
+                status['battery_percent'] = power_status.BatteryLifePercent
+            
+        except Exception as e:
+            print(f"Ошибка получения состояния питания: {e}")
+        
+        return status

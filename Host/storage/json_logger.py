@@ -76,9 +76,10 @@ class JSONLogger:
             except:
                 pass
     
-    def set_session(self, computer_name: str, session_token: str):
+    def set_session(self, computer_name: str, session_token: str, cloud_uploader=None):
         self.current_computer_name = computer_name
         self.current_session_token = session_token
+        self._cloud_uploader = cloud_uploader  # Сохраняем для использования в cleanup_old_files
         
         old_date = self.current_date
         self.current_date = datetime.now().date()
@@ -90,7 +91,7 @@ class JSONLogger:
         
         self.create_daily_file()
         self.mark_all_unsent_files()
-        self.cleanup_old_files()
+        self.cleanup_old_files(self._cloud_uploader)
         
         # Сбрасываем флаг срочной отправки при смене дня
         self.urgent_sent = False
@@ -224,8 +225,9 @@ class JSONLogger:
             self._save_events_info(collection_time)
     
     def add_user_action(self, action_type: str, description: str, user_id: int = None,
-                       user_login: str = None, is_remote: bool = False, 
-                       details: Dict = None, force_write: bool = False):
+                       user_login: str = None, user_role: str = 'client',
+                       is_remote: bool = False, details: Dict = None, 
+                       force_write: bool = False):
         """Добавляет действие пользователя в файл.
         
         Args:
@@ -234,6 +236,7 @@ class JSONLogger:
             description: Описание действия
             user_id: ID пользователя (клиент или админ)
             user_login: Логин пользователя
+            user_role: Роль пользователя ('client', 'admin', 'superadmin', 'system')
             is_remote: Выполнено ли действие удаленно (True) или локально (False)
             details: Дополнительные детали действия (словарь)
             force_write: Если True, принудительно записывает в файл
@@ -250,7 +253,9 @@ class JSONLogger:
                 'description': description,
                 'user_id': user_id,
                 'user_login': user_login,
+                'user_role': user_role,
                 'is_remote': is_remote,
+                'access_type': 'remote' if is_remote else 'local',
                 'details': details or {}
             }
         }
@@ -410,8 +415,16 @@ class JSONLogger:
         if self.current_file:
             self.mark_as_sent(self.current_file.name)
     
-    def cleanup_old_files(self):
-        """Очищает старые файлы, оставляя только текущий и вчерашний"""
+    def cleanup_old_files(self, cloud_uploader=None):
+        """Очищает старые файлы, оставляя только текущий и вчерашний.
+        
+        Логика:
+        - Текущий день и вчера - всегда оставляем
+        - Файлы старше 2 дней:
+          - Если есть маркер sent_ (уже отправлен) -> удаляем локальный
+          - Если есть в облаке -> удаляем локальный
+          - Если нет в облаке -> сначала загружаем, затем удаляем
+        """
         try:
             current_date = self.current_date
             files_to_keep = set()
@@ -424,28 +437,84 @@ class JSONLogger:
             if yesterday_file.exists():
                 files_to_keep.add(yesterday_file.name)
             
-            # Проверяем, есть ли файлы с отправленными маркерами
-            sent_markers = list(self.markers_folder.glob("sent_*.json"))
-            for marker in sent_markers:
-                file_name = marker.name.replace("sent_", "")
-                if file_name not in files_to_keep:
-                    file_path = self.temps_folder / file_name
-                    if file_path.exists():
-                        # Оставляем отправленные файлы на 7 дней
-                        date_match = re.search(r'(\d{4}-\d{2}-\d{2})\.json$', file_name)
-                        if date_match:
-                            file_date_str = date_match.group(1)
-                            file_date = datetime.fromisoformat(file_date_str).date()
-                            if (current_date - file_date).days <= 7:
-                                files_to_keep.add(file_name)
+            # Файлы старше 2 дней - проверяем и обрабатываем
+            two_days_ago = current_date - timedelta(days=2)
             
             for file_path in self.temps_folder.glob("*.json"):
-                if file_path.name not in files_to_keep:
+                if file_path.name.startswith('.'):
+                    continue
+                
+                if file_path.name in files_to_keep:
+                    continue
+                
+                # Проверяем возраст файла
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})\.json$', file_path.name)
+                if not date_match:
+                    # Нет даты в имени - удаляем
                     try:
                         file_path.unlink()
                     except:
                         pass
-        except Exception:
+                    continue
+                
+                file_date_str = date_match.group(1)
+                try:
+                    file_date = datetime.fromisoformat(file_date_str).date()
+                except:
+                    try:
+                        file_path.unlink()
+                    except:
+                        pass
+                    continue
+                
+                # Если файл младше 2 дней - пропускаем
+                if file_date > two_days_ago:
+                    continue
+                
+                # Файл старше 2 дней - обрабатываем
+                sent_marker = self.markers_folder / f"sent_{file_path.name}"
+                
+                # Если уже помечен как отправленный - удаляем локальный файл
+                if sent_marker.exists():
+                    try:
+                        file_path.unlink()
+                        print(f"Удален локальный файл {file_path.name} (уже отправлен в облако)")
+                    except:
+                        pass
+                    continue
+                
+                # Проверяем облако
+                if cloud_uploader:
+                    if cloud_uploader.file_exists_in_cloud(file_path.name):
+                        # Файл есть в облаке - удаляем локальный и создаём маркер
+                        try:
+                            file_path.unlink()
+                            sent_marker.touch()  # Создаём маркер что отправлен
+                            print(f"Удален старый файл {file_path.name} (есть в облаке)")
+                        except:
+                            pass
+                    else:
+                        # Файла нет в облаке - загружаем и затем удаляем
+                        print(f"Файл {file_path.name} старше 2 дней, нет в облаке - загружаем...")
+                        success, message = cloud_uploader.upload_file(file_path)
+                        if success:
+                            try:
+                                file_path.unlink()
+                                sent_marker.touch()
+                                print(f"Загружен и удален: {file_path.name}")
+                            except:
+                                pass
+                        else:
+                            print(f"Не удалось загрузить {file_path.name}: {message}")
+                            self.mark_for_end_of_day_upload(file_path.name)
+                else:
+                    # Нет cloud_uploader - просто удаляем
+                    try:
+                        file_path.unlink()
+                    except:
+                        pass
+        except Exception as e:
+            print(f"Ошибка cleanup_old_files: {e}")
             pass
     
     def should_collect_events(self) -> bool:

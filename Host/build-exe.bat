@@ -22,7 +22,7 @@ if errorlevel 1 (
 
 REM Сборка через PyInstaller (исключаем PyQt5 чтобы избежать конфликта)
 echo Сборка приложения через PyInstaller...
-pyinstaller --onefile --windowed --name="%APP_NAME%" --icon=app_icon.ico --add-data "app_icon.ico;." --exclude-module PyQt5 main.py
+pyinstaller --onefile --windowed --name="%APP_NAME%" --icon=app_icon.ico --add-data "app_icon.ico;." --exclude-module PyQt5 --collect-all PyQt6 main.py
 
 if errorlevel 1 (
     echo Ошибка сборки PyInstaller!

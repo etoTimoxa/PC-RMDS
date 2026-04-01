@@ -13,12 +13,37 @@ class HardwareIDGenerator:
     @staticmethod
     def get_cpu_serial() -> str:
         try:
-            if platform.system() == "Windows":
+            system = platform.system()
+            if system == "Windows":
                 cmd = "wmic cpu get processorid"
-                output = subprocess.check_output(cmd, shell=True).decode()
+                output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode()
                 match = re.search(r'[A-F0-9]{8,}', output)
                 if match:
                     return match.group()
+            elif system == "Linux":
+                # Try to get CPU info from /proc/cpuinfo
+                try:
+                    with open('/proc/cpuinfo', 'r') as f:
+                        for line in f:
+                            if 'model name' in line:
+                                return line.split(':')[1].strip()[:32]
+                except:
+                    pass
+                # Try dmidecode
+                try:
+                    output = subprocess.check_output(['dmidecode', '-s', 'processor-version'], stderr=subprocess.DEVNULL).decode().strip()
+                    if output:
+                        return output[:32]
+                except:
+                    pass
+            elif system == "Darwin":
+                # macOS
+                try:
+                    output = subprocess.check_output(['sysctl', '-n', 'machdep.cpu.brand_string'], stderr=subprocess.DEVNULL).decode().strip()
+                    if output:
+                        return output[:32]
+                except:
+                    pass
         except:
             pass
         return "Unknown"
@@ -34,12 +59,30 @@ class HardwareIDGenerator:
     @staticmethod
     def get_disk_serial() -> str:
         try:
-            if platform.system() == "Windows":
+            system = platform.system()
+            if system == "Windows":
                 cmd = "wmic diskdrive get serialnumber"
-                output = subprocess.check_output(cmd, shell=True).decode()
+                output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode()
                 lines = output.strip().split('\n')
                 if len(lines) > 1:
                     return lines[1].strip()
+            elif system == "Linux":
+                # Try to get disk serial from /dev/disk/by-id or lsblk
+                try:
+                    output = subprocess.check_output(['lsblk', '-o', 'SERIAL', '-n'], stderr=subprocess.DEVNULL).decode().strip()
+                    if output:
+                        return output
+                except:
+                    pass
+            elif system == "Darwin":
+                # macOS - try diskutil
+                try:
+                    output = subprocess.check_output(['diskutil', 'info', 'disk0'], stderr=subprocess.DEVNULL).decode()
+                    for line in output.split('\n'):
+                        if 'Disk Number' in line or 'Volume UUID' in line:
+                            return line.split(':')[-1].strip()
+                except:
+                    pass
         except:
             pass
         return "Unknown"
@@ -47,12 +90,32 @@ class HardwareIDGenerator:
     @staticmethod
     def get_motherboard_serial() -> str:
         try:
-            if platform.system() == "Windows":
+            system = platform.system()
+            if system == "Windows":
                 cmd = "wmic baseboard get serialnumber"
-                output = subprocess.check_output(cmd, shell=True).decode()
+                output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode()
                 lines = output.strip().split('\n')
                 if len(lines) > 1:
                     return lines[1].strip()
+            elif system == "Linux":
+                # Try dmidecode
+                try:
+                    output = subprocess.check_output(['dmidecode', '-s', 'baseboard-serial-number'], stderr=subprocess.DEVNULL).decode().strip()
+                    if output and output != "Not Specified":
+                        return output
+                except:
+                    pass
+            elif system == "Darwin":
+                # macOS - use platform UUID
+                try:
+                    output = subprocess.check_output(['ioreg', '-rd1', '-c', 'IOPlatformExpertDevice'], stderr=subprocess.DEVNULL).decode()
+                    for line in output.split('\n'):
+                        if 'IOPlatformSerialNumber' in line:
+                            match = re.search(r'"IOPlatformSerialNumber" = "([^"]+)"', line)
+                            if match:
+                                return match.group(1)
+                except:
+                    pass
         except:
             pass
         return "Unknown"

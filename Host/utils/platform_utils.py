@@ -40,12 +40,17 @@ def get_config_dir() -> Path:
     
     Windows: %APPDATA%/RemoteAccessAgent/config/
     Linux: ~/.config/RemoteAccessAgent/
+    macOS: ~/Library/Application Support/RemoteAccessAgent/
     """
     if sys.platform == 'win32':
         appdata = os.environ.get('APPDATA', '')
         if appdata:
             return Path(appdata) / 'RemoteAccessAgent' / 'config'
         return Path.home() / 'AppData' / 'Roaming' / 'RemoteAccessAgent' / 'config'
+    
+    elif sys.platform == 'darwin':
+        # macOS: ~/Library/Application Support/RemoteAccessAgent/
+        return Path.home() / 'Library' / 'Application Support' / 'RemoteAccessAgent'
     
     else:
         # Linux: ~/.config/RemoteAccessAgent/
@@ -61,12 +66,17 @@ def get_cache_dir() -> Path:
     
     Windows: %LOCALAPPDATA%/RemoteAccessAgent/cache/
     Linux: ~/.cache/RemoteAccessAgent/
+    macOS: ~/Library/Caches/RemoteAccessAgent/
     """
     if sys.platform == 'win32':
         localappdata = os.environ.get('LOCALAPPDATA', '')
         if localappdata:
             return Path(localappdata) / 'RemoteAccessAgent' / 'cache'
         return Path.home() / 'AppData' / 'Local' / 'RemoteAccessAgent' / 'cache'
+    
+    elif sys.platform == 'darwin':
+        # macOS: ~/Library/Caches/RemoteAccessAgent/
+        return Path.home() / 'Library' / 'Caches' / 'RemoteAccessAgent'
     
     else:
         # Linux: ~/.cache/RemoteAccessAgent/

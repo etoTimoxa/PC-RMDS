@@ -223,6 +223,46 @@ class JSONLogger:
             self._last_collection_time = collection_time
             self._save_events_info(collection_time)
     
+    def add_user_action(self, action_type: str, description: str, user_id: int = None,
+                       user_login: str = None, is_remote: bool = False, 
+                       details: Dict = None, force_write: bool = False):
+        """Добавляет действие пользователя в файл.
+        
+        Args:
+            action_type: Тип действия (например, 'restart', 'shutdown', 'registry_change', 
+                        'update_install', 'config_change')
+            description: Описание действия
+            user_id: ID пользователя (клиент или админ)
+            user_login: Логин пользователя
+            is_remote: Выполнено ли действие удаленно (True) или локально (False)
+            details: Дополнительные детали действия (словарь)
+            force_write: Если True, принудительно записывает в файл
+        """
+        records = self.load_records()
+        
+        record = {
+            'timestamp': datetime.now().isoformat(),
+            'computer_name': self.current_computer_name,
+            'session_token': self.current_session_token,
+            'type': 'user_action',
+            'data': {
+                'action_type': action_type,
+                'description': description,
+                'user_id': user_id,
+                'user_login': user_login,
+                'is_remote': is_remote,
+                'details': details or {}
+            }
+        }
+        
+        records.append(record)
+        self.save_records(records)
+        
+        # Если принудительная запись - помечаем для срочной отправки
+        if force_write:
+            self.mark_for_urgent_upload()
+            self.urgent_sent = True
+    
     def check_anomalies(self, current_metrics: Dict) -> bool:
         anomalies = []
         

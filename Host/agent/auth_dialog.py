@@ -1,13 +1,15 @@
+import hashlib
 import socket
 import os
 import sys
+import json
 import traceback
 from pathlib import Path
 from datetime import datetime
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                             QFrame, QProgressBar, QMessageBox, QPushButton,
-                            QLineEdit, QApplication)
-from PyQt6.QtCore import Qt, QTimer, QSettings
+                            QLineEdit, QApplication, QComboBox, QCheckBox, QWidget, QSpacerItem)
+from PyQt6.QtCore import Qt, QTimer, QSettings, QEvent
 from PyQt6.QtGui import QFont, QIcon, QPixmap, QColor
 
 from core.hardware_id import HardwareIDGenerator
@@ -15,17 +17,22 @@ from core.database_manager import DatabaseManager
 from utils.platform_utils import get_config_dir
 
 
+class CustomEvent(QEvent):
+    """Кастомное событие для передачи данных между потоками"""
+    def __init__(self, event_type: str, data: dict = None):
+        super().__init__(QEvent.Type.User + 1)
+        self.event_type = event_type
+        self.data = data or {}
+
+
 def get_app_icon() -> QIcon:
     """Возвращает иконку приложения (кроссплатформенно)"""
-    # Пробуем PNG (для Linux/AppImage)
     icon_path = Path(__file__).parent.parent / "app_icon.png"
     if icon_path.exists():
         return QIcon(str(icon_path))
-    # Пробуем ICO (для Windows)
     icon_path = Path(__file__).parent.parent / "app_icon.ico"
     if icon_path.exists():
         return QIcon(str(icon_path))
-    # Если иконка не найдена, создаем цветной квадрат
     pixmap = QPixmap(32, 32)
     pixmap.fill(QColor(255, 140, 66))
     return QIcon(pixmap)
@@ -39,44 +46,623 @@ def get_base_path() -> Path:
         return Path(__file__).parent.parent
 
 
-class AuthChoiceDialog(QDialog):
-    """Главный диалог выбора способа входа"""
+class AuthDialog(QDialog):
+    """Главный диалог авторизации с переключением между входом и регистрацией"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.choice = None
+        self.computer_data = None
+        self.auth_success = False
+        self.setModal(True)
+        self.setWindowFlags(Qt.WindowType.Dialog)
+        self.init_ui()
+        QTimer.singleShot(100, self.load_saved_credentials)
+    
+    def load_saved_credentials(self):
+        """Загружает сохранённые учётные данные и пытается автоматически войти"""
+        settings = QSettings("RemoteAccess", "Agent")
+        auto_auth = settings.value("auto_auth", False, type=bool)
+        
+        if auto_auth:
+            try:
+                config_dir = get_config_dir()
+                cred_file = config_dir / "credentials.txt"
+                if cred_file.exists():
+                    with open(cred_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    login = None
+                    password = None
+                    for line in content.split('\n'):
+                        if line.startswith('Login:'):
+                            login = line.split(':', 1)[1].strip()
+                        elif line.startswith('Password:'):
+                            password = line.split(':', 1)[1].strip()
+                    
+                    if login and password:
+                        self.do_auto_login(login, password)
+            except Exception as e:
+                print(f"Ошибка загрузки сохранённых данных: {e}")
+        else:
+            self.login_edit.setEnabled(True)
+            self.password_edit.setEnabled(True)
+    
+    def init_ui(self):
+        self.setWindowIcon(get_app_icon())
+        self.setFixedSize(450, 400)
+        self.setStyleSheet("""
+            QDialog { background-color: white; border-radius: 8px; }
+            QLabel { color: #333333; }
+            QLineEdit {
+                border: 1px solid #ff8c42;
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 14px;
+            }
+            #loginBtn {
+                color: white;
+                background-color: #ff8c42;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+            }
+            #loginBtn:hover { background-color: #ff6b2c; }
+            #registerBtn {
+                color: white;
+                background-color: #27ae60;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+            }
+            #registerBtn:hover { background-color: #219a52; }
+            #backBtn {
+                background-color: #95a5a6;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 10px;
+            }
+            #backBtn:hover { background-color: #7f8c8d; }
+            QMessageBox QPushButton {
+                color: #333333;
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                padding: 6px 20px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+        """)
+        
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setSpacing(8)
+        self.main_layout.setContentsMargins(25, 25, 25, 25)
+        
+        # Заголовок
+        self.title_frame = QFrame()
+        self.title_frame.setStyleSheet("background-color: #ff8c42; border-radius: 8px;")
+        self.title_layout = QHBoxLayout(self.title_frame)
+        self.title_layout.setContentsMargins(15, 25, 15, 25)
+        self.title_label = QLabel("⚡ REMOTE ACCESS AGENT")
+        self.title_label.setStyleSheet("color: white; font-size: 20px; font-weight: bold;")
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_layout.addWidget(self.title_label)
+        self.main_layout.addWidget(self.title_frame)
+        
+        # Пустое пространство после заголовка
+        spacer = QSpacerItem(0, 20)
+        self.main_layout.addSpacerItem(spacer)
+        
+        # Приветствие
+        self.welcome_label = QLabel("Добро пожаловать! Войдите в систему")
+        self.welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.welcome_label.setStyleSheet("color: #ff8c42; font-size: 14px; font-weight: bold;")
+        self.main_layout.addWidget(self.welcome_label)
+        
+        # Подсказка для регистрации
+        self.hint_label = QLabel("При необходимости измените логин и пароль:")
+        self.hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hint_label.setStyleSheet("color: #666; font-size: 13px;")
+        self.hint_label.setVisible(False)
+        self.main_layout.addWidget(self.hint_label)
+        
+        # Поля входа
+        self.login_edit = QLineEdit()
+        self.login_edit.setPlaceholderText("Логин")
+        self.login_edit.setMinimumHeight(38)
+        self.login_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.main_layout.addWidget(self.login_edit)
+        
+        self.password_edit = QLineEdit()
+        self.password_edit.setPlaceholderText("Пароль")
+        self.password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_edit.setMinimumHeight(38)
+        self.password_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.password_edit.returnPressed.connect(self.do_login)
+        self.main_layout.addWidget(self.password_edit)
+        
+        # Поля регистрации
+        self.reg_login_edit = QLineEdit()
+        self.reg_login_edit.setPlaceholderText("Логин")
+        self.reg_login_edit.setMinimumHeight(38)
+        self.reg_login_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.reg_login_edit.setVisible(False)
+        self.main_layout.addWidget(self.reg_login_edit)
+        
+        self.reg_password_edit = QLineEdit()
+        self.reg_password_edit.setPlaceholderText("Пароль")
+        self.reg_password_edit.setMinimumHeight(38)
+        self.reg_password_edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.reg_password_edit.setVisible(False)
+        self.main_layout.addWidget(self.reg_password_edit)
+        
+        self.validation_label = QLabel("")
+        self.validation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.validation_label.setStyleSheet("color: #e74c3c; font-size: 12px;")
+        self.main_layout.addWidget(self.validation_label)
+        
+        # Кнопки
+        self.login_btn = QPushButton("Войти")
+        self.login_btn.setObjectName("loginBtn")
+        self.login_btn.setMinimumHeight(40)
+        self.login_btn.clicked.connect(self.do_login)
+        self.main_layout.addWidget(self.login_btn)
+        
+        self.reg_btn = QPushButton("Зарегистрировать")
+        self.reg_btn.setObjectName("registerBtn")
+        self.reg_btn.setMinimumHeight(40)
+        self.reg_btn.clicked.connect(self.do_register)
+        self.reg_btn.setVisible(False)
+        self.main_layout.addWidget(self.reg_btn)
+        
+        # Статус и ошибка
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("color: #ff8c42; font-weight: bold; font-size: 13px;")
+        self.status_label.setVisible(False)
+        self.main_layout.addWidget(self.status_label)
+        
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 13px;")
+        self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.error_label.setVisible(False)
+        self.main_layout.addWidget(self.error_label)
+        
+        # Кнопки переключения
+        self.register_link_btn = QPushButton("Зарегистрироваться")
+        self.register_link_btn.setObjectName("registerBtn")
+        self.register_link_btn.setMinimumHeight(38)
+        self.register_link_btn.clicked.connect(self.show_register_form)
+        self.main_layout.addWidget(self.register_link_btn)
+        
+        # Скрываем кнопку регистрации если уже есть учётные данные
+        self.check_credentials_and_hide_register()
+    
+    def check_credentials_and_hide_register(self):
+        """Проверяет наличие файла учётных данных и скрывает кнопку регистрации"""
+        try:
+            config_dir = get_config_dir()
+            cred_file = config_dir / "credentials.txt"
+            if cred_file.exists():
+                self.register_link_btn.setVisible(False)
+        except Exception as e:
+            print(f"Ошибка проверки учётных данных: {e}")
+        
+        self.back_btn = QPushButton("Назад к входу")
+        self.back_btn.setObjectName("backBtn")
+        self.back_btn.setMinimumHeight(38)
+        self.back_btn.setVisible(False)
+        self.back_btn.clicked.connect(self.show_login_form)
+        self.main_layout.addWidget(self.back_btn)
+    
+    def show_register_form(self):
+        """Переключает на форму регистрации"""
+        computer_name = socket.gethostname()
+        self.reg_login_edit.setText(computer_name.lower().replace('-', '_').replace(' ', '_')[:20])
+        # Генерируем новый пароль при каждом открытии формы регистрации
+        self.reg_password_edit.setText(HardwareIDGenerator.generate_unique_id()[:12])
+        # Сохраняем пароль для регистрации, но не показываем его повторно
+        self._temp_password = self.reg_password_edit.text()
+        
+        self.title_frame.setStyleSheet("background-color: #27ae60; border-radius: 8px;")
+        self.welcome_label.setText("Создайте аккаунт для регистрации")
+        self.welcome_label.setStyleSheet("color: #27ae60; font-size: 14px; font-weight: bold;")
+        
+        self.login_edit.setVisible(False)
+        self.password_edit.setVisible(False)
+        self.login_btn.setVisible(False)
+        self.register_link_btn.setVisible(False)
+        
+        self.hint_label.setVisible(True)
+        self.reg_login_edit.setVisible(True)
+        self.reg_password_edit.setVisible(True)
+        self.reg_btn.setVisible(True)
+        self.back_btn.setVisible(True)
+        self.error_label.setVisible(False)
+        self.status_label.setVisible(False)
+    
+    def show_login_form(self):
+        """Переключает на форму входа"""
+        self.title_frame.setStyleSheet("background-color: #ff8c42; border-radius: 8px;")
+        self.welcome_label.setText("Добро пожаловать! Войдите в систему")
+        self.welcome_label.setStyleSheet("color: #ff8c42; font-size: 14px; font-weight: bold;")
+        
+        self.hint_label.setVisible(False)
+        self.reg_login_edit.setVisible(False)
+        self.reg_password_edit.setVisible(False)
+        self.reg_btn.setVisible(False)
+        
+        # Очищаем данные регистрации при переходе на форму входа
+        self.reg_login_edit.clear()
+        self.reg_password_edit.clear()
+        if hasattr(self, '_temp_password'):
+            delattr(self, '_temp_password')
+        
+        self.login_edit.setVisible(True)
+        self.password_edit.setVisible(True)
+        self.login_btn.setVisible(True)
+        self.back_btn.setVisible(False)
+        self.register_link_btn.setVisible(True)
+        self.error_label.setVisible(False)
+        self.status_label.setVisible(False)
+    
+    def do_auto_login(self, login: str, password: str):
+        """Автоматический вход с сохранёнными данными"""
+        try:
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            connection = DatabaseManager.get_connection()
+            if not connection:
+                return
+            
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT user_id, login, password_hash, full_name, role_id, is_active
+                    FROM user WHERE login = %s AND password_hash = %s
+                """, (login, password_hash))
+                
+                user_data = cursor.fetchone()
+                
+                if not user_data:
+                    return
+                
+                if not user_data.get('is_active', 0):
+                    return
+                
+                user_id = user_data['user_id']
+                role_id = user_data.get('role_id')
+                is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
+                
+                cursor.execute("UPDATE user SET last_login = NOW() WHERE user_id = %s", (user_id,))
+                connection.commit()
+                
+                computer_result = DatabaseManager.register_computer_for_user(user_id)
+                
+                if not computer_result:
+                    return
+                
+                if computer_result.get('already_bound'):
+                    other_user = computer_result.get('other_user_login', 'Unknown')
+                    print(f"Компьютер привязан к другому пользователю ({other_user}). Требуется ручной вход.")
+                    
+                    QMessageBox.warning(
+                        self,
+                        "Компьютер уже привязан",
+                        f"Этот компьютер уже привязан к пользователю '{other_user}'.\n\n"
+                        f"Автоматический вход невозможен.\n"
+                        f"Войдите вручную для перепривязки."
+                    )
+                    return
+                
+                computer_id = computer_result['computer_id']
+                hostname = computer_result['hostname']
+                mac_address = computer_result['mac_address']
+                
+                session_id = DatabaseManager.create_session(computer_id, hostname)
+                session_token = None
+                if session_id:
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
+                        token_data = cursor.fetchone()
+                        session_token = token_data['session_token'] if token_data else None
+                
+                self.computer_data = {
+                    'computer_id': computer_id,
+                    'hostname': hostname,
+                    'mac_address': mac_address,
+                    'login': login,
+                    'password': password,
+                    'user_id': user_id,
+                    'role_id': role_id,
+                    'computer_type': 'admin' if is_admin else 'client',
+                    'session_id': session_id,
+                    'session_token': session_token,
+                    'is_new': computer_result.get('is_new', False),
+                    'hardware_changed': computer_result.get('hardware_changed', False)
+                }
+                
+                self.auth_success = True
+                self.accept()
+                
+        except Exception as e:
+            print(f"Ошибка автоматического входа: {e}")
+    
+    def do_login(self):
+        """Выполняем вход и регистрацию компьютера"""
+        login = self.login_edit.text().strip()
+        password = self.password_edit.text().strip()
+        
+        if not login or not password:
+            self.show_error("Введите логин и пароль")
+            return
+        
+        self.login_edit.setEnabled(False)
+        self.password_edit.setEnabled(False)
+        self.login_btn.setEnabled(False)
+        
+        self.status_label.setText("Проверка учетных данных...")
+        self.status_label.setVisible(True)
+        self.status_label.setStyleSheet("color: #ff8c42; font-weight: bold; font-size: 11px;")
+        self.error_label.setVisible(False)
+        QApplication.processEvents()
+        
+        try:
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            
+            connection = DatabaseManager.get_connection()
+            if not connection:
+                raise Exception("Нет подключения к базе данных")
+            
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT user_id, login, password_hash, full_name, role_id, is_active
+                    FROM user WHERE login = %s AND password_hash = %s
+                """, (login, password_hash))
+                
+                user_data = cursor.fetchone()
+                
+                if not user_data:
+                    raise Exception("Неверный логин или пароль")
+                
+                if not user_data.get('is_active', 0):
+                    raise Exception("Пользователь не активен")
+                
+                user_id = user_data['user_id']
+                role_id = user_data.get('role_id')
+                is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
+                
+                cursor.execute("UPDATE user SET last_login = NOW() WHERE user_id = %s", (user_id,))
+                connection.commit()
+            
+            self.status_label.setText("Регистрация компьютера...")
+            QApplication.processEvents()
+            
+            computer_result = DatabaseManager.register_computer_for_user(user_id)
+            
+            if not computer_result:
+                raise Exception("Не удалось зарегистрировать компьютер")
+            
+            if computer_result.get('already_bound'):
+                # Автоматически перепривязываем компьютер к текущему пользователю
+                other_user = computer_result.get('other_user_login', 'Unknown')
+                print(f"Компьютер был привязан к '{other_user}', перепривязываем к '{login}'")
+                
+                computer_result = DatabaseManager.register_computer_for_user(user_id, force_rebind=True)
+                if not computer_result:
+                    raise Exception("Не удалось перепривязать компьютер")
+            
+            computer_id = computer_result['computer_id']
+            hostname = computer_result['hostname']
+            mac_address = computer_result['mac_address']
+            
+            session_id = DatabaseManager.create_session(computer_id, hostname)
+            session_token = None
+            if session_id:
+                connection = DatabaseManager.get_connection()
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
+                    token_data = cursor.fetchone()
+                    session_token = token_data['session_token'] if token_data else None
+            
+            self.computer_data = {
+                'computer_id': computer_id,
+                'hostname': hostname,
+                'mac_address': mac_address,
+                'login': login,
+                'password': password,
+                'user_id': user_id,
+                'role_id': role_id,
+                'computer_type': 'admin' if is_admin else 'client',
+                'session_id': session_id,
+                'session_token': session_token,
+                'is_new': computer_result.get('is_new', False),
+                'hardware_changed': computer_result.get('hardware_changed', False)
+            }
+            
+            self.save_credentials(self.computer_data)
+            
+            settings = QSettings("RemoteAccess", "Agent")
+            settings.setValue("auto_auth", True)
+            settings.sync()
+            
+            self.auth_success = True
+            self.accept()
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Ошибка авторизации: {error_msg}")
+            self.show_error(error_msg)
+            
+            self.login_edit.setEnabled(True)
+            self.password_edit.setEnabled(True)
+            self.login_btn.setEnabled(True)
+            self.status_label.setVisible(False)
+    
+    def do_register(self):
+        """Выполняет регистрацию нового клиента"""
+        login = self.reg_login_edit.text().strip()
+        password = self.reg_password_edit.text().strip()
+        
+        if not login:
+            self.show_register_error("Введите логин")
+            return
+        if not password:
+            self.show_register_error("Введите пароль")
+            return
+        if len(password) < 4:
+            self.show_register_error("Пароль не менее 4 символов")
+            return
+        
+        self.status_label.setText("Создание аккаунта...")
+        self.status_label.setVisible(True)
+        self.status_label.setStyleSheet("color: #27ae60; font-weight: bold; font-size: 11px;")
+        self.error_label.setVisible(False)
+        self.validation_label.setText("")
+        QApplication.processEvents()
+        
+        try:
+            connection = DatabaseManager.get_connection()
+            if not connection:
+                raise Exception("Нет подключения к базе данных")
+            
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT user_id FROM user WHERE login = %s", (login,))
+                if cursor.fetchone():
+                    raise Exception("Логин уже занят")
+            
+            user_id = DatabaseManager.create_user(login, password, login, 'client')
+            
+            if not user_id:
+                raise Exception("Не удалось создать пользователя")
+            
+            self.status_label.setText("Регистрация компьютера...")
+            QApplication.processEvents()
+            
+            computer_result = DatabaseManager.register_computer_for_user(user_id)
+            
+            if not computer_result:
+                raise Exception("Не удалось зарегистрировать компьютер")
+            
+            # Автоматически перепривязываем компьютер к новому клиенту
+            if computer_result.get('already_bound'):
+                other_user = computer_result.get('other_user_login', 'Unknown')
+                print(f"Компьютер был привязан к '{other_user}', перепривязываем к '{login}'")
+                
+                computer_result = DatabaseManager.register_computer_for_user(user_id, force_rebind=True)
+                if not computer_result:
+                    raise Exception("Не удалось перепривязать компьютер")
+            
+            computer_id = computer_result['computer_id']
+            hostname = computer_result['hostname']
+            mac_address = computer_result['mac_address']
+            
+            session_id = DatabaseManager.create_session(computer_id, hostname)
+            session_token = None
+            if session_id:
+                connection = DatabaseManager.get_connection()
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
+                    token_data = cursor.fetchone()
+                    session_token = token_data['session_token'] if token_data else None
+            
+            self.computer_data = {
+                'computer_id': computer_id,
+                'hostname': hostname,
+                'mac_address': mac_address,
+                'login': login,
+                'password': password,
+                'user_id': user_id,
+                'role_id': 1,
+                'computer_type': 'client',
+                'session_id': session_id,
+                'session_token': session_token,
+                'is_new': computer_result.get('is_new', False),
+                'hardware_changed': computer_result.get('hardware_changed', False)
+            }
+            
+            self.save_credentials(self.computer_data)
+            
+            settings = QSettings("RemoteAccess", "Agent")
+            settings.setValue("auto_auth", True)
+            settings.sync()
+            
+            self.auth_success = True
+            self.accept()
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Ошибка регистрации: {error_msg}")
+            self.show_register_error(error_msg)
+            self.status_label.setVisible(False)
+    
+    def show_error(self, message: str):
+        self.error_label.setText(f"❌ {message}")
+        self.error_label.setVisible(True)
+        self.error_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 11px;")
+    
+    def show_register_error(self, message: str):
+        self.error_label.setText(f"❌ {message}")
+        self.error_label.setVisible(True)
+        self.error_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 11px;")
+    
+    def save_credentials(self, computer_data: dict):
+        # Не сохраняем данные для админа - только для клиента
+        computer_type = computer_data.get('computer_type', 'client')
+        if computer_type == 'admin':
+            print("Администратор вошёл в систему - учётные данные не сохраняются")
+            return
+            
+        try:
+            config_dir = get_config_dir()
+            cred_file = config_dir / "credentials.txt"
+            
+            # Сохраняем только логин и пароль
+            with open(cred_file, 'w', encoding='utf-8') as f:
+                f.write(f"Login: {computer_data['login']}\n")
+                f.write(f"Password: {computer_data.get('password', '')}\n")
+            
+            print(f"Учетные данные сохранены в: {cred_file}")
+            
+        except Exception as e:
+            print(f"Ошибка сохранения учетных данных: {e}")
+    
+    def get_computer_data(self):
+        return self.computer_data
+    
+    def is_auth_success(self):
+        return self.auth_success
+
+
+class HardwareRegisterDialog(QDialog):
+    """Диалог регистрации железа"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.registration_data = None
+        self.setWindowFlags(Qt.WindowType.Dialog)
+        self.setModal(True)
         self.init_ui()
     
     def init_ui(self):
         self.setWindowIcon(get_app_icon())
-        self.setWindowTitle("Выбор способа входа")
         self.setFixedSize(450, 350)
-        self.setModal(True)
         self.setStyleSheet("""
             QDialog { background-color: white; border-radius: 10px; }
             QLabel { color: #333333; }
-            QPushButton { 
-                background-color: #ff8c42; 
-                color: white; 
-                border: none; 
-                padding: 10px; 
-                border-radius: 6px;
-                font-weight: bold;
-                min-width: 150px;
-            }
-            QPushButton:hover { background-color: #ff6b2c; }
-            QPushButton#manualBtn {
-                background-color: #3498db;
-            }
-            QPushButton#manualBtn:hover {
-                background-color: #2980b9;
-            }
         """)
         
         layout = QVBoxLayout(self)
-        layout.setSpacing(20)
+        layout.setSpacing(15)
         
-        # Заголовок
         title_frame = QFrame()
         title_frame.setStyleSheet("background-color: #ff8c42; border-radius: 10px;")
         title_layout = QHBoxLayout(title_frame)
@@ -86,49 +672,80 @@ class AuthChoiceDialog(QDialog):
         title_layout.addWidget(title)
         layout.addWidget(title_frame)
         
-        # Информация
+        info_frame = QFrame()
+        info_frame.setStyleSheet("border: 1px solid #ff8c42; border-radius: 8px; padding: 15px;")
+        info_layout = QVBoxLayout(info_frame)
+        
+        computer_name = socket.gethostname()
         info_text = f"""
         <div style='text-align: center;'>
-            <h3 style='color: #ff8c42;'>Выберите способ входа</h3>
-            <p><b>Компьютер:</b> {socket.gethostname()}</p>
+            <h3 style='color: #ff8c42;'>Регистрация оборудования</h3>
+            <p><b>Компьютер:</b> {computer_name}</p>
             <p><b>MAC адрес:</b> {HardwareIDGenerator.get_mac_address()}</p>
             <br>
-            <p>Выберите, как вы хотите авторизоваться в системе:</p>
+            <p>Выполняется регистрация оборудования...</p>
         </div>
         """
         
         info_label = QLabel(info_text)
         info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         info_label.setWordWrap(True)
-        layout.addWidget(info_label)
+        info_layout.addWidget(info_label)
+        layout.addWidget(info_frame)
         
-        # Кнопки
-        btn_layout = QVBoxLayout()
-        btn_layout.setSpacing(10)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ff8c42;
+                border-radius: 5px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #ff8c42;
+                border-radius: 4px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
         
-        auto_btn = QPushButton("🔐 Автоматическая регистрация по железу")
-        auto_btn.setMinimumHeight(45)
-        auto_btn.clicked.connect(lambda: self.on_choice('auto'))
-        btn_layout.addWidget(auto_btn)
+        self.status_label = QLabel("Подключение к базе данных...")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setStyleSheet("color: #ff8c42; font-weight: bold; padding: 5px;")
+        layout.addWidget(self.status_label)
         
-        manual_btn = QPushButton("👤 Ручной вход (логин/пароль)")
-        manual_btn.setObjectName("manualBtn")
-        manual_btn.setMinimumHeight(45)
-        manual_btn.clicked.connect(lambda: self.on_choice('manual'))
-        btn_layout.addWidget(manual_btn)
-        
-        layout.addLayout(btn_layout)
+        QTimer.singleShot(500, self.do_register)
     
-    def on_choice(self, choice: str):
-        self.choice = choice
-        self.accept()
+    def do_register(self):
+        try:
+            self.status_label.setText("Регистрация оборудования...")
+            QApplication.processEvents()
+            
+            dialog = AuthDialog(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.registration_data = dialog.get_computer_data()
+                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(100)
+                QTimer.singleShot(500, self.accept)
+            else:
+                self.status_label.setText("Регистрация отменена")
+                self.status_label.setStyleSheet("color: red; font-weight: bold;")
+                self.progress_bar.setVisible(False)
+                QTimer.singleShot(2000, self.reject)
+                
+        except Exception as e:
+            print(f"Ошибка регистрации: {e}")
+            print(traceback.format_exc())
+            self.status_label.setText(f"Ошибка: {str(e)[:50]}")
+            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.progress_bar.setVisible(False)
+            QTimer.singleShot(2000, self.reject)
     
-    def get_choice(self):
-        return self.choice
+    def get_registration_data(self):
+        return self.registration_data
 
 
-class ManualAuthDialog(QDialog):
-    """Диалог ручного входа"""
+class ClientAuthDialog(QDialog):
+    """Диалог авторизации клиента"""
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -137,7 +754,7 @@ class ManualAuthDialog(QDialog):
     
     def init_ui(self):
         self.setWindowIcon(get_app_icon())
-        self.setWindowTitle("Ручной вход")
+        self.setWindowTitle("Вход клиента")
         self.setFixedSize(450, 400)
         self.setModal(True)
         self.setStyleSheet("""
@@ -169,17 +786,15 @@ class ManualAuthDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         
-        # Заголовок
         title_frame = QFrame()
         title_frame.setStyleSheet("background-color: #ff8c42; border-radius: 10px;")
         title_layout = QHBoxLayout(title_frame)
-        title = QLabel("🔑 РУЧНОЙ ВХОД")
+        title = QLabel("ВХОД КЛИЕНТА")
         title.setStyleSheet("color: white; font-size: 16px; font-weight: bold; padding: 12px;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title_layout.addWidget(title)
         layout.addWidget(title_frame)
         
-        # Информация
         info_frame = QFrame()
         info_frame.setStyleSheet("border: 1px solid #ff8c42; border-radius: 8px; padding: 10px;")
         info_layout = QVBoxLayout(info_frame)
@@ -199,7 +814,6 @@ class ManualAuthDialog(QDialog):
         info_layout.addWidget(info_label)
         layout.addWidget(info_frame)
         
-        # Форма входа
         form_frame = QFrame()
         form_layout = QVBoxLayout(form_frame)
         
@@ -216,7 +830,6 @@ class ManualAuthDialog(QDialog):
         
         layout.addWidget(form_frame)
         
-        # Кнопки
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         
@@ -248,337 +861,15 @@ class ManualAuthDialog(QDialog):
             return
         
         try:
-            computer_data = DatabaseManager.authenticate_by_credentials(login, password)
-            
-            if computer_data:
-                self.computer_data = computer_data
+            dialog = AuthDialog(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                self.computer_data = dialog.get_computer_data()
                 self.accept()
             else:
-                self.error_label.setText("Неверный логин или пароль")
+                self.error_label.setText("Авторизация отменена")
                 
         except Exception as e:
             self.error_label.setText(f"Ошибка: {str(e)}")
-
-
-class AutoRegisterDialog(QDialog):
-    """Диалог автоматической регистрации"""
     
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.computer_data = None
-        self.auth_success = False
-        self.setWindowFlags(Qt.WindowType.Dialog)
-        self.setModal(True)
-        self.init_ui()
-    
-    def init_ui(self):
-        self.setWindowIcon(get_app_icon())
-        self.setFixedSize(450, 350)
-        self.setStyleSheet("""
-            QDialog { background-color: white; border-radius: 10px; }
-            QLabel { color: #333333; }
-        """)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        
-        # Заголовок
-        title_frame = QFrame()
-        title_frame.setStyleSheet("background-color: #ff8c42; border-radius: 10px;")
-        title_layout = QHBoxLayout(title_frame)
-        title = QLabel("⚡ REMOTE ACCESS AGENT")
-        title.setStyleSheet("color: white; font-size: 18px; font-weight: bold; padding: 15px;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_layout.addWidget(title)
-        layout.addWidget(title_frame)
-        
-        # Информация
-        info_frame = QFrame()
-        info_frame.setStyleSheet("border: 1px solid #ff8c42; border-radius: 8px; padding: 15px;")
-        info_layout = QVBoxLayout(info_frame)
-        
-        computer_name = socket.gethostname()
-        info_text = f"""
-        <div style='text-align: center;'>
-            <h3 style='color: #ff8c42;'>Автоматическая регистрация</h3>
-            <p><b>Компьютер:</b> {computer_name}</p>
-            <p><b>MAC адрес:</b> {HardwareIDGenerator.get_mac_address()}</p>
-            <br>
-            <p>Выполняется регистрация компьютера...</p>
-        </div>
-        """
-        
-        info_label = QLabel(info_text)
-        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_label.setWordWrap(True)
-        info_layout.addWidget(info_label)
-        layout.addWidget(info_frame)
-        
-        # Прогресс бар
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #ff8c42;
-                border-radius: 5px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #ff8c42;
-                border-radius: 4px;
-            }
-        """)
-        layout.addWidget(self.progress_bar)
-        
-        # Статус
-        self.status_label = QLabel("Подключение к базе данных...")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("color: #ff8c42; font-weight: bold; padding: 5px;")
-        layout.addWidget(self.status_label)
-        
-        # Запускаем регистрацию
-        QTimer.singleShot(500, self.do_register)
-    
-    def do_register(self):
-        """Выполняет регистрацию"""
-        try:
-            self.status_label.setText("Регистрация компьютера...")
-            QApplication.processEvents()
-            
-            # Регистрируем компьютер
-            computer_data = DatabaseManager.register_computer()
-            
-            if computer_data:
-                self.status_label.setText("Регистрация успешна!")
-                QApplication.processEvents()
-                
-                # Сохраняем учетные данные в файл
-                self.save_credentials_to_file(computer_data)
-                
-                # Включаем автоматическую авторизацию для следующих запусков
-                settings = QSettings("RemoteAccess", "Agent")
-                settings.setValue("auto_auth", True)
-                settings.sync()
-                
-                # Показываем сообщение об успехе
-                QMessageBox.information(
-                    self,
-                    "Регистрация успешна",
-                    f"Компьютер успешно зарегистрирован!\n\n"
-                    f"ID: {computer_data['computer_id']}\n"
-                    f"Логин: {computer_data['login']}\n"
-                    f"Пароль: {computer_data['password']}\n"
-                    f"MAC адрес: {computer_data['mac_address']}\n\n"
-                    f"Учетные данные сохранены в файл:\n{get_config_dir() / 'credentials.txt'}"
-                )
-                
-                self.computer_data = computer_data
-                self.auth_success = True
-                self.progress_bar.setRange(0, 100)
-                self.progress_bar.setValue(100)
-                
-                QTimer.singleShot(1000, self.accept)
-            else:
-                self.status_label.setText("✗ Ошибка регистрации")
-                self.status_label.setStyleSheet("color: red; font-weight: bold;")
-                self.progress_bar.setVisible(False)
-                
-                QMessageBox.critical(
-                    self,
-                    "Ошибка",
-                    "Не удалось зарегистрировать компьютер.\n"
-                    "Проверьте подключение к базе данных."
-                )
-                
-                QTimer.singleShot(2000, self.reject)
-                
-        except Exception as e:
-            print(f"Ошибка регистрации: {e}")
-            print(traceback.format_exc())
-            self.status_label.setText(f"✗ Ошибка: {str(e)[:50]}")
-            self.status_label.setStyleSheet("color: red; font-weight: bold;")
-            self.progress_bar.setVisible(False)
-            
-            QMessageBox.critical(
-                self,
-                "Ошибка",
-                f"Ошибка при регистрации:\n{str(e)}"
-            )
-            
-            QTimer.singleShot(2000, self.reject)
-    
-    def save_credentials_to_file(self, computer_data: dict):
-        """Сохраняет учетные данные в файл"""
-        try:
-            config_dir = get_config_dir()
-            cred_file = config_dir / "credentials.txt"
-            
-            with open(cred_file, 'w', encoding='utf-8') as f:
-                f.write("=" * 60 + "\n")
-                f.write("REMOTE ACCESS CREDENTIALS\n")
-                f.write("=" * 60 + "\n\n")
-                f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Computer: {computer_data['hostname']}\n")
-                f.write(f"Computer ID: {computer_data['computer_id']}\n")
-                f.write(f"MAC Address: {computer_data['mac_address']}\n")
-                f.write(f"Login: {computer_data['login']}\n")
-                f.write(f"Password: {computer_data.get('password', 'N/A')}\n")
-                f.write(f"Session Token: {computer_data.get('session_token', 'N/A')}\n")
-                f.write("=" * 60 + "\n")
-            
-            print(f"Учетные данные сохранены в: {cred_file}")
-            
-        except Exception as e:
-            print(f"Ошибка сохранения учетных данных: {e}")
-
-
-class AuthDialog(QDialog):
-    """Главный диалог авторизации - управляет всеми остальными"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.computer_data = None
-        self.auth_success = False
-        self.setModal(True)
-        self.setWindowFlags(Qt.WindowType.Dialog)
-        self.init_ui()
-    
-    def init_ui(self):
-        self.setWindowIcon(get_app_icon())
-        self.setFixedSize(450, 400)
-        self.setStyleSheet("""
-            QDialog { background-color: white; border-radius: 10px; }
-            QLabel { color: #333333; }
-        """)
-        
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        
-        # Заголовок
-        title_frame = QFrame()
-        title_frame.setStyleSheet("background-color: #ff8c42; border-radius: 10px;")
-        title_layout = QHBoxLayout(title_frame)
-        title = QLabel("⚡ REMOTE ACCESS AGENT")
-        title.setStyleSheet("color: white; font-size: 18px; font-weight: bold; padding: 15px;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_layout.addWidget(title)
-        layout.addWidget(title_frame)
-        
-        # Информация
-        info_frame = QFrame()
-        info_frame.setStyleSheet("border: 1px solid #ff8c42; border-radius: 8px; padding: 15px;")
-        info_layout = QVBoxLayout(info_frame)
-        
-        computer_name = socket.gethostname()
-        info_text = f"""
-        <div style='text-align: center;'>
-            <h3 style='color: #ff8c42;'>Авторизация в системе</h3>
-            <p><b>Компьютер:</b> {computer_name}</p>
-            <p><b>MAC адрес:</b> {HardwareIDGenerator.get_mac_address()}</p>
-        </div>
-        """
-        
-        info_label = QLabel(info_text)
-        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        info_label.setWordWrap(True)
-        info_layout.addWidget(info_label)
-        layout.addWidget(info_frame)
-        
-        # Прогресс бар
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 0)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #ff8c42;
-                border-radius: 5px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #ff8c42;
-                border-radius: 4px;
-            }
-        """)
-        layout.addWidget(self.progress_bar)
-        
-        # Статус
-        self.status_label = QLabel("Проверка настроек...")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("color: #ff8c42; font-weight: bold; padding: 5px;")
-        layout.addWidget(self.status_label)
-        
-        # Запускаем проверку
-        QTimer.singleShot(500, self.check_auth)
-    
-    def check_auth(self):
-        """Проверяем, нужно ли показывать выбор или уже есть авторизация"""
-        try:
-            settings = QSettings("RemoteAccess", "Agent")
-            auto_auth = settings.value("auto_auth", False, type=bool)
-            
-            if auto_auth:
-                # Пытаемся авторизоваться автоматически
-                self.status_label.setText("Автоматическая авторизация...")
-                QApplication.processEvents()
-                
-                computer_data = DatabaseManager.authenticate_computer()
-                
-                if computer_data:
-                    self.computer_data = computer_data
-                    self.auth_success = True
-                    self.status_label.setText("✓ Авторизация успешна!")
-                    self.progress_bar.setRange(0, 100)
-                    self.progress_bar.setValue(100)
-                    QTimer.singleShot(500, self.accept)
-                    return
-                else:
-                    # Автоматическая авторизация не удалась, показываем выбор
-                    self.show_choice()
-                    return
-            else:
-                # Первый запуск - показываем выбор
-                self.show_choice()
-                return
-                
-        except Exception as e:
-            print(f"Ошибка: {e}")
-            self.status_label.setText(f"✗ Ошибка: {str(e)[:50]}")
-            self.status_label.setStyleSheet("color: red; font-weight: bold;")
-            self.progress_bar.setVisible(False)
-            QTimer.singleShot(2000, self.reject)
-    
-    def show_choice(self):
-        """Показываем диалог выбора способа входа"""
-        self.hide()
-        
-        choice_dialog = AuthChoiceDialog(self.parent())
-        if choice_dialog.exec():
-            choice = choice_dialog.get_choice()
-            if choice == 'auto':
-                # Автоматическая регистрация
-                self.register_dialog = AutoRegisterDialog(self.parent())
-                if self.register_dialog.exec():
-                    self.computer_data = self.register_dialog.computer_data
-                    self.auth_success = True
-                    self.accept()
-                else:
-                    # Если регистрация не удалась, показываем выбор снова
-                    self.show_choice()
-            elif choice == 'manual':
-                # Ручной вход
-                manual_dialog = ManualAuthDialog(self.parent())
-                result = manual_dialog.exec()
-                
-                if result == QDialog.DialogCode.Accepted:
-                    # Успешный вход
-                    self.computer_data = manual_dialog.computer_data
-                    # Включаем автоматическую авторизацию
-                    settings = QSettings("RemoteAccess", "Agent")
-                    settings.setValue("auto_auth", True)
-                    settings.sync()
-                    self.auth_success = True
-                    self.accept()
-                else:
-                    # Нажали "Отмена" - возвращаемся к выбору
-                    self.show_choice()
-        else:
-            self.reject()
+    def get_computer_data(self):
+        return self.computer_data

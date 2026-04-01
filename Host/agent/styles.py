@@ -1,3 +1,64 @@
+def get_main_window_stylesheet():
+    """Возвращает базовые стили для главного окна"""
+    return """
+    QMainWindow { background-color: #f5f5f5; }
+    QWidget { background-color: #f5f5f5; }
+    
+    QPushButton {
+        background-color: #ff8c42;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: bold;
+    }
+    QPushButton:hover { background-color: #ff6b2c; }
+    QPushButton:pressed { background-color: #e55a1a; }
+    
+    QPushButton#settingsButton {
+        background-color: rgba(255,255,255,0.2);
+        color: white;
+        font-size: 20px;
+        border-radius: 20px;
+        padding: 0px;
+        margin: 0px;
+        font-weight: normal;
+    }
+    
+    QLineEdit, QTextEdit {
+        border: 1px solid #ff8c42;
+        border-radius: 4px;
+        padding: 5px;
+        background-color: white;
+    }
+    
+    QTableWidget {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background-color: white;
+    }
+    QTableWidget::item {
+        padding: 5px;
+    }
+    QTableWidget::item:selected {
+        background-color: #ff8c42;
+        color: white;
+    }
+    QHeaderView::section {
+        background-color: #f0f0f0;
+        padding: 8px;
+        border: none;
+        border-bottom: 2px solid #ff8c42;
+        font-weight: bold;
+    }
+    
+    QStatusBar {
+        background-color: #f0f0f0;
+        color: #666666;
+    }
+    """
+
+
 APP_STYLE = """
 QMainWindow { background-color: #f5f5f5; }
 

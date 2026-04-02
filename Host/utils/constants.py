@@ -5,19 +5,19 @@ STATUS_ACTIVE = 1
 STATUS_DISCONNECTED = 2
 
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD', ''),
-    'db': os.getenv('DB_NAME', 'remote_access'),
+    'host': os.getenv('DB_HOST', '5.183.188.132'),
+    'user': os.getenv('DB_USER', '2024_mysql_t_usr'),
+    'password': os.getenv('DB_PASSWORD', 'uqnOzz3fbUqudcdM'),
+    'db': os.getenv('DB_NAME', '2024_mysql_tim'),
     'charset': 'utf8mb4',
     'cursorclass': pymysql.cursors.DictCursor
 }
 
 CLOUD_CONFIG = {
-    'access_key': os.getenv('CLOUD_ACCESS_KEY', ''),
-    'secret_key': os.getenv('CLOUD_SECRET_KEY', ''),
-    'endpoint_url': os.getenv('CLOUD_ENDPOINT_URL', 'https://s3.amazonaws.com'),
-    'bucket_name': os.getenv('CLOUD_BUCKET_NAME', 'remote-access-logs')
+    'access_key': os.getenv('CLOUD_ACCESS_KEY', '1TUFGD6LDS8S8DGRFYMU'),
+    'secret_key': os.getenv('CLOUD_SECRET_KEY', 'Vq3kZWM8HSxcxZNv4qLw9l63J80mj9fBsd80KumS'),
+    'endpoint_url': os.getenv('CLOUD_ENDPOINT_URL', 'https://s3.regru.cloud'),
+    'bucket_name': os.getenv('CLOUD_BUCKET_NAME', 'metrics-errors-logs')
 }
 
 METRICS_INTERVAL = 1800

@@ -8,8 +8,33 @@ from typing import List, Dict, Callable, Optional
 
 from utils.constants import CRITICAL_EVENT_IDS, USER_ACTION_TYPES
 
-# ID событий Windows для перезагрузки и выключения
-RESTART_SHUTDOWN_EVENT_IDS = [1074, 1076, 2001, 2004, 1000, 1001, 41, -2147482574]
+# ID событий Windows для перезагрузки, выключения, сна и загрузки
+RESTART_SHUTDOWN_EVENT_IDS = [
+    # Основные события выключения/перезагрузки
+    1074,       # Initiated by process/user
+    1076,       # Shutdown reason
+    2001,       # Sleep
+    2004,       # Wake
+    1000,       # Other
+    1001,       # Critical
+    41,         # Kernel-Power critical shutdown
+    -2147482574, # User32 restart/shutdown
+    2147482574,  # User32 restart/shutdown (positive)
+    
+    # События питания (сон/гибернация/пробуждение)
+    507,        # Kernel-Power: entering sleep
+    105,        # Kernel-Power: resume from sleep
+    109,        # Kernel-Power: entering sleep (modern standby)
+    110,        # Kernel-Power: resume from sleep (modern standby)
+    112,        # Kernel-Power: entering hibernate
+    113,        # Kernel-Power: resume from hibernate
+    
+    # События загрузки системы
+    1,          # Kernel-General: OS started
+    12,         # Kernel-General: OS started (detailed)
+    13,         # Kernel-General: OS shutdown
+    24,         # Kernel-General: kernel initialization
+]
 
 
 class WindowsEventCollector:
@@ -68,6 +93,23 @@ class WindowsEventCollector:
             return cls._get_new_events_windows(logs)
         else:
             return cls._get_new_events_linux()
+    
+    @classmethod
+    def get_events_since_boot(cls) -> List[Dict]:
+        """Получает события с момента последней загрузки системы (кроссплатформенно)"""
+        try:
+            import psutil
+            boot_time = psutil.boot_time()
+            boot_datetime = datetime.fromtimestamp(boot_time)
+            print(f"🔍 Загрузка системы: {boot_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception as e:
+            print(f"⚠️ Не удалось получить время загрузки: {e}")
+            boot_datetime = datetime.now() - timedelta(minutes=30)
+        
+        if sys.platform == 'win32':
+            return cls._get_events_since_boot_windows(boot_datetime)
+        else:
+            return cls._get_events_since_boot_linux(boot_datetime)
     
     @classmethod
     def get_events_last_30min(cls) -> List[Dict]:
@@ -150,6 +192,146 @@ class WindowsEventCollector:
         
         if all_events:
             cls._last_collection_time = datetime.now()
+        
+        return all_events
+    
+    @classmethod
+    def _get_events_since_boot_windows(cls, boot_datetime: datetime) -> List[Dict]:
+        """Получает события Windows с момента загрузки системы"""
+        try:
+            import win32evtlog
+            import win32evtlogutil
+            import win32security
+        except ImportError:
+            print("win32evtlog не установлен. Только для Windows.")
+            return []
+        
+        logs = ['System', 'Application']
+        all_events = []
+        MAX_EVENTS = 1000  # Увеличиваем лимит для сбора с момента загрузки
+        
+        print(f"🔍 Сбор событий Windows с момента загрузки: {boot_datetime.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        for log_name in logs:
+            try:
+                hand = win32evtlog.OpenEventLog(None, log_name)
+                num_records = win32evtlog.GetNumberOfEventLogRecords(hand)
+                cls._last_record_numbers[log_name] = num_records
+                
+                flags = win32evtlog.EVENTLOG_BACKWARDS_READ | win32evtlog.EVENTLOG_SEQUENTIAL_READ
+                events_read = 0
+                
+                while events_read < MAX_EVENTS:
+                    events_data = win32evtlog.ReadEventLog(hand, flags, 0)
+                    if not events_data:
+                        break
+                    
+                    for event in events_data:
+                        event_time = event.TimeGenerated
+                        # Пропускаем события старше времени загрузки
+                        if event_time < boot_datetime:
+                            continue
+                        
+                        events_read += 1
+                        
+                        severity = cls.get_severity(event.EventType, event.EventID)
+                        
+                        message = ""
+                        try:
+                            message = win32evtlogutil.SafeFormatMessage(event, log_name)
+                        except:
+                            try:
+                                if event.StringInserts:
+                                    message = ' '.join(event.StringInserts)
+                                else:
+                                    message = f"Event ID: {event.EventID}, Source: {event.SourceName}"
+                            except:
+                                message = f"Event ID: {event.EventID}"
+                        
+                        user_info = None
+                        if event.Sid is not None:
+                            try:
+                                domain, user, typ = win32security.LookupAccountSid(None, event.Sid)
+                                user_info = f"{domain}\\{user}"
+                            except:
+                                user_info = str(event.Sid)
+                        
+                        all_events.append({
+                            'log': log_name.lower(),
+                            'event_id': event.EventID,
+                            'source': event.SourceName,
+                            'severity': severity,
+                            'event_type': 'error' if severity in ['critical', 'error'] else severity,
+                            'time': event_time.strftime('%Y-%m-%d %H:%M:%S'),
+                            'message': message[:500] if message else '',
+                            'category': event.EventCategory,
+                            'user': user_info,
+                            'record_number': event.RecordNumber
+                        })
+                        
+                        if len(all_events) >= MAX_EVENTS:
+                            break
+                    
+                    if len(all_events) >= MAX_EVENTS:
+                        break
+                
+                win32evtlog.CloseEventLog(hand)
+                
+            except Exception as e:
+                print(f"Ошибка чтения журнала {log_name}: {e}")
+        
+        if all_events:
+            cls._last_collection_time = datetime.now()
+            print(f"✅ Найдено {len(all_events)} событий с момента загрузки системы")
+        
+        return all_events
+    
+    @classmethod
+    def _get_events_since_boot_linux(cls, boot_datetime: datetime) -> List[Dict]:
+        """Получает события Linux с момента загрузки системы через journalctl"""
+        all_events = []
+        MAX_EVENTS = 1000
+        
+        boot_time_str = boot_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        print(f"🔍 Сбор событий Linux с момента загрузки: {boot_time_str}")
+        
+        try:
+            cmd = ['journalctl', '--since', boot_time_str, '-o', 'json', '--no-pager', '-n', str(MAX_EVENTS)]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        
+                        priority = entry.get('PRIORITY', '6')
+                        severity = cls.get_journalctl_severity(priority)
+                        
+                        all_events.append({
+                            'log': 'system',
+                            'event_id': 0,
+                            'source': entry.get('SYSLOG_IDENTIFIER', 'unknown'),
+                            'severity': severity,
+                            'event_type': 'error' if severity in ['critical', 'error'] else severity,
+                            'time': entry.get('__REALTIME_TIMESTAMP', '')[:19].replace('T', ' '),
+                            'message': entry.get('MESSAGE', '')[:500],
+                            'category': 0,
+                            'user': entry.get('_UID', None)
+                        })
+                        
+                        if len(all_events) >= MAX_EVENTS:
+                            break
+                    except json.JSONDecodeError:
+                        continue
+        
+        except Exception as e:
+            print(f"Ошибка чтения journalctl: {e}")
+        
+        if all_events:
+            cls._last_collection_time = datetime.now()
+            print(f"✅ Найдено {len(all_events)} событий с момента загрузки системы")
         
         return all_events
     
@@ -469,14 +651,17 @@ class WindowsEventCollector:
                     is_remote = True
                 
                 # Определяем тип пользователя на основе того, кто выполнил действие
-                # Для события от User32 - это локальный пользователь (клиент)
-                user_type = 'client'
+                user_type = 'client'  # По умолчанию считаем клиентом
                 if user:
                     user_upper = user.upper()
-                    if 'NT AUTHORITY' in user_upper or 'SYSTEM' in user_upper:
+                    # Системные учетные записи Windows
+                    if any(s in user_upper for s in ['NT AUTHORITY', 'SYSTEM', 'LOCAL SERVICE', 'NETWORK SERVICE', 'WINDOWSMANAGER']):
                         user_type = 'system'
-                    elif 'ADMIN' in user_upper or user in ['Тимоха', 'Administrator']:
+                    # Администраторы (по имени группы или учетной записи)
+                    elif 'ADMIN' in user_upper:
                         user_type = 'admin'
+                    # Для остальных пользователей оставляем 'client'
+                    # Это правильное поведение: обычный пользователь = клиент
                 
                 action_info = {
                     'event_id': event_id,
@@ -586,6 +771,88 @@ class WindowsEventCollector:
                         cls._user_action_callback(action_type, description, details)
                     except Exception as e:
                         print(f"Ошибка в user_action_callback: {e}")
+            
+            # События сна/гибернации/пробуждения (Kernel-Power)
+            elif event_id in [507, 105, 109, 110, 112, 113] and log_name == 'system':
+                # Определяем тип действия по ID
+                if event_id in [507, 109, 112]:  # Вход в сон/гибернацию
+                    if event_id == 112:
+                        action_type = 'hibernate'
+                    else:
+                        action_type = 'sleep'
+                    user_type = 'client'  # Обычно инициируется пользователем
+                else:  # Выход из сна/гибернации
+                    action_type = 'wake'
+                    user_type = 'system'  # Обычно системное событие
+                
+                # Проверяем, не является ли пользователь системным
+                if user:
+                    user_upper = user.upper()
+                    if any(s in user_upper for s in ['NT AUTHORITY', 'SYSTEM', 'LOCAL SERVICE', 'NETWORK SERVICE']):
+                        user_type = 'system'
+                    elif 'ADMIN' in user_upper:
+                        user_type = 'admin'
+                
+                action_info = {
+                    'event_id': event_id,
+                    'action_type': action_type,
+                    'user': user,
+                    'user_type': user_type,
+                    'is_remote': False,  # Обычно локальное действие
+                    'source': source,
+                    'time': time_str,
+                    'message': event.get('message', '')
+                }
+                detected_actions.append(action_info)
+                
+                if cls._user_action_callback:
+                    description = USER_ACTION_TYPES.get(action_type, {}).get('description', action_type)
+                    details = {
+                        'user': user,
+                        'user_type': user_type,
+                        'is_remote': False,
+                        'source': source,
+                        'event_id': event_id,
+                        'message': event.get('message', '')
+                    }
+                    try:
+                        cls._user_action_callback(action_type, description, details)
+                    except Exception as e:
+                        print(f"Ошибка в user_action_callback: {e}")
+            
+            # События загрузки системы (Kernel-General)
+            elif event_id in [1, 12, 24] and log_name == 'system':
+                print(f"🔍 Обнаружено событие загрузки системы: event_id={event_id}, source={source}, time={time_str}")
+                action_type = 'system_boot'
+                action_info = {
+                    'event_id': event_id,
+                    'action_type': action_type,
+                    'user': 'SYSTEM',
+                    'user_type': 'system',
+                    'is_remote': False,
+                    'source': source,
+                    'time': time_str,
+                    'message': event.get('message', '')[:200] if event.get('message') else 'Система загрузилась'
+                }
+                detected_actions.append(action_info)
+                
+                if cls._user_action_callback:
+                    description = USER_ACTION_TYPES.get(action_type, {}).get('description', 'Загрузка системы')
+                    details = {
+                        'user': 'SYSTEM',
+                        'user_type': 'system',
+                        'is_remote': False,
+                        'source': source,
+                        'event_id': event_id,
+                        'message': event.get('message', '')[:200] if event.get('message') else 'Система загрузилась'
+                    }
+                    print(f"📝 Вызываю callback для system_boot: description={description}")
+                    try:
+                        cls._user_action_callback(action_type, description, details)
+                    except Exception as e:
+                        print(f"Ошибка в user_action_callback: {e}")
+                else:
+                    print("⚠️ Callback не установлен!")
         
         return detected_actions
     

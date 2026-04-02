@@ -79,6 +79,7 @@ class RemoteAgentThread(QThread):
         self.cloud_uploader = CloudUploader(self.json_logger)
         self.json_logger.set_session(self.hostname, self.session_token, self.cloud_uploader)
         self.event_grouper = EventGrouper()
+        self.initial_events_collected = False  # Флаг для предотвращения повторного сбора событий
         
         # Устанавливаем callback для логирования действий пользователя
         self._setup_user_action_callback()
@@ -172,14 +173,39 @@ class RemoteAgentThread(QThread):
         asyncio.run(self.agent_main())
     
     async def collect_initial_metrics_and_events(self):
+        # Пропускаем если события уже были собраны
+        if self.initial_events_collected:
+            return
+            
         metrics = SystemInfoCollector.get_performance_metrics()
         self.json_logger.add_metric(metrics)
         
         if self.json_logger.should_collect_events():
-            events = WindowsEventCollector.get_events_last_30min()
+            # Собираем события с момента последней загрузки системы
+            # Это позволяет обнаружить перезагрузку/выключение, которые произошли до запуска агента
+            events = WindowsEventCollector.get_events_since_boot()
             if events:
+                # Сначала проверяем события перезагрузки/выключения/загрузки
+                restart_shutdown_events = WindowsEventCollector.detect_restart_shutdown_events(events)
+                if restart_shutdown_events:
+                    for action_info in restart_shutdown_events:
+                        action_type = action_info.get('action_type', 'shutdown')
+                        # Вызываем callback для логирования действия
+                        if WindowsEventCollector._user_action_callback:
+                            from utils.constants import USER_ACTION_TYPES
+                            description = USER_ACTION_TYPES.get(action_type, {}).get('description', action_type)
+                            WindowsEventCollector._user_action_callback(action_type, description, action_info)
+                        
+                        # Если обнаружена перезагрузка или выключение или загрузка
+                        if action_type in ('restart', 'shutdown', 'system_boot', 'windows_restart', 'windows_shutdown'):
+                            self.log_message.emit(f"⚠️ Обнаружено: {description}")
+                
+                # Потом группируем и записываем все события
                 grouped_events = self.event_grouper.group_events(events)
                 self.json_logger.add_windows_events(grouped_events, is_initial=True)
+                
+                # Помечаем что начальная коллекция событий выполнена
+                self.initial_events_collected = True
     
     async def collect_metrics_periodically(self):
         while self.is_running:

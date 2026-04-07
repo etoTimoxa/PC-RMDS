@@ -1,0 +1,20 @@
+# Основные зависимости (кроссплатформенные)
+PyQt6>=6.4.0
+pymysql>=1.0.2
+psutil>=5.9.0
+pyautogui>=0.9.53
+mss>=6.1.0
+Pillow>=9.0.0
+websockets>=10.0
+pynput>=1.7.6
+boto3>=1.26.0
+
+# Linux-специфичные зависимости
+# PyGObject и pycairo могут понадобиться для некоторых функций,
+# но в текущей версии не используются напрямую
+# pycairo
+# PyGObject
+
+# ИСКЛЮЧИТЬ из Linux сборки:
+# pywin32 - только для Windows
+# win32process, win32api, win32con, win32evtlog - только для Windows

@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                             QMessageBox, QSystemTrayIcon, QMenu, QStatusBar, 
                             QFrame, QCheckBox, QDialog)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
-from PyQt6.QtGui import QFont, QTextCursor, QAction, QIcon, QPixmap, QColor
+from PyQt6.QtGui import QFont, QTextCursor, QAction, QIcon, QPixmap, QColor, QScreen, QImage
 
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
@@ -412,37 +412,154 @@ class RemoteAgentThread(QThread):
                 else:
                     self.adaptive_quality = min(self.quality, self.adaptive_quality + 5)
     
+    def _take_screenshot_qt(self):
+        """Создает скриншот с помощью PyQt6 (без вспышки, работает на Linux)"""
+        try:
+            app = QApplication.instance()
+            if app is None:
+                return None
+            
+            screen = app.primaryScreen()
+            if screen is None:
+                return None
+            
+            # Захватываем весь экран
+            pixmap = screen.grabWindow(0)  # 0 = весь экран
+            
+            if pixmap.isNull():
+                return None
+            
+            # Конвертируем в PIL Image
+            width = pixmap.width()
+            height = pixmap.height()
+            
+            # Конвертируем QPixmap в QImage, затем в bytes
+            image = pixmap.toImage()
+            
+            # Получаем сырые данные изображения
+            ptr = image.constBits()
+            ptr.setsize(image.byteCount())
+            
+            # Создаем PIL изображение из данных
+            img = Image.frombytes("RGBA", (width, height), ptr.asstring())
+            
+            # Конвертируем в RGB (убираем альфа-канал)
+            img = img.convert("RGB")
+            
+            return img
+            
+        except Exception as e:
+            self.log_message.emit(f"Ошибка Qt скриншота: {e}")
+            return None
+    
+    def _take_screenshot_linux_mss(self):
+        """Создает скриншот на Linux через mss (для X11)."""
+        try:
+            with mss.mss() as sct:
+                # Получаем список мониторов
+                monitors = sct.monitors
+                
+                # Если есть мониторы, берем основной (индекс 1)
+                # monitors[0] - это все мониторы вместе
+                if len(monitors) > 1:
+                    monitor = monitors[1]  # Основной монитор
+                elif len(monitors) == 1:
+                    monitor = monitors[0]
+                else:
+                    self.log_message.emit("Мониторы не найдены")
+                    return None
+                
+                # Захватываем скриншот
+                sct_img = sct.grab(monitor)
+                
+                # Конвертируем в PIL Image
+                # mss возвращает данные в формате BGR для X11
+                img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                
+                return img
+                
+        except Exception as e:
+            self.log_message.emit(f"Ошибка mss на Linux: {e}")
+            return None
+    
+    def _take_screenshot(self):
+        """Создает скриншот экрана (кроссплатформенно)"""
+        if platform.system() == "Linux":
+            # На Linux сначала пробуем mss (работает на X11)
+            img = self._take_screenshot_linux_mss()
+            if img is not None:
+                return img
+            
+            # Если mss не сработал, пробуем PyQt6 как запасной вариант
+            img = self._take_screenshot_qt()
+            if img is not None:
+                return img
+            
+            self.log_message.emit("Не удалось создать скриншот на Linux")
+            return None
+        else:
+            # На Windows используем mss (быстрее)
+            try:
+                with mss.mss() as sct:
+                    monitor = sct.monitors[1]  # Основной монитор
+                    sct_img = sct.grab(monitor)
+                    img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
+                    return img
+            except Exception as e:
+                self.log_message.emit(f"Ошибка mss: {e}")
+                
+                # На Windows тоже пробуем Qt как запасной вариант
+                img = self._take_screenshot_qt()
+                if img is not None:
+                    return img
+                
+                self.log_message.emit("Не удалось создать скриншот")
+                return None
+    
     async def screenshot_loop(self, ws):
         self.sending_screenshots = True
+        error_count = 0
+        max_errors = 5  # Максимальное количество ошибок подряд перед остановкой
         
-        while self.sending_screenshots and self.is_connected and len(self.streaming_clients) > 0:
+        while self.sending_screenshots and self.is_connected and self.is_running and len(self.streaming_clients) > 0:
             try:
                 start_time = time.time()
                 
-                with mss.mss() as sct:
-                    monitor = sct.monitors[1]
-                    sct_img = sct.grab(monitor)
-                    img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
-                    
-                    # Оптимизируем изображение
-                    img = self._optimize_screenshot(img)
-                    
-                    # Используем адаптивное качество
-                    current_quality = self.adaptive_quality
-                    
-                    buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=current_quality, optimize=True, progressive=True)
-                    img_data = buffer.getvalue()
-                    img_b64 = base64.b64encode(img_data).decode()
-                    
-                    message = {
-                        "type": "screenshot",
-                        "data": img_b64,
-                        "computer_id": self.computer_id,
-                        "agent_id": self.hostname
-                    }
-                    
-                    await ws.send(json.dumps(message))
+                # Создаем скриншот
+                img = self._take_screenshot()
+                
+                if img is None:
+                    error_count += 1
+                    if error_count >= max_errors:
+                        self.log_message.emit(f"Слишком много ошибок скриншота ({max_errors}), остановка")
+                        break
+                    # Ждем немного перед следующей попыткой
+                    await asyncio.sleep(1)
+                    continue
+                
+                error_count = 0  # Сбрасываем счетчик ошибок при успешном скриншоте
+                
+                # Оптимизируем изображение
+                img = self._optimize_screenshot(img)
+                
+                # Используем адаптивное качество
+                current_quality = self.adaptive_quality
+                
+                buffer = BytesIO()
+                img.save(buffer, format="JPEG", quality=current_quality, optimize=True, progressive=True)
+                img_data = buffer.getvalue()
+                img_b64 = base64.b64encode(img_data).decode()
+                
+                message = {
+                    "type": "screenshot",
+                    "data": img_b64,
+                    "computer_id": self.computer_id,
+                    "agent_id": self.hostname,
+                    "screen_width": self.screen_width,
+                    "screen_height": self.screen_height
+                }
+                
+                await ws.send(json.dumps(message))
                 
                 send_time = time.time() - start_time
                 
@@ -456,49 +573,101 @@ class RemoteAgentThread(QThread):
                     
             except Exception as e:
                 self.log_message.emit(f"Ошибка в screenshot_loop: {e}")
-                break
+                error_count += 1
+                if error_count >= max_errors:
+                    break
+                # Ждем перед следующей попыткой
+                await asyncio.sleep(1)
         
         self.sending_screenshots = False
     
     async def receive_commands(self, ws):
+        screenshot_task = None
         try:
             async for msg in ws:
                 data = json.loads(msg)
                 cmd_type = data.get("type")
-                client_id = data.get("client_id", "unknown")
+                # Извлекаем client_id из разных возможных полей
+                client_id = data.get("client_id") or data.get("data", {}).get("client_id", "unknown")
                 
                 if cmd_type == "register_client":
+                    # Сервер присылает register_client когда клиент подключается
                     if client_id not in self.connected_clients_list:
                         self.connected_clients += 1
                         self.connected_clients_list.append(client_id)
                         self.connection_status_changed.emit(True, self.connected_clients)
                         self.client_connected.emit(client_id)
+                        self.log_message.emit(f"Клиент {client_id} подключен")
                 
                 elif cmd_type == "start_stream":
                     self.streaming_clients.add(client_id)
                     if not self.sending_screenshots and len(self.streaming_clients) > 0:
-                        asyncio.create_task(self.screenshot_loop(ws))
+                        # Создаем задачу и сохраняем ссылку на нее
+                        screenshot_task = asyncio.create_task(self.screenshot_loop(ws))
+                        self.log_message.emit(f"Запуск трансляции для клиента {client_id}")
                 
                 elif cmd_type == "stop_stream":
                     if client_id in self.streaming_clients:
                         self.streaming_clients.remove(client_id)
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
+                        self.log_message.emit(f"Остановка трансляции")
+                
+                elif cmd_type == "unregister_client":
+                    # Удаляем клиента из списков
+                    if client_id in self.connected_clients_list:
+                        self.connected_clients_list.remove(client_id)
+                        self.connected_clients -= 1
+                        self.connection_status_changed.emit(True, self.connected_clients)
+                    if client_id in self.streaming_clients:
+                        self.streaming_clients.remove(client_id)
+                    if len(self.streaming_clients) == 0:
+                        self.sending_screenshots = False
                 
                 elif cmd_type == "mouse_move":
-                    await self.handle_mouse_move(data.get("data", {}))
+                    # Извлекаем данные из поля data или command_data
+                    command_data = data.get("data", {})
+                    if not command_data:
+                        command_data = data.get("command_data", {})
+                    await self.handle_mouse_move(command_data)
                 
                 elif cmd_type == "mouse_click":
-                    await self.handle_mouse_click(data.get("data", {}))
+                    command_data = data.get("data", {})
+                    if not command_data:
+                        command_data = data.get("command_data", {})
+                    await self.handle_mouse_click(command_data)
                 
                 elif cmd_type == "mouse_wheel":
-                    await self.handle_mouse_wheel(data.get("data", {}))
+                    command_data = data.get("data", {})
+                    if not command_data:
+                        command_data = data.get("command_data", {})
+                    await self.handle_mouse_wheel(command_data)
                 
                 elif cmd_type == "keyboard_input":
-                    await self.handle_keyboard_input(data.get("data", {}))
+                    command_data = data.get("data", {})
+                    if not command_data:
+                        command_data = data.get("command_data", {})
+                    await self.handle_keyboard_input(command_data)
+                
+                elif cmd_type == "key_press":
+                    # Альтернативный формат команды клавиатуры
+                    command_data = data.get("data", {})
+                    await self.handle_keyboard_input(command_data)
+                
+                elif cmd_type == "request_system_info":
+                    # Отправляем системную информацию (можно реализовать отдельно)
+                    self.log_message.emit("Запрос системной информации")
+                
+                else:
+                    self.log_message.emit(f"Неизвестная команда: {cmd_type}")
                 
         except Exception as e:
             self.log_message.emit(f"Ошибка в receive_commands: {e}")
+        finally:
+            # Отменяем задачу скриншотов при выходе
+            if screenshot_task and not screenshot_task.done():
+                screenshot_task.cancel()
+                self.sending_screenshots = False
     
     async def handle_mouse_move(self, command_data):
         try:
@@ -582,13 +751,21 @@ class RemoteAgentWindow(QMainWindow):
     
     def get_app_icon(self) -> QIcon:
         """Возвращает иконку приложения (кроссплатформенно)"""
+        # Определяем базовый путь для frozen/unfrozen состояния
+        if getattr(sys, '_MEIPASS', None):
+            # Запущено через PyInstaller
+            base_path = Path(sys._MEIPASS)
+        else:
+            # Запущено в режиме разработки
+            base_path = Path(__file__).parent.parent
+        
         # Пробуем PNG (для Linux/AppImage)
-        icon_path = Path(__file__).parent.parent / "app_icon.png"
+        icon_path = base_path / "app_icon.png"
         if icon_path.exists():
             return QIcon(str(icon_path))
         
         # Пробуем ICO (для Windows)
-        icon_path = Path(__file__).parent.parent / "app_icon.ico"
+        icon_path = base_path / "app_icon.ico"
         if icon_path.exists():
             return QIcon(str(icon_path))
         

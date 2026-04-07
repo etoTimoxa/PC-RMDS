@@ -446,7 +446,10 @@ class RemoteClientThread(QThread):
                                 img_data = base64.b64decode(data["data"])
                                 img = Image.open(BytesIO(img_data))
                                 
-                                self.host_screen_width, self.host_screen_height = img.size
+                                # Используем реальное разрешение экрана хоста, если оно передано
+                                # иначе используем размеры изображения (для обратной совместимости)
+                                self.host_screen_width = data.get("screen_width", img.size[0])
+                                self.host_screen_height = data.get("screen_height", img.size[1])
                                 self.image_received.emit(img)
                                 self.frame_count += 1
                             
@@ -937,6 +940,12 @@ class RemoteScreenWindow(QMainWindow):
         if widget_size.width() <= 1 or widget_size.height() <= 1:
             return
         
+        # Используем реальное разрешение экрана хоста из потока клиента
+        # (оно приходит вместе со скриншотом)
+        host_width = self.client_thread.host_screen_width or img.width
+        host_height = self.client_thread.host_screen_height or img.height
+        
+        # Размеры изображения (может быть оптимизировано/уменьшено)
         self.original_width = img.width
         self.original_height = img.height
         
@@ -956,9 +965,11 @@ class RemoteScreenWindow(QMainWindow):
             
             img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
             
+            # Важно: передаем реальное разрешение экрана хоста для правильного
+            # преобразования координат мыши
             self.screen_widget.set_display_info(
-                self.original_width, 
-                self.original_height,
+                host_width, 
+                host_height,
                 self.display_width, 
                 self.display_height
             )
@@ -969,13 +980,13 @@ class RemoteScreenWindow(QMainWindow):
             pixmap = QPixmap.fromImage(qimage)
             
             self.screen_widget.setPixmap(pixmap)
-            self.screen_widget.set_screen_size(img.width, img.height)
+            self.screen_widget.set_screen_size(host_width, host_height)
             self.screen_widget.update_image_position()
             self.frame_count += 1
             
             scale_percent = int((new_width / img.width) * 100)
             self.resolution_label.setText(
-                f"Сервер: {img.width}x{img.height} | "
+                f"Сервер: {host_width}x{host_height} | "
                 f"Экран: {new_width}x{new_height} | "
                 f"Масштаб: {scale_percent}%"
             )

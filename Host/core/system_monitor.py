@@ -8,15 +8,18 @@ import time
 # Импортируем Windows-специфичные модули только на Windows
 if sys.platform == 'win32':
     from ctypes import wintypes
-    import win32process
-    import win32api
-    import win32con
+    try:
+        import win32process
+        import win32api
+        import win32con
+    except ImportError:
+        # Если pywin32 не установлен, устанавливаем заглушки
+        win32process = None
+        win32api = None
+        win32con = None
 
 
 class SystemActivityMonitor:
-    
-    class LASTINPUTINFO(ctypes.Structure):
-        _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
     
     # Системные процессы, которые считаются активностью (Windows)
     SYSTEM_PROCESSES_WIN = [
@@ -98,8 +101,12 @@ class SystemActivityMonitor:
     def get_last_input_time() -> float:
         """Время с последнего ввода мыши/клавиатуры"""
         if sys.platform == 'win32':
+            # Define LASTINPUTINFO structure for Windows
+            class LASTINPUTINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_ulong)]
+            
             try:
-                lastInputInfo = SystemActivityMonitor.LASTINPUTINFO()
+                lastInputInfo = LASTINPUTINFO()
                 lastInputInfo.cbSize = ctypes.sizeof(lastInputInfo)
                 ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lastInputInfo))
                 tickCount = ctypes.windll.kernel32.GetTickCount()

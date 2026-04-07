@@ -1,127 +1,81 @@
 #!/bin/bash
-# Скрипт для сборки AppImage Remote Access Agent
 
-VERSION="1.0.0"
-APP_NAME="RemoteAccessAgent"
-APP_DIR="AppDir"
+# Build script for creating AppImage using Docker
+# This script builds a Linux AppImage of the Remote Access Agent
 
-echo "=== Начало сборки AppImage ==="
+set -e
 
-# Проверка на Linux
-if [ "$(uname)" != "Linux" ]; then
-    echo "Ошибка: Этот скрипт предназначен только для Linux!"
-    echo "Для сборки AppImage необходимо запустить его на Linux системе."
+echo "=========================================="
+echo "  Remote Access Agent - AppImage Builder"
+echo "=========================================="
+echo ""
+
+# Check if Docker is installed
+if ! command -v docker &> /dev/null; then
+    echo "❌ Docker is not installed. Please install Docker first."
     exit 1
 fi
 
-# Очистка старых сборок
-echo "Очистка старых сборок..."
-rm -rf dist build $APP_DIR *.AppImage 2>/dev/null
-
-# Проверка PyInstaller
-if ! command -v pyinstaller &> /dev/null; then
-    echo "PyInstaller не найден. Устанавливаю..."
-    pip install pyinstaller
+# Check if we're on Linux (AppImage is for Linux)
+if [[ "$OSTYPE" != "linux-gnu"* ]] && [[ "$OSTYPE" != "msys" ]] && [[ "$OSTYPE" != "win32" ]]; then
+    echo "⚠️  Warning: This script is designed for Linux, but detected: $OSTYPE"
+    echo "   You can still try to build, but the AppImage may not work correctly."
 fi
 
-# Сборка через PyInstaller
-echo "Сборка приложения через PyInstaller..."
-pyinstaller --onefile --windowed --name="$APP_NAME" --icon=app_icon.png main.py
+# Get the directory of this script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+cd "$SCRIPT_DIR"
 
-if [ $? -ne 0 ]; then
-    echo "Ошибка сборки PyInstaller!"
+echo "📁 Project directory: $SCRIPT_DIR"
+echo ""
+
+# Check if app_icon.png exists
+if [ ! -f "app_icon.png" ]; then
+    echo "❌ app_icon.png not found! Please provide an icon file."
+    echo "   The icon should be at least 256x256 pixels."
     exit 1
 fi
 
-# Создание структуры AppDir
-echo "Создание структуры AppDir..."
-mkdir -p $APP_DIR/usr/bin
-mkdir -p $APP_DIR/usr/share/applications
-mkdir -p $APP_DIR/usr/share/icons/hicolor/256x256/apps
-mkdir -p $APP_DIR/usr/share/icons/hicolor/128x128/apps
-mkdir -p $APP_DIR/usr/share/icons/hicolor/64x64/apps
-mkdir -p $APP_DIR/usr/share/icons/hicolor/48x48/apps
-mkdir -p $APP_DIR/usr/share/icons/hicolor/32x32/apps
-mkdir -p $APP_DIR/usr/share/icons/hicolor/16x16/apps
+echo "✅ Icon file found: app_icon.png"
+echo ""
 
-# Копирование бинарного файла
-echo "Копирование файлов..."
-cp dist/$APP_NAME $APP_DIR/usr/bin/
-chmod +x $APP_DIR/usr/bin/$APP_NAME
-
-# Копирование иконок
-echo "Копирование иконок..."
-if [ -f "app_icon.png" ]; then
-    cp app_icon.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/$APP_NAME.png
-    
-    # Создаем иконки разных размеров с помощью ImageMagick
-    if command -v convert &> /dev/null; then
-        for size in 128 64 48 32 16; do
-            convert app_icon.png -resize ${size}x${size} \
-                $APP_DIR/usr/share/icons/hicolor/${size}x${size}/apps/$APP_NAME.png
-        done
-    fi
-    
-    # Копируем большую иконку в корень AppDir
-    cp app_icon.png $APP_DIR/$APP_NAME.png
-fi
-
-# Создание .desktop файла
-echo "Создание .desktop файла..."
-cat > $APP_DIR/$APP_NAME.desktop << EOF
-[Desktop Entry]
-Version=$VERSION
-Type=Application
-Name=Remote Access Agent
-Comment=Remote monitoring and control agent
-Exec=$APP_NAME
-Icon=$APP_NAME
-Terminal=false
-Categories=Utility;RemoteAccess;Monitor;
-Keywords=remote;monitor;control;agent;
-EOF
-
-# Копируем .desktop файл в нужное место
-cp $APP_DIR/$APP_NAME.desktop $APP_DIR/usr/share/applications/$APP_NAME.desktop
-
-# Создание AppRun
-echo "Создание AppRun..."
-cat > $APP_DIR/AppRun << 'EOF'
-#!/bin/bash
-HERE="$(dirname "$(readlink -f "${0}")")"
-export PATH="${HERE}/usr/bin:${PATH}"
-export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
-exec "${HERE}/usr/bin/RemoteAccessAgent" "$@"
-EOF
-chmod +x $APP_DIR/AppRun
-
-# Загрузка linuxdeploy
-echo "Загрузка linuxdeploy..."
-if [ ! -f "linuxdeploy-x86_64.AppImage" ]; then
-    wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-    chmod +x linuxdeploy-x86_64.AppImage
-fi
-
-# Сборка AppImage
-echo "Сборка AppImage..."
-./linuxdeploy-x86_64.AppImage \
-    --appdir $APP_DIR \
-    --desktop-file=$APP_DIR/$APP_NAME.desktop \
-    --icon-file=$APP_DIR/$APP_NAME.png \
-    --output appimage
-
-if [ $? -eq 0 ]; then
-    echo "=== Сборка завершена успешно! ==="
-    echo "AppImage: *.AppImage"
-    echo "Размер: $(du -h *.AppImage | tail -1 | cut -f1)"
-    echo ""
-    echo "Для запуска выполните:"
-    echo "  chmod +x *.AppImage"
-    echo "  ./RemoteAccessAgent*.AppImage"
-    echo ""
-    echo "Для установки в систему (опционально):"
-    echo "  ./RemoteAccessAgent*.AppImage --appimage-extract-and-run --install"
-else
-    echo "Ошибка сборки AppImage!"
+# Build the Docker image
+echo "🔨 Building Docker image..."
+docker build -t pc-rmds-appimage-builder . || {
+    echo "❌ Docker build failed!"
     exit 1
-fi
+}
+
+echo "✅ Docker image built successfully"
+echo ""
+
+# Create output directory
+mkdir -p output
+
+# Run the container to build AppImage
+echo "📦 Building AppImage inside container..."
+docker run --rm \
+    -v "$(pwd)/output:/output" \
+    pc-rmds-appimage-builder || {
+    echo "❌ AppImage build failed!"
+    echo "   Check the Docker output for details."
+    exit 1
+}
+
+echo ""
+echo "=========================================="
+echo "  ✅ AppImage build completed!"
+echo "=========================================="
+echo ""
+echo "📁 Output directory: $(pwd)/output"
+echo ""
+echo "📋 Next steps:"
+echo "   1. Make the AppImage executable:"
+echo "      chmod +x output/RemoteAccessAgent-*.AppImage"
+echo ""
+echo "   2. Run the AppImage:"
+echo "      ./output/RemoteAccessAgent-*.AppImage"
+echo ""
+echo "   3. (Optional) Extract AppImage for inspection:"
+echo "      ./output/RemoteAccessAgent-*.AppImage --appimage-extract"
+echo ""

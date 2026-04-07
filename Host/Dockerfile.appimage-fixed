@@ -1,0 +1,108 @@
+FROM ubuntu:22.04
+
+# Избегаем интерактивных подсказок во время сборки
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Устанавливаем необходимые пакеты
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    wget \
+    ca-certificates \
+    build-essential \
+    file \
+    dos2unix \
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libfontconfig1 \
+    libfreetype6 \
+    fontconfig \
+    fonts-dejavu-core \
+    fonts-liberation \
+    libxcb1 \
+    libx11-xcb1 \
+    libxcb-cursor0 \
+    libxcb-glx0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    libxcb-shm0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-xinerama0 \
+    libxcb-xkb1 \
+    libxkbcommon-x11-0 \
+    libxkbcommon0 \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    libxtst6 \
+    libxext6 \
+    libxfixes3 \
+    libxi6 \
+    libxrender1 \
+    libxt6 \
+    libxft2 \
+    libxkbfile1 \
+    libxmu6 \
+    libxmuu1 \
+    libxpm4 \
+    libxaw7 \
+    libxcb1 \
+    libx11-xcb1 \
+    libdbus-1-3 \
+    libx11-6 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxdamage1 \
+    libxi6 \
+    libxtst6 \
+    libnss3 \
+    libcups2 \
+    libxss1 \
+    libxrandr2 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    xvfb \
+    python3-xlib \
+    python3-tk \
+    imagemagick \
+    && rm -rf /var/lib/apt/lists/*
+
+# Создаем рабочую директорию
+WORKDIR /app
+
+# Копируем requirements-linux.txt для Linux-сборки (без Windows-зависимостей)
+COPY requirements-linux.txt requirements.txt
+
+# Устанавливаем Python зависимости
+RUN python3 -m venv venv && \
+    . venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install pyinstaller && \
+    pip install -r requirements.txt
+
+# Копируем весь проект
+COPY . .
+
+# Конвертируем скрипты из Windows в Unix формат и делаем исполняемыми
+RUN dos2unix build-appimage-internal.sh && chmod +x build-appimage-internal.sh
+
+# Запускаем сборку AppImage
+RUN . venv/bin/activate && bash build-appimage-internal.sh
+
+# Выводим информацию о собранном файле
+RUN ls -lh /app/*.AppImage || echo "Warning: AppImage not found"
+
+# Результат сборки будет в /app/*.AppImage
+CMD ["bash"]

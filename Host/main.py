@@ -2,6 +2,7 @@ import sys
 import os
 from pathlib import Path
 import threading
+import multiprocessing
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -36,6 +37,56 @@ def run_background_session(computer_data):
 
 
 def main():
+    # Проверка: если приложение уже запущено, показываем сообщение и выходим
+    mutex_name = "PC-RMDS-Host-SingleInstance-Mutex"
+    if sys.platform == 'win32':
+        try:
+            import ctypes.wintypes
+            from ctypes import windll
+            
+            # Пытаемся создать именованный мьютекс
+            mutex = windll.kernel32.CreateMutexW(None, True, mutex_name)
+            if not mutex:
+                print("Ошибка создания мьютекса")
+                sys.exit(1)
+            
+            error_code = ctypes.get_last_error()
+            if error_code == 183:  # ERROR_ALREADY_EXISTS
+                print("Приложение уже запущено!")
+                QMessageBox.warning(
+                    None,
+                    "Приложение уже запущено",
+                    "Приложение PC-RMDS Host уже запущено.\n\n"
+                    "Нельзя запустить несколько копий одновременно.\n"
+                    "Если вы хотите открыть новое окно, закройте существующее."
+                )
+                sys.exit(0)
+                
+        except Exception as e:
+            print(f"Ошибка проверки мьютекса: {e}")
+            # Продолжаем работу, если не удалось проверить мьютекс
+    else:
+        # Для Linux/macOS используем file-based lock
+        import fcntl
+        import tempfile
+        
+        lock_file_path = os.path.join(tempfile.gettempdir(), "pc-rmds-host.lock")
+        try:
+            lock_file = open(lock_file_path, 'w')
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Сохраняем ссылку на файл, чтобы мьютекс не освободился
+            main.lock_file = lock_file
+        except IOError:
+            print("Приложение уже запущено!")
+            QMessageBox.warning(
+                None,
+                "Приложение уже запущено",
+                "Приложение PC-RMDS Host уже запущено.\n\n"
+                "Нельзя запустить несколько копий одновременно.\n"
+                "Если вы хотите открыть новое окно, закройте существующее."
+            )
+            sys.exit(0)
+    
     # Обеспечиваем создание всех необходимых директорий
     try:
         ensure_dirs()
@@ -53,6 +104,27 @@ def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     app.setApplicationName("Remote Access Agent")
+    
+    # Устанавливаем обработчик для очистки мьютекса при выходе
+    def cleanup_mutex():
+        if sys.platform == 'win32':
+            try:
+                from ctypes import windll
+                windll.kernel32.ReleaseMutex(mutex)
+                windll.kernel32.CloseHandle(mutex)
+            except:
+                pass
+        else:
+            try:
+                import fcntl
+                if hasattr(main, 'lock_file'):
+                    fcntl.flock(main.lock_file, fcntl.LOCK_UN)
+                    main.lock_file.close()
+            except:
+                pass
+    
+    import atexit
+    atexit.register(cleanup_mutex)
     
     auth_dialog = AuthDialog()
     if auth_dialog.exec() == AuthDialog.DialogCode.Accepted:
@@ -97,6 +169,7 @@ def main():
             window.show()
             sys.exit(app.exec())
     else:
+        cleanup_mutex()
         sys.exit(0)
 
 

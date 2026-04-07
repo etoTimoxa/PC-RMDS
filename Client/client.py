@@ -256,14 +256,27 @@ class RemoteScreenWidget(QLabel):
         self.setFocus()
     
     def set_display_info(self, host_width, host_height, display_width, display_height):
+        """Устанавливает информацию о размерах для преобразования координат.
+        
+        Args:
+            host_width: Реальное разрешение экрана хоста по ширине
+            host_height: Реальное разрешение экрана хоста по высоте
+            display_width: Ширина отображаемого изображения в виджете
+            display_height: Высота отображаемого изображения в виджете
+        """
         self.host_screen_width = host_width
         self.host_screen_height = host_height
         self.display_image_width = display_width
         self.display_image_height = display_height
         
+        # Вычисляем масштаб только если все значения валидны
         if host_width and host_height and display_width and display_height:
             self.scale_x = host_width / display_width
             self.scale_y = host_height / display_height
+        else:
+            # Сбрасываем масштаб к значению по умолчанию
+            self.scale_x = 1.0
+            self.scale_y = 1.0
     
     def update_image_position(self):
         pixmap = self.pixmap()
@@ -276,17 +289,38 @@ class RemoteScreenWidget(QLabel):
         self.update_image_position()
     
     def client_to_host_coords(self, client_x, client_y):
-        if (self.host_screen_width and self.host_screen_height and 
-            self.display_image_width and self.display_image_height):
+        """Преобразует координаты на изображении в координаты экрана хоста.
+        
+        Args:
+            client_x: Координата X на отображаемом изображении
+            client_y: Координата Y на отображаемом изображении
             
-            host_x = int(client_x * self.scale_x)
-            host_y = int(client_y * self.scale_y)
-            
-            host_x = max(0, min(host_x, self.host_screen_width - 1))
-            host_y = max(0, min(host_y, self.host_screen_height - 1))
-            
-            return host_x, host_y
-        return client_x, client_y
+        Returns:
+            (host_x, host_y): Координаты на экране хоста
+        """
+        if not (self.host_screen_width and self.host_screen_height):
+            return client_x, client_y
+        
+        # Получаем реальные размеры pixmap (они могут отличаться от display_image_width/height)
+        pixmap = self.pixmap()
+        if not pixmap or pixmap.width() == 0 or pixmap.height() == 0:
+            return client_x, client_y
+        
+        pixmap_width = pixmap.width()
+        pixmap_height = pixmap.height()
+        
+        # Вычисляем масштаб на основе реальных размеров pixmap
+        scale_x = self.host_screen_width / pixmap_width
+        scale_y = self.host_screen_height / pixmap_height
+        
+        host_x = int(client_x * scale_x)
+        host_y = int(client_y * scale_y)
+        
+        # Ограничиваем координаты размерами экрана хоста
+        host_x = max(0, min(host_x, self.host_screen_width - 1))
+        host_y = max(0, min(host_y, self.host_screen_height - 1))
+        
+        return host_x, host_y
     
     def get_image_coords(self, widget_x, widget_y):
         pixmap = self.pixmap()
@@ -887,6 +921,13 @@ class RemoteScreenWindow(QMainWindow):
         self.screen_widget.mouse_wheeled.connect(self.on_mouse_wheel)
         self.screen_widget.key_pressed.connect(self.on_key_press)
     
+    def resizeEvent(self, event):
+        """Переопределяем для обновления позиции изображения при изменении размера окна."""
+        super().resizeEvent(event)
+        # Обновляем позицию изображения (центровку) при изменении размера окна
+        if self.screen_widget:
+            self.screen_widget.update_image_position()
+    
     def init_ui(self):
         self.setWindowTitle("Удаленный экран")
         self.setGeometry(200, 200, 1280, 800)
@@ -965,21 +1006,25 @@ class RemoteScreenWindow(QMainWindow):
             
             img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
             
-            # Важно: передаем реальное разрешение экрана хоста для правильного
-            # преобразования координат мыши
-            self.screen_widget.set_display_info(
-                host_width, 
-                host_height,
-                self.display_width, 
-                self.display_height
-            )
-            
             img_byte_array = BytesIO()
             img_resized.save(img_byte_array, format='PNG')
             qimage = QImage.fromData(img_byte_array.getvalue())
             pixmap = QPixmap.fromImage(qimage)
             
+            # Сначала устанавливаем pixmap, чтобы получить реальные размеры
             self.screen_widget.setPixmap(pixmap)
+            
+            # Теперь устанавливаем информацию о дисплее с реальными размерами pixmap
+            # Это критически важно for правильного преобразования координат
+            actual_pixmap_width = pixmap.width()
+            actual_pixmap_height = pixmap.height()
+            self.screen_widget.set_display_info(
+                host_width, 
+                host_height,
+                actual_pixmap_width, 
+                actual_pixmap_height
+            )
+            
             self.screen_widget.set_screen_size(host_width, host_height)
             self.screen_widget.update_image_position()
             self.frame_count += 1

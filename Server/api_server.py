@@ -1,0 +1,120 @@
+"""
+API Server - Flask REST API для админки
+Запускается отдельно от основного WebSocket сервера
+"""
+import sys
+import os
+
+# Добавляем путь для импортов
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from flask import Flask, jsonify
+from flask_cors import CORS
+
+from config import API_CONFIG
+from routes import (
+    computers_bp,
+    users_bp,
+    sessions_bp,
+    metrics_bp,
+    dashboard_bp
+)
+
+
+def create_app():
+    """Создание Flask приложения"""
+    app = Flask(__name__)
+    
+    # CORS для доступа с админки
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": "*",
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
+    
+    # Регистрация blueprints
+    app.register_blueprint(computers_bp, url_prefix='/api/computers')
+    app.register_blueprint(users_bp, url_prefix='/api/users')
+    app.register_blueprint(sessions_bp, url_prefix='/api/sessions')
+    app.register_blueprint(metrics_bp, url_prefix='/api/metrics')
+    app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
+    
+    # Health check
+    @app.route('/health')
+    def health():
+        return jsonify({
+            'status': 'healthy',
+            'service': 'PC-RMDS API Server'
+        })
+    
+    # Корневой эндпоинт
+    @app.route('/')
+    def index():
+        return jsonify({
+            'service': 'PC-RMDS REST API',
+            'version': '1.0.0',
+            'endpoints': {
+                'computers': '/api/computers',
+                'users': '/api/users',
+                'sessions': '/api/sessions',
+                'metrics': '/api/metrics',
+                'dashboard': '/api/dashboard',
+                'health': '/health'
+            }
+        })
+    
+    # Обработка ошибок
+    @app.errorhandler(404)
+    def not_found(error):
+        return jsonify({
+            'success': False,
+            'error': 'Endpoint not found'
+        }), 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error'
+        }), 500
+    
+    return app
+
+
+def main():
+    """Запуск сервера"""
+    app = create_app()
+    
+    host = API_CONFIG['host']
+    port = API_CONFIG['port']
+    debug = API_CONFIG['debug']
+    
+    print(f"""
+╔═══════════════════════════════════════════════════════════╗
+║           PC-RMDS REST API Server                         ║
+╠═══════════════════════════════════════════════════════════╣
+║  Started at: http://{host}:{port}                         
+║  Debug mode: {str(debug):5}                                  
+╠═══════════════════════════════════════════════════════════╣
+║  Endpoints:                                              ║
+║    GET  /api/computers          - Список компьютеров      ║
+║    GET  /api/users              - Список пользователей    ║
+║    GET  /api/sessions           - Список сессий          ║
+║    GET  /api/metrics            - Метрики из S3          ║
+║    GET  /api/dashboard/stats   - Статистика              ║
+║    GET  /health                 - Health check           ║
+╚═══════════════════════════════════════════════════════════╝
+    """)
+    
+    app.run(
+        host=host,
+        port=port,
+        debug=debug,
+        threaded=True
+    )
+
+
+if __name__ == '__main__':
+    main()

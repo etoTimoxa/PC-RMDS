@@ -3,7 +3,7 @@ Operating Systems routes - эндпоинты для работы с ОС
 """
 from flask import Blueprint, request, jsonify
 
-from ..services.mysql_service import MySQLService
+from services.mysql_service import MySQLService
 
 os_bp = Blueprint('operating_systems', __name__)
 mysql = MySQLService()

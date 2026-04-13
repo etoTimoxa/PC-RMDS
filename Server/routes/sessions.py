@@ -4,7 +4,7 @@ Sessions routes - эндпоинты для работы с сессиями
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
-from ..services.mysql_service import MySQLService
+from services.mysql_service import MySQLService
 
 sessions_bp = Blueprint('sessions', __name__)
 mysql = MySQLService()

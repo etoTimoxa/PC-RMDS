@@ -15,7 +15,7 @@ from config import API_CONFIG
 from routes import (
     computers_bp,
     users_bp,
-    sessions_bp,
+    statuses_bp,
     metrics_bp,
     dashboard_bp
 )
@@ -37,7 +37,7 @@ def create_app():
     # Регистрация blueprints
     app.register_blueprint(computers_bp, url_prefix='/api/computers')
     app.register_blueprint(users_bp, url_prefix='/api/users')
-    app.register_blueprint(sessions_bp, url_prefix='/api/sessions')
+    app.register_blueprint(statuses_bp, url_prefix='/api/statuses')
     app.register_blueprint(metrics_bp, url_prefix='/api/metrics')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     
@@ -58,7 +58,7 @@ def create_app():
             'endpoints': {
                 'computers': '/api/computers',
                 'users': '/api/users',
-                'sessions': '/api/sessions',
+                'statuses': '/api/statuses',
                 'metrics': '/api/metrics',
                 'dashboard': '/api/dashboard',
                 'health': '/health'
@@ -92,21 +92,21 @@ def main():
     debug = API_CONFIG['debug']
     
     print(f"""
-╔═══════════════════════════════════════════════════════════╗
-║           PC-RMDS REST API Server                         ║
-╠═══════════════════════════════════════════════════════════╣
-║  Started at: http://{host}:{port}                         
-║  Debug mode: {str(debug):5}                                  
-╠═══════════════════════════════════════════════════════════╣
-║  Endpoints:                                              ║
-║    GET  /api/computers          - Список компьютеров      ║
-║    GET  /api/users              - Список пользователей    ║
-║    GET  /api/sessions           - Список сессий          ║
-║    GET  /api/metrics            - Метрики из S3          ║
-║    GET  /api/dashboard/stats   - Статистика              ║
-║    GET  /health                 - Health check           ║
-╚═══════════════════════════════════════════════════════════╝
-    """)
+ ╔═══════════════════════════════════════════════════════════╗
+ ║           PC-RMDS REST API Server                         ║
+ ╠═══════════════════════════════════════════════════════════╣
+ ║  Started at: http://{host}:{port}                         
+ ║  Debug mode: {str(debug):5}                                  
+ ╠═══════════════════════════════════════════════════════════╣
+ ║  Endpoints:                                              ║
+ ║    GET  /api/computers          - Список компьютеров      ║
+ ║    GET  /api/users              - Список пользователей    ║
+ ║    GET  /api/statuses           - Список статусов        ║
+ ║    GET  /api/metrics            - Метрики из S3          ║
+ ║    GET  /api/dashboard/stats   - Статистика              ║
+ ║    GET  /health                 - Health check           ║
+ ╚═══════════════════════════════════════════════════════════╝
+     """)
     
     app.run(
         host=host,

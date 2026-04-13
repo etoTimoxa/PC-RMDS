@@ -7,7 +7,7 @@ from datetime import datetime, date
 from typing import List, Dict, Optional, Any
 from contextlib import contextmanager
 
-from ..config import DB_CONFIG, PAGINATION
+from config import DB_CONFIG, PAGINATION
 
 
 class MySQLService:
@@ -287,7 +287,7 @@ class MySQLService:
                     FROM user u
                     LEFT JOIN role r ON u.role_id = r.role_id
                     WHERE {where_sql}
-                    ORDER BY u.last_login DESC NULLS LAST
+                    ORDER BY u.last_login DESC
                     LIMIT %s OFFSET %s
                 """
                 cursor.execute(sql, params + [limit, offset])

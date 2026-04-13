@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import io
 
-from ..config import CLOUD_CONFIG, METRICS_CONFIG
+from config import CLOUD_CONFIG, METRICS_CONFIG
 
 
 class CloudService:
@@ -873,3 +873,431 @@ class CloudService:
             }
         except ClientError:
             return None
+
+    def get_full_day_file(self, hostname: str, date_str: str) -> Dict:
+        """
+        Получить полное содержимое файла за указанный день целиком.
+        
+        Args:
+            hostname: Название компьютера
+            date_str: Дата в формате YYYY-MM-DD
+            
+        Returns:
+            Полное содержимое файла со всеми записями
+        """
+        try:
+            target_date = date.fromisoformat(date_str)
+        except ValueError:
+            return {
+                'success': False,
+                'error': 'Неверный формат даты. Используйте формат YYYY-MM-DD',
+                'hostname': hostname,
+                'date': date_str,
+                'records': []
+            }
+        
+        sanitized_name = self._sanitize_hostname(hostname)
+        file_key = f"{sanitized_name}_{target_date.isoformat()}.json"
+        
+        if not self.file_exists(file_key):
+            return {
+                'success': False,
+                'error': 'Файл не найден в облаке',
+                'hostname': hostname,
+                'date': date_str,
+                'file_key': file_key,
+                'records': []
+            }
+        
+        records = self.read_all_records(file_key)
+        file_info = self.get_file_info(file_key)
+        
+        return {
+            'success': True,
+            'hostname': hostname,
+            'date': date_str,
+            'file_key': file_key,
+            'file_info': file_info,
+            'records_count': len(records),
+            'records': records
+        }
+
+    def get_full_period_files(self, hostname: str, from_date_str: str, to_date_str: str) -> Dict:
+        """
+        Получить все записи из файлов за указанный период (несколько дней).
+        
+        Args:
+            hostname: Название компьютера
+            from_date_str: Начальная дата в формате YYYY-MM-DD
+            to_date_str: Конечная дата в формате YYYY-MM-DD
+            
+        Returns:
+            Все записи со всех дневных файлов за период
+        """
+        try:
+            from_date = date.fromisoformat(from_date_str)
+            to_date = date.fromisoformat(to_date_str)
+        except ValueError:
+            return {
+                'success': False,
+                'error': 'Неверный формат даты. Используйте формат YYYY-MM-DD',
+                'hostname': hostname,
+                'from_date': from_date_str,
+                'to_date': to_date_str,
+                'files_found': 0,
+                'records_count': 0,
+                'records': []
+            }
+        
+        if from_date > to_date:
+            return {
+                'success': False,
+                'error': 'Начальная дата не может быть больше конечной',
+                'hostname': hostname,
+                'from_date': from_date_str,
+                'to_date': to_date_str,
+                'files_found': 0,
+                'records_count': 0,
+                'records': []
+            }
+        
+        sanitized_name = self._sanitize_hostname(hostname)
+        all_records = []
+        found_files = []
+        current_date = from_date
+        
+        while current_date <= to_date:
+            file_key = f"{sanitized_name}_{current_date.isoformat()}.json"
+            
+            if self.file_exists(file_key):
+                file_records = self.read_all_records(file_key)
+                all_records.extend(file_records)
+                found_files.append({
+                    'date': current_date.isoformat(),
+                    'file_key': file_key,
+                    'records_count': len(file_records)
+                })
+            
+            current_date += timedelta(days=1)
+        
+        # Сортируем все записи по времени
+        all_records.sort(key=lambda x: x.get('timestamp', ''))
+        
+        return {
+            'success': True,
+            'hostname': hostname,
+            'from_date': from_date_str,
+            'to_date': to_date_str,
+            'days_total': (to_date - from_date).days + 1,
+            'files_found': len(found_files),
+            'files': found_files,
+            'records_count': len(all_records),
+            'records': all_records
+        }
+
+    def get_average_performance(self, hostname: str, from_date_str: str, to_date_str: str) -> Dict:
+        """
+        Получить средние показатели производительности за период.
+        
+        Args:
+            hostname: Название компьютера
+            from_date_str: Начальная дата в формате YYYY-MM-DD
+            to_date_str: Конечная дата в формате YYYY-MM-DD
+            
+        Returns:
+            Средние значения всех показателей в указанном формате
+        """
+        try:
+            from_date = date.fromisoformat(from_date_str)
+            to_date = date.fromisoformat(to_date_str)
+        except ValueError:
+            return {
+                'success': False,
+                'error': 'Неверный формат даты. Используйте формат YYYY-MM-DD',
+                'average': {}
+            }
+        
+        if from_date > to_date:
+            return {
+                'success': False,
+                'error': 'Начальная дата не может быть больше конечной',
+                'average': {}
+            }
+        
+        sanitized_name = self._sanitize_hostname(hostname)
+        all_metrics = []
+        current_date = from_date
+        
+        while current_date <= to_date:
+            file_key = f"{sanitized_name}_{current_date.isoformat()}.json"
+            
+            if self.file_exists(file_key):
+                records = self.read_all_records(file_key)
+                
+                for record in records:
+                    if record.get('type') == 'metric' and 'data' in record:
+                        all_metrics.append(record['data'])
+            
+            current_date += timedelta(days=1)
+        
+        if not all_metrics:
+            return {
+                'success': True,
+                'hostname': hostname,
+                'from_date': from_date_str,
+                'to_date': to_date_str,
+                'metrics_count': 0,
+                'average': {}
+            }
+        
+        # Вычисляем средние значения
+        def avg(key):
+            values = [m.get(key) for m in all_metrics if m.get(key) is not None]
+            return round(sum(values) / len(values), 2) if values else None
+        
+        # Получаем последние общие показатели (общий объем диска и ОЗУ не меняется)
+        last_metric = all_metrics[-1]
+        
+        average = {
+            'cpu_usage': avg('cpu_usage'),
+            'ram_usage': avg('ram_usage'),
+            'ram_used_gb': avg('ram_used_gb'),
+            'ram_total_gb': last_metric.get('ram_total_gb'),
+            'disk_usage': avg('disk_usage'),
+            'disk_used_gb': avg('disk_used_gb'),
+            'disk_total_gb': last_metric.get('disk_total_gb'),
+            'network_sent_mb': avg('network_sent_mb'),
+            'network_recv_mb': avg('network_recv_mb'),
+            'uptime_seconds': last_metric.get('uptime_seconds')
+        }
+        
+        return {
+            'success': True,
+            'hostname': hostname,
+            'from_date': from_date_str,
+            'to_date': to_date_str,
+            'metrics_count': len(all_metrics),
+            'average': average
+        }
+
+    def get_all_performance(self, hostname: str, from_date_str: str, to_date_str: str) -> Dict:
+        """
+        Получить все показатели производительности за период без усреднения.
+        
+        Args:
+            hostname: Название компьютера
+            from_date_str: Начальная дата в формате YYYY-MM-DD
+            to_date_str: Конечная дата в формате YYYY-MM-DD
+            
+        Returns:
+            Список всех метрик производительности в хронологическом порядке
+        """
+        try:
+            from_date = date.fromisoformat(from_date_str)
+            to_date = date.fromisoformat(to_date_str)
+        except ValueError:
+            return {
+                'success': False,
+                'error': 'Неверный формат даты. Используйте формат YYYY-MM-DD',
+                'performance': []
+            }
+        
+        if from_date > to_date:
+            return {
+                'success': False,
+                'error': 'Начальная дата не может быть больше конечной',
+                'performance': []
+            }
+        
+        sanitized_name = self._sanitize_hostname(hostname)
+        all_performance = []
+        current_date = from_date
+        
+        while current_date <= to_date:
+            file_key = f"{sanitized_name}_{current_date.isoformat()}.json"
+            
+            if self.file_exists(file_key):
+                records = self.read_all_records(file_key)
+                
+                for record in records:
+                    if record.get('type') == 'metric' and 'data' in record:
+                        all_performance.append({
+                            'timestamp': record.get('timestamp'),
+                            **record['data']
+                        })
+            
+            current_date += timedelta(days=1)
+        
+        all_performance.sort(key=lambda x: x.get('timestamp', ''))
+        
+        return {
+            'success': True,
+            'hostname': hostname,
+            'from_date': from_date_str,
+            'to_date': to_date_str,
+            'count': len(all_performance),
+            'performance': all_performance
+        }
+
+    def get_all_events(self, hostname: str, from_date_str: str, to_date_str: str) -> Dict:
+        """
+        Получить все события за период.
+        
+        Args:
+            hostname: Название компьютера
+            from_date_str: Начальная дата в формате YYYY-MM-DD
+            to_date_str: Конечная дата в формате YYYY-MM-DD
+            
+        Returns:
+            Список всех событий за период
+        """
+        try:
+            from_date = date.fromisoformat(from_date_str)
+            to_date = date.fromisoformat(to_date_str)
+        except ValueError:
+            return {
+                'success': False,
+                'error': 'Неверный формат даты. Используйте формат YYYY-MM-DD',
+                'events': []
+            }
+        
+        if from_date > to_date:
+            return {
+                'success': False,
+                'error': 'Начальная дата не может быть больше конечной',
+                'events': []
+            }
+        
+        sanitized_name = self._sanitize_hostname(hostname)
+        all_events = []
+        current_date = from_date
+        
+        while current_date <= to_date:
+            file_key = f"{sanitized_name}_{current_date.isoformat()}.json"
+            
+            if self.file_exists(file_key):
+                records = self.read_all_records(file_key)
+                
+                for record in records:
+                    if record.get('type') == 'user_action' or record.get('type') == 'windows_event':
+                        all_events.append(record)
+            
+            current_date += timedelta(days=1)
+        
+        all_events.sort(key=lambda x: x.get('timestamp', ''))
+        
+        return {
+            'success': True,
+            'hostname': hostname,
+            'from_date': from_date_str,
+            'to_date': to_date_str,
+            'count': len(all_events),
+            'events': all_events
+        }
+
+    def get_events_statistics(self, hostname: str, from_date_str: str, to_date_str: str) -> Dict:
+        """
+        Получить статистику по количеству каждого типа событий за период.
+        
+        Args:
+            hostname: Название компьютера
+            from_date_str: Начальная дата в формате YYYY-MM-DD
+            to_date_str: Конечная дата в формате YYYY-MM-DD
+            
+        Returns:
+            Статистика с общим количеством каждого типа события
+        """
+        events_data = self.get_all_events(hostname, from_date_str, to_date_str)
+        
+        if not events_data.get('success'):
+            return events_data
+        
+        events = events_data.get('events', [])
+        statistics = {}
+        
+        for event in events:
+            action_type = event.get('data', {}).get('action_type', event.get('type', 'unknown'))
+            if action_type not in statistics:
+                statistics[action_type] = 0
+            statistics[action_type] += 1
+        
+        return {
+            'success': True,
+            'hostname': hostname,
+            'from_date': from_date_str,
+            'to_date': to_date_str,
+            'total_events': len(events),
+            'statistics': statistics
+        }
+
+    def get_anomalies(self, hostname: str, from_date_str: str, to_date_str: str,
+                     cpu_threshold: float = 90.0, ram_threshold: float = 90.0) -> Dict:
+        """
+        Получить аномалии (высокая нагрузка CPU/RAM) за период.
+        
+        Args:
+            hostname: Название компьютера
+            from_date_str: Начальная дата в формате YYYY-MM-DD
+            to_date_str: Конечная дата в формате YYYY-MM-DD
+            cpu_threshold: Порог CPU в процентах
+            ram_threshold: Порог RAM в процентах
+            
+        Returns:
+            Список аномалий за период
+        """
+        try:
+            from_date = date.fromisoformat(from_date_str)
+            to_date = date.fromisoformat(to_date_str)
+        except ValueError:
+            return {
+                'success': False,
+                'error': 'Неверный формат даты. Используйте формат YYYY-MM-DD',
+                'anomalies': []
+            }
+        
+        if from_date > to_date:
+            return {
+                'success': False,
+                'error': 'Начальная дата не может быть больше конечной',
+                'anomalies': []
+            }
+        
+        sanitized_name = self._sanitize_hostname(hostname)
+        anomalies = []
+        current_date = from_date
+        
+        while current_date <= to_date:
+            file_key = f"{sanitized_name}_{current_date.isoformat()}.json"
+            
+            if self.file_exists(file_key):
+                records = self.read_all_records(file_key)
+                
+                for record in records:
+                    if record.get('type') == 'metric' and 'data' in record:
+                        data = record['data']
+                        cpu = data.get('cpu_usage')
+                        ram = data.get('ram_usage')
+                        
+                        if (cpu is not None and cpu > cpu_threshold) or (ram is not None and ram > ram_threshold):
+                            anomalies.append({
+                                'timestamp': record.get('timestamp'),
+                                'cpu_usage': cpu,
+                                'ram_usage': ram,
+                                'cpu_threshold': cpu_threshold,
+                                'ram_threshold': ram_threshold
+                            })
+            
+            current_date += timedelta(days=1)
+        
+        anomalies.sort(key=lambda x: x.get('timestamp', ''))
+        
+        return {
+            'success': True,
+            'hostname': hostname,
+            'from_date': from_date_str,
+            'to_date': to_date_str,
+            'cpu_threshold': cpu_threshold,
+            'ram_threshold': ram_threshold,
+            'count': len(anomalies),
+            'anomalies': anomalies
+        }

@@ -3,7 +3,7 @@ Roles routes - эндпоинты для работы с ролями
 """
 from flask import Blueprint, request, jsonify
 
-from ..services.mysql_service import MySQLService
+from services.mysql_service import MySQLService
 
 roles_bp = Blueprint('roles', __name__)
 mysql = MySQLService()

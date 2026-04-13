@@ -3,7 +3,7 @@ Hardware routes - эндпоинты для работы с конфигурац
 """
 from flask import Blueprint, request, jsonify
 
-from ..services.mysql_service import MySQLService
+from services.mysql_service import MySQLService
 
 hardware_bp = Blueprint('hardware', __name__)
 mysql = MySQLService()

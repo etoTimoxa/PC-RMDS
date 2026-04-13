@@ -4,7 +4,7 @@ Computers routes - эндпоинты для работы с компьютер�
 from flask import Blueprint, request, jsonify
 from datetime import datetime
 
-from ..services.mysql_service import MySQLService
+from services.mysql_service import MySQLService
 
 computers_bp = Blueprint('computers', __name__)
 mysql = MySQLService()
@@ -54,6 +54,79 @@ def get_computers():
             'success': False,
             'error': str(e)
         }), 500
+
+
+@computers_bp.route('/<int:computer_id>/hardware', methods=['GET'])
+def get_computer_hardware(computer_id):
+    """
+    GET /api/computers/{id}/hardware
+    Получить информацию о железе компьютера.
+    """
+    try:
+        hardware = mysql.get_hardware_by_computer_id(computer_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'computer_id': computer_id,
+                'hardware': hardware
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@computers_bp.route('/<int:computer_id>/ip-addresses', methods=['GET'])
+def get_computer_ip_addresses(computer_id):
+    """
+    GET /api/computers/{id}/ip-addresses
+    Получить IP адреса компьютера.
+    """
+    try:
+        ip_addresses = mysql.get_ip_addresses_by_computer_id(computer_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'computer_id': computer_id,
+                'ip_addresses': ip_addresses
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@computers_bp.route('/<int:computer_id>/operating-system', methods=['GET'])
+def get_computer_operating_system(computer_id):
+    """
+    GET /api/computers/{id}/operating-system
+    Получить информацию об операционной системе компьютера.
+    """
+    try:
+        os = mysql.get_operating_system_by_computer_id(computer_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'computer_id': computer_id,
+                'operating_system': os
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 
 
 @computers_bp.route('/<int:computer_id>', methods=['GET'])

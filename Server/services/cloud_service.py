@@ -37,11 +37,16 @@ class CloudService:
     def _init_s3(self):
         """Инициализация S3 клиента"""
         try:
+            import urllib3
+            # Отключаем предупреждения о самоподписанных сертификатах
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
             self._s3 = boto3.client(
                 's3',
                 endpoint_url=self._config['endpoint_url'],
                 aws_access_key_id=self._config['access_key'],
                 aws_secret_access_key=self._config['secret_key'],
+                verify=False,
                 config=Config(
                     signature_version='s3v4',
                     retries={'max_attempts': 3, 'mode': 'standard'}

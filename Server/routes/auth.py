@@ -41,7 +41,7 @@ def register():
 
         # Проверяем что пользователь с таким логином не существует
         existing = mysql.fetch_one(
-            "SELECT user_id FROM users WHERE login = %s", 
+            "SELECT user_id FROM user WHERE login = %s", 
             (data['login'],)
         )
         
@@ -56,7 +56,7 @@ def register():
         password_hash = bcrypt.hashpw(data['password'].encode('utf-8'), salt)
 
         user_id = mysql.execute("""
-            INSERT INTO users (login, password_hash, full_name, role_id, is_active, created_at)
+            INSERT INTO user (login, password_hash, full_name, role_id, is_active, created_at)
             VALUES (%s, %s, %s, 2, 1, NOW())
         """, (
             data['login'],
@@ -95,7 +95,7 @@ def login():
             }), 400
 
         user = mysql.fetch_one(
-            "SELECT user_id, login, full_name, password_hash, role_id, is_active FROM users WHERE login = %s",
+            "SELECT user_id, login, full_name, password_hash, role_id, is_active FROM user WHERE login = %s",
             (data['login'],)
         )
 
@@ -119,10 +119,10 @@ def login():
             }), 401
 
         # Генерируем JWT токен
-        user_id = user[0] if isinstance(user, (list, tuple)) else user.get('user_id')
-        login = user[1] if isinstance(user, (list, tuple)) else user.get('login')
-        full_name = user[2] if isinstance(user, (list, tuple)) else user.get('full_name')
-        role_id = user[4] if isinstance(user, (list, tuple)) else user.get('role_id')
+        user_id = user['user_id']
+        login = user['login']
+        full_name = user['full_name']
+        role_id = user['role_id']
         
         payload = {
             'user_id': user_id,
@@ -174,7 +174,7 @@ def get_current_user():
 
         user = mysql.fetch_one("""
             SELECT user_id, login, full_name, role_id, is_active, created_at 
-            FROM users WHERE user_id = %s
+            FROM user WHERE user_id = %s
         """, (payload['user_id'],))
 
         return jsonify({

@@ -6,11 +6,13 @@ from .users import users_bp
 from .statuses import statuses_bp
 from .metrics import metrics_bp
 from .dashboard import dashboard_bp
+from .auth import auth_bp
 
 __all__ = [
     'computers_bp',
     'users_bp',
     'statuses_bp',
     'metrics_bp',
-    'dashboard_bp'
+    'dashboard_bp',
+    'auth_bp'
 ]

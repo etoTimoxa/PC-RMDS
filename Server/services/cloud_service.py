@@ -995,6 +995,49 @@ class CloudService:
             'records': all_records
         }
 
+    def upload_metrics_file(self, file) -> Dict:
+        """
+        Загрузить файл метрик в облачное хранилище S3
+        
+        Args:
+            file: File object из запроса Flask (werkzeug.FileStorage)
+            
+        Returns:
+            Результат загрузки
+        """
+        if not self._s3:
+            return {
+                'success': False,
+                'error': 'S3 клиент не инициализирован'
+            }
+        
+        try:
+            filename = file.filename
+            
+            # Считываем содержимое файла
+            file_content = file.read()
+            
+            # Загружаем в S3
+            self._s3.put_object(
+                Bucket=self._bucket_name,
+                Key=filename,
+                Body=file_content,
+                ContentType='application/json'
+            )
+            
+            return {
+                'success': True,
+                'filename': filename,
+                'size': len(file_content)
+            }
+            
+        except Exception as e:
+            print(f"Ошибка загрузки файла {file.filename}: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
     def get_average_performance(self, hostname: str, from_date_str: str, to_date_str: str) -> Dict:
         """
         Получить средние показатели производительности за период.

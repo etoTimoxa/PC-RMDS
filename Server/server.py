@@ -2,7 +2,15 @@ import asyncio
 import websockets
 import json
 import socket
+import threading
 from datetime import datetime
+
+# Импортируем API сервер
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from api_server import create_app
+from config import API_CONFIG
 
 hosts = {}  # computer_id -> websocket (computer_id хранится как строка)
 clients = {}  # client_id -> {"ws": websocket, "computer_id": computer_id}
@@ -172,9 +180,47 @@ async def handler(websocket):
                 log(f"Клиент отключен: {client_id}")
                 break
 
+def run_api_server():
+    """Функция для запуска Flask API сервера в отдельном потоке"""
+    app = create_app()
+    host = API_CONFIG['host']
+    port = API_CONFIG['port']
+    debug = API_CONFIG['debug']
+    
+    print(f"""
+ ╔═══════════════════════════════════════════════════════════╗
+ ║           PC-RMDS REST API Server                         ║
+ ╠═══════════════════════════════════════════════════════════╣
+ ║  Started at: http://{host}:{port}                         
+ ║  Debug mode: {str(debug):5}                                  
+ ╠═══════════════════════════════════════════════════════════╣
+ ║  Endpoints:                                              ║
+ ║    GET  /api/computers          - Список компьютеров      ║
+ ║    GET  /api/users              - Список пользователей    ║
+ ║    GET  /api/statuses           - Список статусов        ║
+ ║    GET  /api/metrics            - Метрики из S3          ║
+ ║    GET  /api/dashboard/stats   - Статистика              ║
+ ║    GET  /health                 - Health check           ║
+ ╚═══════════════════════════════════════════════════════════╝
+     """)
+    
+    # Запускаем Flask сервер без debug режима в потоке (чтобы не было перезагрузки)
+    app.run(
+        host=host,
+        port=port,
+        debug=False,
+        threaded=True,
+        use_reloader=False
+    )
+
+
 async def main():
+    # Запускаем API сервер в отдельном потоке демоне
+    api_thread = threading.Thread(target=run_api_server, daemon=True)
+    api_thread.start()
+    
     PORT = find_free_port(9001)
-    log(f"🚀 Запуск сервера на порту: {PORT}")
+    log(f"🚀 Запуск WebSocket сервера на порту: {PORT}")
     log(f"📡 Ожидание подключений...")
     
     async with websockets.serve(handler, "0.0.0.0", PORT):

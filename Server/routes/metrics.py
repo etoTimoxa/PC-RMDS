@@ -71,6 +71,44 @@ def get_full_period_files():
         }), 500
 
 
+@metrics_bp.route('/upload', methods=['POST'])
+def upload_metrics_file():
+    """
+    POST /api/metrics/upload
+    Отправка готового файла метрик на облачное хранилище S3
+    Принимает файл в формате multipart/form-data
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({
+                'success': False,
+                'error': 'Файл не был передан в запросе'
+            }), 400
+
+        file = request.files['file']
+        
+        if file.filename == '':
+            return jsonify({
+                'success': False,
+                'error': 'Не выбран файл для загрузки'
+            }), 400
+
+        # Загружаем файл напрямую в облако
+        result = cloud.upload_metrics_file(file)
+
+        return jsonify({
+            'success': True,
+            'message': 'Файл успешно загружен в облако',
+            'data': result
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @metrics_bp.route('/average', methods=['GET'])
 def get_average_performance():
     """

@@ -17,7 +17,8 @@ from routes import (
     users_bp,
     statuses_bp,
     metrics_bp,
-    dashboard_bp
+    dashboard_bp,
+    auth_bp
 )
 
 
@@ -35,6 +36,7 @@ def create_app():
     })
     
     # Регистрация blueprints
+    app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(computers_bp, url_prefix='/api/computers')
     app.register_blueprint(users_bp, url_prefix='/api/users')
     app.register_blueprint(statuses_bp, url_prefix='/api/statuses')

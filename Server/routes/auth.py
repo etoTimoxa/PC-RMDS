@@ -119,8 +119,9 @@ def login():
             }), 401
 
         # Генерируем JWT токен
+        user_id = user['user_id']
         payload = {
-            'user_id': user['user_id'],
+            'user_id': user_id,
             'login': user['login'],
             'role_id': user['role_id'],
             'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
@@ -133,10 +134,11 @@ def login():
             'data': {
                 'token': token,
                 'user': {
-                    'user_id': user['user_id'],
+                    'user_id': user_id,
                     'login': user['login'],
                     'full_name': user['full_name'],
-                    'role_id': user['role_id']
+                    'role_id': user['role_id'],
+                    'is_admin': user['role_id'] in (2, 3)
                 }
             }
         })

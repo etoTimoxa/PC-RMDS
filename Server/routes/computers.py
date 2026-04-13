@@ -10,6 +10,70 @@ computers_bp = Blueprint('computers', __name__)
 mysql = MySQLService()
 
 
+@computers_bp.route('/register', methods=['POST'])
+def register_computer():
+    """
+    POST /api/computers/register
+    Регистрация компьютера для пользователя
+    """
+    try:
+        data = request.get_json()
+        
+        required_fields = ['user_id', 'hardware_id', 'hostname']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    'success': False,
+                    'error': f'Отсутствует обязательное поле: {field}'
+                }), 400
+                
+        user_id = data['user_id']
+        hardware_id = data['hardware_id']
+        hostname = data['hostname']
+        force_rebind = data.get('force_rebind', False)
+        
+        # Проверяем существует ли уже компьютер с таким hardware_id
+        existing = mysql.fetch_one(
+            "SELECT computer_id, user_id, is_active FROM computers WHERE hardware_id = %s",
+            (hardware_id,)
+        )
+        
+        if existing:
+            if not force_rebind and existing['user_id'] != user_id:
+                return jsonify({
+                    'success': False,
+                    'error': 'Этот компьютер уже привязан к другому пользователю'
+                }), 409
+            
+            # Обновляем существующий компьютер
+            computer_id = existing['computer_id']
+            mysql.execute("""
+                UPDATE computers 
+                SET user_id = %s, hostname = %s, last_seen = NOW(), is_online = 1
+                WHERE computer_id = %s
+            """, (user_id, hostname, computer_id))
+        else:
+            # Создаем новый компьютер
+            computer_id = mysql.execute("""
+                INSERT INTO computers (user_id, hardware_id, hostname, computer_type, is_online, is_active, created_at, last_seen)
+                VALUES (%s, %s, %s, 'client', 1, 1, NOW(), NOW())
+            """, (user_id, hardware_id, hostname))
+        
+        computer = mysql.get_computer_by_id(computer_id)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Компьютер успешно зарегистрирован',
+            'data': computer
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @computers_bp.route('', methods=['GET'])
 def get_computers():
     """

@@ -148,6 +148,34 @@ class APIClient:
         except Exception as e:
             print(f"Ошибка выхода: {e}")
             return False
+
+    @classmethod
+    def register_computer_for_user(cls, user_id: int, force_rebind: bool = False) -> Optional[Dict[str, Any]]:
+        """Регистрация компьютера для пользователя"""
+        try:
+            hardware_id = HardwareIDGenerator.get_hardware_id()
+            hostname = socket.gethostname()
+            
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/register",
+                json={
+                    "user_id": user_id,
+                    "hardware_id": hardware_id,
+                    "hostname": hostname,
+                    "force_rebind": force_rebind
+                },
+                headers=cls._headers(),
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('success'):
+                return data['data']
+            return None
+        except Exception as e:
+            print(f"Ошибка регистрации компьютера: {e}")
+            return None
     
     # ==============================================
     # КОМПЬЮТЕРЫ

@@ -37,6 +37,28 @@ class MySQLService:
         finally:
             connection.close()
     
+    def fetch_one(self, sql, params=None):
+        """Получить одну строку как словарь"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params or ())
+                return cursor.fetchone()
+    
+    def fetch_all(self, sql, params=None):
+        """Получить все строки как список словарей"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params or ())
+                return cursor.fetchall()
+    
+    def execute(self, sql, params=None):
+        """Выполнить запрос и вернуть ID последней вставки"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, params or ())
+                conn.commit()
+                return cursor.lastrowid
+    
     # =========================================================================
     # КОМПЬЮТЕРЫ
     # =========================================================================

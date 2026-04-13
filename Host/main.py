@@ -17,7 +17,7 @@ from utils.platform_utils import ensure_dirs, get_platform_name, get_data_dir
 
 def run_background_session(computer_data):
     """Запускает сессию в фоновом режиме (для админа)"""
-    from core.database_manager import DatabaseManager
+    from core.api_client import APIClient as DatabaseManager
     import time
     
     print(f"[BACKGROUND] Админ {computer_data['login']} запустил фоновую сессию")

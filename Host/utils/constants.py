@@ -1,17 +1,9 @@
 import os
-import pymysql.cursors
 
 STATUS_ACTIVE = 1
 STATUS_DISCONNECTED = 2
 
-DB_CONFIG = {
-    'host': os.getenv('DB_HOST', '5.183.188.132'),
-    'user': os.getenv('DB_USER', '2024_mysql_t_usr'),
-    'password': os.getenv('DB_PASSWORD', 'uqnOzz3fbUqudcdM'),
-    'db': os.getenv('DB_NAME', '2024_mysql_tim'),
-    'charset': 'utf8mb4',
-    'cursorclass': pymysql.cursors.DictCursor
-}
+API_BASE_URL = 'http://130.49.149.152:5000'
 
 CLOUD_CONFIG = {
     'access_key': os.getenv('CLOUD_ACCESS_KEY', '1TUFGD6LDS8S8DGRFYMU'),

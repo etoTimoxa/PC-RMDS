@@ -13,7 +13,7 @@ from PyQt6.QtCore import Qt, QTimer, QSettings, QEvent
 from PyQt6.QtGui import QFont, QIcon, QPixmap, QColor
 
 from core.hardware_id import HardwareIDGenerator
-from core.database_manager import DatabaseManager
+from core.api_client import APIClient as DatabaseManager
 from utils.platform_utils import get_config_dir
 
 
@@ -319,79 +319,45 @@ class AuthDialog(QDialog):
     def do_auto_login(self, login: str, password: str):
         """Автоматический вход с сохранёнными данными"""
         try:
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
-            connection = DatabaseManager.get_connection()
-            if not connection:
+            user_data = DatabaseManager.login(login, password)
+            
+            if not user_data:
                 return
             
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT user_id, login, password_hash, full_name, role_id, is_active
-                    FROM user WHERE login = %s AND password_hash = %s
-                """, (login, password_hash))
-                
-                user_data = cursor.fetchone()
-                
-                if not user_data:
-                    return
-                
-                if not user_data.get('is_active', 0):
-                    return
-                
-                user_id = user_data['user_id']
-                role_id = user_data.get('role_id')
-                is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
-                
-                cursor.execute("UPDATE user SET last_login = NOW() WHERE user_id = %s", (user_id,))
-                connection.commit()
-                
-                computer_result = DatabaseManager.register_computer_for_user(user_id)
-                
-                if not computer_result:
-                    return
-                
-                if computer_result.get('already_bound'):
-                    other_user = computer_result.get('other_user_login', 'Unknown')
-                    print(f"Компьютер привязан к другому пользователю ({other_user}). Требуется ручной вход.")
-                    
-                    QMessageBox.warning(
-                        self,
-                        "Компьютер уже привязан",
-                        f"Этот компьютер уже привязан к пользователю '{other_user}'.\n\n"
-                        f"Автоматический вход невозможен.\n"
-                        f"Войдите вручную для перепривязки."
-                    )
-                    return
-                
-                computer_id = computer_result['computer_id']
-                hostname = computer_result['hostname']
-                mac_address = computer_result['mac_address']
-                
-                session_id = DatabaseManager.create_session(computer_id, hostname)
-                session_token = None
-                if session_id:
-                    with connection.cursor() as cursor:
-                        cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
-                        token_data = cursor.fetchone()
-                        session_token = token_data['session_token'] if token_data else None
-                
-                self.computer_data = {
-                    'computer_id': computer_id,
-                    'hostname': hostname,
-                    'mac_address': mac_address,
-                    'login': login,
-                    'password': password,
-                    'user_id': user_id,
-                    'role_id': role_id,
-                    'computer_type': 'admin' if is_admin else 'client',
-                    'session_id': session_id,
-                    'session_token': session_token,
-                    'is_new': computer_result.get('is_new', False),
-                    'hardware_changed': computer_result.get('hardware_changed', False)
-                }
-                
-                self.auth_success = True
-                self.accept()
+            if not user_data.get('is_active', 0):
+                return
+            
+            user_id = user_data['user_id']
+            role_id = user_data.get('role_id')
+            is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
+            
+            # Подключаем компьютер
+            computer_data = DatabaseManager.get_computer_by_mac(HardwareIDGenerator.get_mac_address())
+            
+            computer_id = 1
+            hostname = socket.gethostname()
+            mac_address = HardwareIDGenerator.get_mac_address()
+            
+            session_id = 1
+            session_token = DatabaseManager.auth_token
+            
+            self.computer_data = {
+                'computer_id': computer_id,
+                'hostname': hostname,
+                'mac_address': mac_address,
+                'login': login,
+                'password': password,
+                'user_id': user_id,
+                'role_id': role_id,
+                'computer_type': 'admin' if is_admin else 'client',
+                'session_id': session_id,
+                'session_token': session_token,
+                'is_new': False,
+                'hardware_changed': False
+            }
+            
+            self.auth_success = True
+            self.accept()
                 
         except Exception as e:
             print(f"Ошибка автоматического входа: {e}")

@@ -245,6 +245,48 @@ def update_computer(computer_id):
         }), 500
 
 
+@computers_bp.route('/<int:computer_id>/status', methods=['PUT'])
+def update_computer_status(computer_id):
+    """
+    PUT /api/computers/{id}/status
+    Обновить статус онлайн/оффлайн компьютера
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'is_online' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Отсутствует обязательное поле is_online'
+            }), 400
+            
+        is_online = bool(data['is_online'])
+        session_id = data.get('session_id')
+        
+        success = mysql.execute("""
+            UPDATE computers 
+            SET is_online = %s, last_seen = NOW(), current_session_id = %s
+            WHERE computer_id = %s
+        """, (is_online, session_id, computer_id))
+        
+        if not success:
+            return jsonify({
+                'success': False,
+                'error': 'Компьютер не найден'
+            }), 404
+            
+        return jsonify({
+            'success': True,
+            'message': 'Статус компьютера обновлен'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @computers_bp.route('/<int:computer_id>', methods=['DELETE'])
 def delete_computer(computer_id):
     """

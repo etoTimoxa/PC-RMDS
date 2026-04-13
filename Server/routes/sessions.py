@@ -186,6 +186,43 @@ def update_session(session_id):
         }), 500
 
 
+@sessions_bp.route('', methods=['POST'])
+def create_session():
+    """
+    POST /api/sessions
+    Создать новую сессию
+    """
+    try:
+        data = request.get_json()
+        
+        required_fields = ['computer_id', 'user_id']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    'success': False,
+                    'error': f'Отсутствует обязательное поле: {field}'
+                }), 400
+                
+        session_id = mysql.execute("""
+            INSERT INTO sessions (computer_id, user_id, start_time, status_id, created_at)
+            VALUES (%s, %s, NOW(), 1, NOW())
+        """, (data['computer_id'], data['user_id']))
+        
+        return jsonify({
+            'success': True,
+            'message': 'Сессия успешно создана',
+            'data': {
+                'session_id': session_id
+            }
+        }), 201
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @sessions_bp.route('/<int:session_id>', methods=['DELETE'])
 def delete_session(session_id):
     """

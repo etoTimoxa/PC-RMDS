@@ -33,7 +33,7 @@ from PyQt6.QtGui import QFont, QTextCursor, QAction, QIcon, QPixmap, QColor, QSc
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
 
-from core.database_manager import DatabaseManager
+from core.api_client import APIClient
 from core.hardware_id import HardwareIDGenerator
 from core.system_monitor import SystemActivityMonitor
 from collectors.metrics_collector import SystemInfoCollector
@@ -264,7 +264,7 @@ class RemoteAgentThread(QThread):
                 if self.session_id:
                     # Проверяем активность системы
                     if SystemActivityMonitor.is_system_active():
-                        DatabaseManager.update_session_activity(self.session_id)
+                        APIClient.update_session_activity(self.session_id)
             except Exception as e:
                 self.log_message.emit(f"Ошибка обновления активности: {e}")
     
@@ -284,7 +284,7 @@ class RemoteAgentThread(QThread):
                 
                 uploaded = self.cloud_uploader.check_and_upload()
                 if uploaded > 0:
-                    DatabaseManager.update_json_sent_count(self.session_id, uploaded)
+                    APIClient.update_json_sent_count(self.session_id, uploaded)
                     self.log_message.emit(f"Загружено файлов в облако: {uploaded}")
                 
                 events = WindowsEventCollector.get_events_last_30min()
@@ -306,7 +306,7 @@ class RemoteAgentThread(QThread):
         """Проверяет и загружает файлы при запуске"""
         uploaded = self.cloud_uploader.check_and_upload()
         if uploaded > 0:
-            DatabaseManager.update_json_sent_count(self.session_id, uploaded)
+            APIClient.update_json_sent_count(self.session_id, uploaded)
             self.log_message.emit(f"Загружено файлов при старте: {uploaded}")
         
         # Проверяем и помечаем вчерашний файл
@@ -723,7 +723,7 @@ class RemoteAgentThread(QThread):
         self.connected_clients_list.clear()
         self.sending_screenshots = False
         
-        DatabaseManager.update_computer_status(self.computer_id, False, self.session_id)
+        APIClient.update_computer_status(self.computer_id, False, self.session_id)
         self.log_message.emit(f"✅ Агент остановлен")
 
 
@@ -737,7 +737,7 @@ class RemoteAgentWindow(QMainWindow):
         
         self.setWindowIcon(self.get_app_icon())
         
-        DatabaseManager.set_current_session(computer_data['computer_id'], computer_data['session_id'])
+        APIClient.set_current_session(computer_data['computer_id'], computer_data['session_id'])
         
         self.init_ui()
         self.load_settings()

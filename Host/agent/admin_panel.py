@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt6.QtCore import Qt, QTimer, QSettings
 from PyQt6.QtGui import QIcon, QAction, QPixmap, QColor
 
-from core.database_manager import DatabaseManager
+from core.api_client import APIClient as DatabaseManager
 from utils.platform_utils import get_config_dir
 from agent.styles import get_main_window_stylesheet
 
@@ -286,7 +286,6 @@ class AdminPanelWindow(QMainWindow):
     def get_online_computers(self):
         """Получает список компьютеров из БД"""
         try:
-            from core.database_manager import DatabaseManager
             connection = DatabaseManager.get_connection()
             if not connection:
                 return []

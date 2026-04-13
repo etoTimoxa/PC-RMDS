@@ -119,11 +119,15 @@ def login():
             }), 401
 
         # Генерируем JWT токен
-        user_id = user['user_id']
+        user_id = user[0] if isinstance(user, (list, tuple)) else user.get('user_id')
+        login = user[1] if isinstance(user, (list, tuple)) else user.get('login')
+        full_name = user[2] if isinstance(user, (list, tuple)) else user.get('full_name')
+        role_id = user[4] if isinstance(user, (list, tuple)) else user.get('role_id')
+        
         payload = {
             'user_id': user_id,
-            'login': user['login'],
-            'role_id': user['role_id'],
+            'login': login,
+            'role_id': role_id,
             'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
         }
 
@@ -135,10 +139,10 @@ def login():
                 'token': token,
                 'user': {
                     'user_id': user_id,
-                    'login': user['login'],
-                    'full_name': user['full_name'],
-                    'role_id': user['role_id'],
-                    'is_admin': user['role_id'] in (2, 3)
+                    'login': login,
+                    'full_name': full_name,
+                    'role_id': role_id,
+                    'is_admin': role_id in (2, 3)
                 }
             }
         })

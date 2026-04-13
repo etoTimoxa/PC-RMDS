@@ -6,6 +6,10 @@ from datetime import datetime, timedelta
 import jwt
 import hashlib
 
+# Фикс для PyJWT 3.x
+jwt.encode = getattr(jwt, 'encode', jwt.encode)
+jwt.decode = getattr(jwt, 'decode', jwt.decode)
+
 from config import API_CONFIG
 from services.mysql_service import MySQLService
 

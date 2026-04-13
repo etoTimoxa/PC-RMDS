@@ -324,15 +324,13 @@ class AuthDialog(QDialog):
             if not user_data:
                 return
             
-            if not user_data.get('is_active', 0):
-                return
             
             user_id = user_data['user_id']
             role_id = user_data.get('role_id')
             is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
             
             # Подключаем компьютер
-            computer_data = DatabaseManager.get_computer_by_mac(HardwareIDGenerator.get_mac_address())
+            computer_result = DatabaseManager.register_computer_for_user(user_id)
             
             computer_id = 1
             hostname = socket.gethostname()
@@ -382,32 +380,16 @@ class AuthDialog(QDialog):
         QApplication.processEvents()
         
         try:
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            # Аутентификация через API
+            user_data = DatabaseManager.login(login, password)
             
-            connection = DatabaseManager.get_connection()
-            if not connection:
-                raise Exception("Нет подключения к базе данных")
+            if not user_data:
+                raise Exception("Неверный логин или пароль")
             
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT user_id, login, password_hash, full_name, role_id, is_active
-                    FROM user WHERE login = %s AND password_hash = %s
-                """, (login, password_hash))
-                
-                user_data = cursor.fetchone()
-                
-                if not user_data:
-                    raise Exception("Неверный логин или пароль")
-                
-                if not user_data.get('is_active', 0):
-                    raise Exception("Пользователь не активен")
-                
-                user_id = user_data['user_id']
-                role_id = user_data.get('role_id')
-                is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
-                
-                cursor.execute("UPDATE user SET last_login = NOW() WHERE user_id = %s", (user_id,))
-                connection.commit()
+            
+            user_id = user_data['user_id']
+            role_id = user_data.get('role_id')
+            is_admin = user_data.get('is_admin', False)
             
             self.status_label.setText("Регистрация компьютера...")
             QApplication.processEvents()
@@ -428,16 +410,10 @@ class AuthDialog(QDialog):
             
             computer_id = computer_result['computer_id']
             hostname = computer_result['hostname']
-            mac_address = computer_result['mac_address']
+            mac_address = computer_result.get('mac_address', '')
             
-            session_id = DatabaseManager.create_session(computer_id, hostname)
-            session_token = None
-            if session_id:
-                connection = DatabaseManager.get_connection()
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
-                    token_data = cursor.fetchone()
-                    session_token = token_data['session_token'] if token_data else None
+            session_id = computer_result.get('session_id')
+            session_token = DatabaseManager.auth_token
             
             self.computer_data = {
                 'computer_id': computer_id,

@@ -128,6 +128,11 @@ class HardwareIDGenerator:
         motherboard = HardwareIDGenerator.get_motherboard_serial()
         hardware_string = f"{cpu}{mac}{disk}{motherboard}"
         return hashlib.sha256(hardware_string.encode()).hexdigest()[:32]
+
+    @staticmethod
+    def get_hardware_id() -> str:
+        """Алиас для совместимости со старым кодом"""
+        return HardwareIDGenerator.generate_unique_id()
     
     @staticmethod
     def save_credentials(login: str, password: str) -> str:

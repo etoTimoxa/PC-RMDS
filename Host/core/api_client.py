@@ -151,11 +151,49 @@ class APIClient:
 
     @classmethod
     def register_computer_for_user(cls, user_id: int, force_rebind: bool = False) -> Optional[Dict[str, Any]]:
-        """Регистрация компьютера для пользователя"""
+        """Регистрация или обновление компьютера для пользователя"""
         try:
-            hardware_id = HardwareIDGenerator.get_hardware_id()
+            hardware_id = HardwareIDGenerator.generate_unique_id()
             hostname = socket.gethostname()
             
+            # Сначала проверяем существует ли уже компьютер с таким hardware_id
+            check_response = requests.get(
+                f"{API_BASE_URL}/api/computers?search={hardware_id}",
+                headers=cls._headers(),
+                timeout=10
+            )
+            
+            computer_exists = False
+            existing_computer_id = None
+            
+            if check_response.status_code == 200:
+                check_data = check_response.json()
+                if check_data.get('success') and check_data.get('data', {}).get('items', []):
+                    # Компьютер уже существует в базе данных
+                    existing_computer = check_data['data']['items'][0]
+                    existing_computer_id = existing_computer['computer_id']
+                    computer_exists = True
+            
+            if computer_exists and existing_computer_id:
+                # Компьютер уже есть - просто обновляем user_id
+                print(f"Компьютер уже зарегистрирован ID: {existing_computer_id}, обновляем пользователя")
+                update_response = requests.put(
+                    f"{API_BASE_URL}/api/computers/{existing_computer_id}",
+                    json={
+                        "user_id": user_id,
+                        "hostname": hostname
+                    },
+                    headers=cls._headers(),
+                    timeout=15
+                )
+                update_response.raise_for_status()
+                update_data = update_response.json()
+                
+                if update_data.get('success'):
+                    # После обновления получаем актуальные данные компьютера
+                    return cls.get_computer(existing_computer_id)
+            
+            # Если компьютера нет или обновление не прошло - создаем новый
             response = requests.post(
                 f"{API_BASE_URL}/api/computers/register",
                 json={
@@ -174,7 +212,7 @@ class APIClient:
                 return data['data']
             return None
         except Exception as e:
-            print(f"Ошибка регистрации компьютера: {e}")
+            print(f"Ошибка регистрации/обновления компьютера: {e}")
             return None
     
     # ==============================================
@@ -344,6 +382,44 @@ class APIClient:
             print(f"Ошибка загрузки метрик: {e}")
             return False
     
+    # ==============================================
+    # СЕССИИ
+    # ==============================================
+    
+    @classmethod
+    def update_session_activity(cls, session_id: int) -> bool:
+        """Обновление активности сессии"""
+        try:
+            response = requests.put(
+                f"{API_BASE_URL}/api/sessions/{session_id}",
+                json={"last_activity": datetime.now().isoformat()},
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка обновления активности сессии: {e}")
+            return False
+
+    @classmethod
+    def update_json_sent_count(cls, session_id: int, count: int) -> bool:
+        """Обновление количества отправленных JSON файлов"""
+        try:
+            response = requests.put(
+                f"{API_BASE_URL}/api/sessions/{session_id}",
+                json={"json_sent_count": count},
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка обновления счетчика JSON: {e}")
+            return False
+
     # ==============================================
     # СТАТУСЫ
     # ==============================================

@@ -34,7 +34,7 @@ def register_computer():
         
         # Проверяем существует ли уже компьютер с таким hardware_id
         existing = mysql.fetch_one(
-            "SELECT computer_id, user_id, is_active FROM computers WHERE hardware_id = %s",
+            "SELECT computer_id, user_id FROM computer WHERE hardware_config_id = %s",
             (hardware_id,)
         )
         
@@ -48,15 +48,15 @@ def register_computer():
             # Обновляем существующий компьютер
             computer_id = existing['computer_id']
             mysql.execute("""
-                UPDATE computers 
-                SET user_id = %s, hostname = %s, last_seen = NOW(), is_online = 1
+                UPDATE computer 
+                SET user_id = %s, hostname = %s, last_online = NOW(), is_online = 1
                 WHERE computer_id = %s
             """, (user_id, hostname, computer_id))
         else:
             # Создаем новый компьютер
             computer_id = mysql.execute("""
-                INSERT INTO computers (user_id, hardware_id, hostname, computer_type, is_online, is_active, created_at, last_seen)
-                VALUES (%s, %s, %s, 'client', 1, 1, NOW(), NOW())
+                INSERT INTO computer (user_id, hardware_config_id, hostname, computer_type, is_online, created_at, last_online)
+                VALUES (%s, %s, %s, 'client', 1, NOW(), NOW())
             """, (user_id, hardware_id, hostname))
         
         computer = mysql.get_computer_by_id(computer_id)

@@ -18,54 +18,29 @@ class APIClient:
     
     @classmethod
     def get_connection(cls):
-        """Заглушка для совместимости. Всегда возвращает сам класс"""
+        """Заглушка для совместимости"""
         return cls
     
     @classmethod
     def cursor(cls):
-        """Заглушка для совместимости со старым кодом"""
         class Cursor:
-            def __enter__(self):
-                return self
-            
-            def __exit__(self, exc_type, exc_val, exc_tb):
-                return True
-            
-            def execute(self, *args, **kwargs):
-                return True
-            
-            def fetchone(self):
-                return None
-            
-            def fetchall(self):
-                return []
-        
+            def __enter__(self): return self
+            def __exit__(self, *args): return True
+            def execute(self, *args, **kwargs): return True
+            def fetchone(self): return None
+            def fetchall(self): return []
         return Cursor()
     
     @classmethod
-    def execute(cls, *args, **kwargs):
-        """Заглушка для совместимости"""
-        return True
-    
+    def execute(cls, *args, **kwargs): return True
     @classmethod
-    def fetchone(cls):
-        """Заглушка для совместимости"""
-        return None
-    
+    def fetchone(cls): return None
     @classmethod
-    def commit(cls):
-        """Заглушка для совместимости"""
-        return True
-    
+    def commit(cls): return True
     @classmethod
-    def __enter__(cls):
-        """Заглушка для поддержки менеджера контекста with connection.cursor() as cursor"""
-        return cls
-    
+    def __enter__(cls): return cls
     @classmethod
-    def __exit__(cls, exc_type, exc_val, exc_tb):
-        """Заглушка для поддержки менеджера контекста"""
-        return True
+    def __exit__(cls, *args): return True
     
     @classmethod
     def set_current_session(cls, computer_id: int, session_id: int):
@@ -74,10 +49,7 @@ class APIClient:
     
     @staticmethod
     def _headers():
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
+        headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
         if APIClient.auth_token:
             headers['Authorization'] = f'Bearer {APIClient.auth_token}'
         return headers
@@ -88,7 +60,6 @@ class APIClient:
     
     @classmethod
     def login(cls, login: str, password: str) -> Optional[Dict[str, Any]]:
-        """Аутентификация по логину и паролю"""
         try:
             response = requests.post(
                 f"{API_BASE_URL}/api/auth/login",
@@ -109,15 +80,10 @@ class APIClient:
     
     @classmethod
     def register(cls, login: str, password: str, full_name: str) -> Optional[int]:
-        """Регистрация нового пользователя"""
         try:
             response = requests.post(
                 f"{API_BASE_URL}/api/auth/register",
-                json={
-                    "login": login,
-                    "password": password,
-                    "full_name": full_name
-                },
+                json={"login": login, "password": password, "full_name": full_name},
                 headers=cls._headers(),
                 timeout=15
             )
@@ -133,7 +99,6 @@ class APIClient:
     
     @classmethod
     def logout(cls) -> bool:
-        """Завершение сессии"""
         try:
             response = requests.post(
                 f"{API_BASE_URL}/api/auth/logout",
@@ -151,19 +116,27 @@ class APIClient:
 
     @classmethod
     def register_computer_for_user(cls, user_id: int, force_rebind: bool = False) -> Optional[Dict[str, Any]]:
-        """Регистрация или обновление компьютера для пользователя"""
+        """Регистрация компьютера для пользователя"""
         try:
             hardware_id = HardwareIDGenerator.generate_unique_id()
             hostname = socket.gethostname()
+            mac_address = HardwareIDGenerator.get_mac_address()
             
-            # ✅ ЭНДПОИНТ САМ УМЕЕТ И ОБНОВЛЯТЬ И СОЗДАВАТЬ
-            # ✅ НЕ НУЖНО ПРЕДВАРИТЕЛЬНЫХ ЗАПРОСОВ
+            # Получаем информацию о железе
+            cpu_model = HardwareIDGenerator.get_cpu_serial()
+            ram_total = cls._get_ram_total()
+            storage_total = cls._get_storage_total()
+            
             response = requests.post(
                 f"{API_BASE_URL}/api/computers/register",
                 json={
                     "user_id": user_id,
-                    "hardware_id": hardware_id,
+                    "hardware_hash": hardware_id,
                     "hostname": hostname,
+                    "mac_address": mac_address,
+                    "cpu_model": cpu_model[:100],
+                    "ram_total_gb": ram_total,
+                    "storage_total_gb": storage_total,
                     "force_rebind": force_rebind
                 },
                 headers=cls._headers(),
@@ -176,8 +149,24 @@ class APIClient:
                 return data['data']
             return None
         except Exception as e:
-            print(f"Ошибка регистрации/обновления компьютера: {e}")
+            print(f"Ошибка регистрации компьютера: {e}")
             return None
+    
+    @staticmethod
+    def _get_ram_total() -> float:
+        try:
+            import psutil
+            return round(psutil.virtual_memory().total / (1024**3), 2)
+        except:
+            return 0.0
+    
+    @staticmethod
+    def _get_storage_total() -> float:
+        try:
+            import psutil
+            return round(psutil.disk_usage('/').total / (1024**3), 2)
+        except:
+            return 0.0
     
     # ==============================================
     # КОМПЬЮТЕРЫ
@@ -185,7 +174,6 @@ class APIClient:
     
     @classmethod
     def get_computers(cls) -> Optional[List[Dict[str, Any]]]:
-        """Получение списка всех компьютеров"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/computers",
@@ -194,17 +182,13 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']
-            return None
+            return data.get('data') if data.get('success') else None
         except Exception as e:
             print(f"Ошибка получения компьютеров: {e}")
             return None
     
     @classmethod
     def get_computer(cls, computer_id: int) -> Optional[Dict[str, Any]]:
-        """Получение информации о конкретном компьютере"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/computers/{computer_id}",
@@ -213,17 +197,13 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']
-            return None
+            return data.get('data') if data.get('success') else None
         except Exception as e:
             print(f"Ошибка получения компьютера: {e}")
             return None
     
     @classmethod
     def update_computer_status(cls, computer_id: int, is_online: bool, session_id: int = None) -> bool:
-        """Обновление статуса компьютера"""
         try:
             response = requests.put(
                 f"{API_BASE_URL}/api/computers/{computer_id}/status",
@@ -235,12 +215,11 @@ class APIClient:
             data = response.json()
             return data.get('success', False)
         except Exception as e:
-            print(f"Ошибка обновления статуса компьютера: {e}")
+            print(f"Ошибка обновления статуса: {e}")
             return False
     
     @classmethod
     def get_computer_ip_addresses(cls, computer_id: int) -> Optional[List[Dict[str, Any]]]:
-        """Получение IP адресов компьютера"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/computers/{computer_id}/ip-addresses",
@@ -249,17 +228,13 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']['ip_addresses']
-            return None
+            return data.get('data', {}).get('ip_addresses') if data.get('success') else None
         except Exception as e:
-            print(f"Ошибка получения IP адресов: {e}")
+            print(f"Ошибка получения IP: {e}")
             return None
     
     @classmethod
     def get_computer_sessions(cls, computer_id: int, limit: int = 20) -> Optional[List[Dict[str, Any]]]:
-        """Получение сессий компьютера"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/computers/{computer_id}/sessions",
@@ -269,21 +244,113 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']['sessions']
-            return None
+            return data.get('data', {}).get('sessions') if data.get('success') else None
         except Exception as e:
             print(f"Ошибка получения сессий: {e}")
             return None
     
+    # ==============================================
+    # СЕССИИ
+    # ==============================================
+    
+    @classmethod
+    def create_session(cls, computer_id: int, user_id: int = None, session_token: str = None) -> Optional[int]:
+        """Создать новую сессию"""
+        try:
+            if session_token is None:
+                session_token = f"{socket.gethostname()}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+            
+            payload = {
+                "computer_id": computer_id,
+                "session_token": session_token
+            }
+            if user_id:
+                payload["user_id"] = user_id
+            
+            response = requests.post(
+                f"{API_BASE_URL}/api/sessions",
+                json=payload,
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('success'):
+                cls.current_session_id = data['data']['session_id']
+                return cls.current_session_id
+            return None
+        except Exception as e:
+            print(f"Ошибка создания сессии: {e}")
+            return None
+
+    @classmethod
+    def close_session(cls, session_id: int = None) -> bool:
+        """Закрыть сессию"""
+        try:
+            sid = session_id if session_id is not None else cls.current_session_id
+            
+            if not sid:
+                return False
+            
+            response = requests.put(
+                f"{API_BASE_URL}/api/sessions/{sid}",
+                json={
+                    "status_id": 2,
+                    "end_time": datetime.now().isoformat()
+                },
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            if cls.current_computer_id:
+                cls.update_computer_status(cls.current_computer_id, False, sid)
+            
+            cls.current_session_id = None
+            return True
+        except Exception as e:
+            print(f"Ошибка закрытия сессии: {e}")
+            return False
+
+    @classmethod
+    def update_session_activity(cls, session_id: int) -> bool:
+        try:
+            response = requests.put(
+                f"{API_BASE_URL}/api/sessions/{session_id}",
+                json={"last_activity": datetime.now().isoformat()},
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка обновления активности: {e}")
+            return False
+
+    @classmethod
+    def update_json_sent_count(cls, session_id: int, count: int) -> bool:
+        try:
+            response = requests.put(
+                f"{API_BASE_URL}/api/sessions/{session_id}",
+                json={"json_sent_count": count},
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка обновления счетчика: {e}")
+            return False
+
     # ==============================================
     # ПОЛЬЗОВАТЕЛИ
     # ==============================================
     
     @classmethod
     def get_users(cls) -> Optional[List[Dict[str, Any]]]:
-        """Получение списка всех пользователей"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/users",
@@ -292,17 +359,13 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']
-            return None
+            return data.get('data') if data.get('success') else None
         except Exception as e:
             print(f"Ошибка получения пользователей: {e}")
             return None
     
     @classmethod
     def get_user(cls, user_id: int) -> Optional[Dict[str, Any]]:
-        """Получение информации о пользователе"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/users/{user_id}",
@@ -311,10 +374,7 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']
-            return None
+            return data.get('data') if data.get('success') else None
         except Exception as e:
             print(f"Ошибка получения пользователя: {e}")
             return None
@@ -325,7 +385,6 @@ class APIClient:
     
     @classmethod
     def upload_metrics_file(cls, file_path: str) -> bool:
-        """Загрузка файла метрик в облако"""
         try:
             with open(file_path, 'rb') as f:
                 files = {'file': f}
@@ -347,108 +406,11 @@ class APIClient:
             return False
     
     # ==============================================
-    # СЕССИИ
-    # ==============================================
-    
-    @classmethod
-    def create_session(cls, computer_id: int, session_token: str = None) -> Optional[int]:
-        """✅ СОЗДАТЬ НОВУЮ СЕССИЮ"""
-        try:
-            if session_token is None:
-                session_token = f"{socket.gethostname()}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-            
-            response = requests.post(
-                f"{API_BASE_URL}/api/sessions",
-                json={
-                    "computer_id": computer_id,
-                    "session_token": session_token
-                },
-                headers=cls._headers(),
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            if data.get('success'):
-                cls.current_session_id = data['data']['session_id']
-                return cls.current_session_id
-            return None
-        except Exception as e:
-            print(f"Ошибка создания сессии: {e}")
-            return None
-
-    @classmethod
-    def close_session(cls, session_id: int = None) -> bool:
-        """✅ ЗАКРЫТЬ СЕССИЮ ПРИ ВЫХОДЕ"""
-        try:
-            sid = session_id if session_id is not None else cls.current_session_id
-            
-            if not sid:
-                return False
-            
-            # Обновляем статус и время окончания
-            response = requests.put(
-                f"{API_BASE_URL}/api/sessions/{sid}",
-                json={
-                    "status_id": 2,
-                    "end_time": datetime.now().isoformat()
-                },
-                headers=cls._headers(),
-                timeout=10
-            )
-            response.raise_for_status()
-            
-            # Обновляем статус компьютера на оффлайн
-            if cls.current_computer_id:
-                cls.update_computer_status(cls.current_computer_id, False, sid)
-            
-            cls.current_session_id = None
-            return True
-        except Exception as e:
-            print(f"Ошибка закрытия сессии: {e}")
-            return False
-
-    @classmethod
-    def update_session_activity(cls, session_id: int) -> bool:
-        """Обновление активности сессии"""
-        try:
-            response = requests.put(
-                f"{API_BASE_URL}/api/sessions/{session_id}",
-                json={"last_activity": datetime.now().isoformat()},
-                headers=cls._headers(),
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get('success', False)
-        except Exception as e:
-            print(f"Ошибка обновления активности сессии: {e}")
-            return False
-
-    @classmethod
-    def update_json_sent_count(cls, session_id: int, count: int) -> bool:
-        """Обновление количества отправленных JSON файлов"""
-        try:
-            response = requests.put(
-                f"{API_BASE_URL}/api/sessions/{session_id}",
-                json={"json_sent_count": count},
-                headers=cls._headers(),
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get('success', False)
-        except Exception as e:
-            print(f"Ошибка обновления счетчика JSON: {e}")
-            return False
-
-    # ==============================================
     # СТАТУСЫ
     # ==============================================
     
     @classmethod
     def get_statuses(cls) -> Optional[List[Dict[str, Any]]]:
-        """Получение списка статусов"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/statuses",
@@ -457,10 +419,7 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']
-            return None
+            return data.get('data') if data.get('success') else None
         except Exception as e:
             print(f"Ошибка получения статусов: {e}")
             return None
@@ -471,7 +430,6 @@ class APIClient:
     
     @classmethod
     def get_dashboard_stats(cls) -> Optional[Dict[str, Any]]:
-        """Получение статистики для дашборда"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/dashboard/stats",
@@ -480,14 +438,10 @@ class APIClient:
             )
             response.raise_for_status()
             data = response.json()
-            
-            if data.get('success'):
-                return data['data']
-            return None
+            return data.get('data') if data.get('success') else None
         except Exception as e:
-            print(f"Ошибка получения статистики дашборда: {e}")
+            print(f"Ошибка получения статистики: {e}")
             return None
 
 
-# Для полной совместимости со старым кодом
 DatabaseManager = APIClient

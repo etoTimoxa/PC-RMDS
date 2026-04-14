@@ -1198,3 +1198,199 @@ class MySQLService:
                 """
                 cursor.execute(sql, (limit,))
                 return cursor.fetchall()
+
+    def get_computer_hostname(self, computer_id: int) -> Optional[str]:
+        """Получить hostname компьютера по ID"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT hostname FROM computer WHERE computer_id = %s", (computer_id,))
+                result = cursor.fetchone()
+                return result['hostname'] if result else None
+    
+    def get_computer_by_id(self, computer_id: int) -> Optional[Dict]:
+        """Получить компьютер по ID"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                sql = """
+                    SELECT 
+                        c.*,
+                        u.login,
+                        u.full_name,
+                        u.role_id,
+                        os.os_name,
+                        os.os_version,
+                        hc.cpu_model,
+                        hc.cpu_cores,
+                        hc.ram_total,
+                        hc.storage_total,
+                        (SELECT ip_address FROM ip_address WHERE computer_id = c.computer_id ORDER BY detected_at DESC LIMIT 1) as current_ip
+                    FROM computer c
+                    LEFT JOIN user u ON c.user_id = u.user_id
+                    LEFT JOIN operating_system os ON c.os_id = os.os_id
+                    LEFT JOIN hardware_config hc ON c.hardware_config_id = hc.config_id
+                    WHERE c.computer_id = %s
+                """
+                cursor.execute(sql, (computer_id,))
+                return cursor.fetchone()
+    
+    def get_computer_ip_history(self, computer_id: int) -> List[Dict]:
+        """Получить историю IP адресов компьютера"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT * FROM ip_address 
+                    WHERE computer_id = %s 
+                    ORDER BY detected_at DESC
+                """, (computer_id,))
+                return cursor.fetchall()
+    
+    def get_computer_sessions(self, computer_id: int, limit: int = 20) -> List[Dict]:
+        """Получить историю сессий компьютера"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                sql = """
+                    SELECT 
+                        s.session_id,
+                        s.session_token,
+                        s.start_time,
+                        s.last_activity,
+                        s.end_time,
+                        s.json_sent_count,
+                        s.error_count,
+                        s.user_id,
+                        st.status_name,
+                        st.status_id
+                    FROM session s
+                    LEFT JOIN status st ON s.status_id = st.status_id
+                    WHERE s.computer_id = %s
+                    ORDER BY s.start_time DESC
+                    LIMIT %s
+                """
+                cursor.execute(sql, (computer_id, limit))
+                return cursor.fetchall()
+    
+    def get_session_by_id(self, session_id: int) -> Optional[Dict]:
+        """Получить сессию по ID"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                sql = """
+                    SELECT 
+                        s.*,
+                        c.hostname,
+                        c.mac_address,
+                        c.computer_type,
+                        u.login as user_login,
+                        u.full_name as user_name,
+                        st.status_name
+                    FROM session s
+                    LEFT JOIN computer c ON s.computer_id = c.computer_id
+                    LEFT JOIN user u ON s.user_id = u.user_id
+                    LEFT JOIN status st ON s.status_id = st.status_id
+                    WHERE s.session_id = %s
+                """
+                cursor.execute(sql, (session_id,))
+                return cursor.fetchone()
+    
+    def get_active_sessions(self) -> List[Dict]:
+        """Получить активные сессии"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                sql = """
+                    SELECT 
+                        s.*,
+                        c.hostname,
+                        c.computer_type,
+                        u.login,
+                        u.full_name
+                    FROM session s
+                    LEFT JOIN computer c ON s.computer_id = c.computer_id
+                    LEFT JOIN user u ON s.user_id = u.user_id
+                    WHERE s.status_id = 1
+                    ORDER BY s.start_time DESC
+                """
+                cursor.execute(sql)
+                return cursor.fetchall()
+    
+    def update_session(self, session_id: int, data: Dict) -> bool:
+        """Обновить сессию"""
+        allowed_fields = ['status_id', 'end_time', 'last_activity', 'json_sent_count', 'error_count']
+        update_fields = {k: v for k, v in data.items() if k in allowed_fields}
+        
+        if not update_fields:
+            return False
+        
+        set_clause = ", ".join([f"{k} = %s" for k in update_fields.keys()])
+        sql = f"UPDATE session SET {set_clause} WHERE session_id = %s"
+        
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql, list(update_fields.values()) + [session_id])
+                conn.commit()
+                return cursor.rowcount > 0
+    
+    def delete_session(self, session_id: int) -> bool:
+        """Удалить сессию"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("DELETE FROM session WHERE session_id = %s", (session_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+    
+    def get_sessions(self, page: int = 1, limit: int = 20, computer_id: int = None, 
+                     status_id: int = None, from_date: datetime = None, to_date: datetime = None) -> Dict:
+        """Получить список сессий с пагинацией"""
+        offset = (page - 1) * limit
+        
+        where_clauses = []
+        params = []
+        
+        if computer_id:
+            where_clauses.append("s.computer_id = %s")
+            params.append(computer_id)
+        
+        if status_id:
+            where_clauses.append("s.status_id = %s")
+            params.append(status_id)
+        
+        if from_date:
+            where_clauses.append("s.start_time >= %s")
+            params.append(from_date)
+        
+        if to_date:
+            where_clauses.append("s.start_time <= %s")
+            params.append(to_date)
+        
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                count_sql = f"SELECT COUNT(*) as total FROM session s WHERE {where_sql}"
+                cursor.execute(count_sql, params)
+                total = cursor.fetchone()['total']
+                
+                sql = f"""
+                    SELECT 
+                        s.*,
+                        c.hostname,
+                        c.computer_type,
+                        u.login as user_login,
+                        st.status_name,
+                        st.status_type
+                    FROM session s
+                    LEFT JOIN computer c ON s.computer_id = c.computer_id
+                    LEFT JOIN user u ON s.user_id = u.user_id
+                    LEFT JOIN status st ON s.status_id = st.status_id
+                    WHERE {where_sql}
+                    ORDER BY s.start_time DESC
+                    LIMIT %s OFFSET %s
+                """
+                cursor.execute(sql, params + [limit, offset])
+                sessions = cursor.fetchall()
+                
+                return {
+                    'sessions': sessions,
+                    'total': total,
+                    'page': page,
+                    'limit': limit,
+                    'pages': (total + limit - 1) // limit if limit > 0 else 0
+                }

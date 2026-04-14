@@ -3,6 +3,7 @@ Computers routes - эндпоинты для работы с компьютер�
 """
 from flask import Blueprint, request, jsonify
 from datetime import datetime
+import hashlib
 
 from services.mysql_service import MySQLService
 
@@ -19,7 +20,7 @@ def register_computer():
     try:
         data = request.get_json()
         
-        required_fields = ['user_id', 'hardware_id', 'hostname']
+        required_fields = ['user_id', 'hardware_hash', 'hostname', 'mac_address']
         for field in required_fields:
             if field not in data:
                 return jsonify({
@@ -28,36 +29,79 @@ def register_computer():
                 }), 400
                 
         user_id = data['user_id']
-        hardware_id = data['hardware_id']
+        hardware_hash = data['hardware_hash']
         hostname = data['hostname']
+        mac_address = data['mac_address']
         force_rebind = data.get('force_rebind', False)
         
-        # Проверяем существует ли уже компьютер с таким hardware_id
-        existing = mysql.fetch_one(
-            "SELECT computer_id, user_id FROM computer WHERE hardware_config_id = %s",
-            (hardware_id,)
+        cpu_model = data.get('cpu_model', hardware_hash[:100])
+        ram_total = data.get('ram_total_gb', 0)
+        storage_total = data.get('storage_total_gb', 0)
+        
+        # 1. Ищем или создаем конфигурацию железа
+        existing_config = mysql.fetch_one(
+            "SELECT config_id FROM hardware_config WHERE cpu_model = %s",
+            (hardware_hash,)
         )
         
-        if existing:
-            if not force_rebind and existing['user_id'] != user_id:
-                return jsonify({
-                    'success': False,
-                    'error': 'Этот компьютер уже привязан к другому пользователю'
-                }), 409
-            
-            # Обновляем существующий компьютер
-            computer_id = existing['computer_id']
-            mysql.execute("""
-                UPDATE computer 
-                SET user_id = %s, hostname = %s, last_online = NOW(), is_online = 1
-                WHERE computer_id = %s
-            """, (user_id, hostname, computer_id))
+        if existing_config:
+            config_id = existing_config['config_id']
         else:
-            # Создаем новый компьютер
+            config_id = mysql.execute("""
+                INSERT INTO hardware_config (cpu_model, cpu_cores, ram_total, storage_total, detected_at)
+                VALUES (%s, %s, %s, %s, NOW())
+            """, (hardware_hash, None, ram_total, storage_total))
+        
+        # 2. Ищем компьютер по MAC адресу
+        existing_computer = mysql.fetch_one(
+            "SELECT computer_id, user_id FROM computer WHERE mac_address = %s",
+            (mac_address,)
+        )
+        
+        if existing_computer:
+            computer_id = existing_computer['computer_id']
+            
+            if existing_computer['user_id'] != user_id:
+                if not force_rebind:
+                    other_user = mysql.fetch_one(
+                        "SELECT login FROM user WHERE user_id = %s",
+                        (existing_computer['user_id'],)
+                    )
+                    return jsonify({
+                        'success': False,
+                        'error': 'Этот компьютер уже привязан к другому пользователю',
+                        'data': {
+                            'already_bound': True,
+                            'other_user_login': other_user['login'] if other_user else 'Unknown'
+                        }
+                    }), 409
+                else:
+                    mysql.execute("""
+                        UPDATE computer 
+                        SET user_id = %s, hostname = %s, hardware_config_id = %s, 
+                            is_online = 1, last_online = NOW()
+                        WHERE computer_id = %s
+                    """, (user_id, hostname, config_id, computer_id))
+            else:
+                mysql.execute("""
+                    UPDATE computer 
+                    SET hostname = %s, hardware_config_id = %s, is_online = 1, last_online = NOW()
+                    WHERE computer_id = %s
+                """, (hostname, config_id, computer_id))
+        else:
             computer_id = mysql.execute("""
-                INSERT INTO computer (user_id, hardware_config_id, hostname, computer_type, is_online, created_at, last_online)
-                VALUES (%s, %s, %s, 'client', 1, NOW(), NOW())
-            """, (user_id, hardware_id, hostname))
+                INSERT INTO computer (user_id, hardware_config_id, hostname, mac_address, 
+                                     computer_type, is_online, created_at, last_online)
+                VALUES (%s, %s, %s, %s, 'client', 1, NOW(), NOW())
+            """, (user_id, config_id, hostname, mac_address))
+        
+        # 3. Добавляем IP адрес
+        ip_address = data.get('ip_address')
+        if ip_address:
+            mysql.execute("""
+                INSERT INTO ip_address (computer_id, ip_address, detected_at)
+                VALUES (%s, %s, NOW())
+            """, (computer_id, ip_address))
         
         return jsonify({
             'success': True,
@@ -65,13 +109,17 @@ def register_computer():
             'data': {
                 'computer_id': computer_id,
                 'user_id': user_id,
-                'hardware_config_id': hardware_id,
+                'hardware_config_id': config_id,
                 'hostname': hostname,
-                'is_online': 1
+                'mac_address': mac_address,
+                'is_online': 1,
+                'is_new': existing_computer is None,
+                'hardware_changed': existing_config is None
             }
         })
         
     except Exception as e:
+        print(f"Ошибка регистрации компьютера: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -80,19 +128,6 @@ def register_computer():
 
 @computers_bp.route('', methods=['GET'])
 def get_computers():
-    """
-    GET /api/computers
-    Получить список компьютеров с фильтрами и пагинацией.
-    
-    Query params:
-        - page: int (по умолчанию 1)
-        - limit: int (по умолчанию 20)
-        - status: online|offline|all (по умолчанию all)
-        - type: client|admin|all (по умолчанию all)
-        - search: str (поиск по hostname)
-        - user_id: int
-        - os_id: int
-    """
     try:
         page = request.args.get('page', 1, type=int)
         limit = request.args.get('limit', 20, type=int)
@@ -124,85 +159,8 @@ def get_computers():
         }), 500
 
 
-@computers_bp.route('/<int:computer_id>/hardware', methods=['GET'])
-def get_computer_hardware(computer_id):
-    """
-    GET /api/computers/{id}/hardware
-    Получить информацию о железе компьютера.
-    """
-    try:
-        hardware = mysql.get_hardware_by_computer_id(computer_id)
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'computer_id': computer_id,
-                'hardware': hardware
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-@computers_bp.route('/<int:computer_id>/ip-addresses', methods=['GET'])
-def get_computer_ip_addresses(computer_id):
-    """
-    GET /api/computers/{id}/ip-addresses
-    Получить IP адреса компьютера.
-    """
-    try:
-        ip_addresses = mysql.get_ip_addresses_by_computer_id(computer_id)
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'computer_id': computer_id,
-                'ip_addresses': ip_addresses
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-@computers_bp.route('/<int:computer_id>/operating-system', methods=['GET'])
-def get_computer_operating_system(computer_id):
-    """
-    GET /api/computers/{id}/operating-system
-    Получить информацию об операционной системе компьютера.
-    """
-    try:
-        os = mysql.get_operating_system_by_computer_id(computer_id)
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'computer_id': computer_id,
-                'operating_system': os
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
-
 @computers_bp.route('/<int:computer_id>', methods=['GET'])
 def get_computer(computer_id):
-    """
-    GET /api/computers/{id}
-    Получить детали компьютера по ID.
-    """
     try:
         computer = mysql.get_computer_by_id(computer_id)
         
@@ -224,12 +182,40 @@ def get_computer(computer_id):
         }), 500
 
 
+@computers_bp.route('/<int:computer_id>/status', methods=['PUT'])
+def update_computer_status(computer_id):
+    try:
+        data = request.get_json()
+        
+        if not data or 'is_online' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Отсутствует обязательное поле is_online'
+            }), 400
+            
+        is_online = bool(data['is_online'])
+        session_id = data.get('session_id')
+        
+        mysql.execute("""
+            UPDATE computer 
+            SET is_online = %s, last_online = NOW()
+            WHERE computer_id = %s
+        """, (is_online, computer_id))
+        
+        return jsonify({
+            'success': True,
+            'message': 'Статус компьютера обновлен'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @computers_bp.route('/<int:computer_id>/sessions', methods=['GET'])
 def get_computer_sessions(computer_id):
-    """
-    GET /api/computers/{id}/sessions
-    Получить историю сессий компьютера.
-    """
     try:
         limit = request.args.get('limit', 20, type=int)
         sessions = mysql.get_computer_sessions(computer_id, limit=limit)
@@ -249,20 +235,16 @@ def get_computer_sessions(computer_id):
         }), 500
 
 
-@computers_bp.route('/<int:computer_id>/ip-history', methods=['GET'])
-def get_computer_ip_history(computer_id):
-    """
-    GET /api/computers/{id}/ip-history
-    Получить историю IP адресов компьютера.
-    """
+@computers_bp.route('/<int:computer_id>/ip-addresses', methods=['GET'])
+def get_computer_ip_addresses(computer_id):
     try:
-        history = mysql.get_computer_ip_history(computer_id)
+        ip_addresses = mysql.get_computer_ip_history(computer_id)
         
         return jsonify({
             'success': True,
             'data': {
                 'computer_id': computer_id,
-                'ip_history': history
+                'ip_addresses': ip_addresses
             }
         })
         
@@ -275,15 +257,6 @@ def get_computer_ip_history(computer_id):
 
 @computers_bp.route('/<int:computer_id>', methods=['PUT'])
 def update_computer(computer_id):
-    """
-    PUT /api/computers/{id}
-    Обновить данные компьютера.
-    
-    Body (JSON):
-        - hostname: str
-        - description: str
-        - computer_type: client|admin
-    """
     try:
         data = request.get_json()
         
@@ -313,54 +286,8 @@ def update_computer(computer_id):
         }), 500
 
 
-@computers_bp.route('/<int:computer_id>/status', methods=['PUT'])
-def update_computer_status(computer_id):
-    """
-    PUT /api/computers/{id}/status
-    Обновить статус онлайн/оффлайн компьютера
-    """
-    try:
-        data = request.get_json()
-        
-        if not data or 'is_online' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Отсутствует обязательное поле is_online'
-            }), 400
-            
-        is_online = bool(data['is_online'])
-        session_id = data.get('session_id')
-        
-        success = mysql.execute("""
-            UPDATE computer 
-            SET is_online = %s, last_online = NOW()
-            WHERE computer_id = %s
-        """, (is_online, computer_id))
-        
-        if not success:
-            return jsonify({
-                'success': False,
-                'error': 'Компьютер не найден'
-            }), 404
-            
-        return jsonify({
-            'success': True,
-            'message': 'Статус компьютера обновлен'
-        })
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
 @computers_bp.route('/<int:computer_id>', methods=['DELETE'])
 def delete_computer(computer_id):
-    """
-    DELETE /api/computers/{id}
-    Удалить компьютер.
-    """
     try:
         success = mysql.delete_computer(computer_id)
         

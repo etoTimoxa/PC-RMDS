@@ -119,28 +119,15 @@ def register_computer():
         if existing_computer:
             computer_id = existing_computer['computer_id']
             
-            if existing_computer['user_id'] != user_id and not force_rebind:
-                other_user = mysql.fetch_one(
-                    "SELECT login FROM user WHERE user_id = %s",
-                    (existing_computer['user_id'],)
-                )
-                return jsonify({
-                    'success': False,
-                    'error': 'Этот компьютер уже привязан к другому пользователю',
-                    'data': {
-                        'already_bound': True,
-                        'other_user_login': other_user['login'] if other_user else 'Unknown'
-                    }
-                }), 409
-            
-            # Обновляем существующий компьютер
+            # Автоматически перепривязываем компьютер к новому пользователю
+            # Если компьютер существует - просто обновляем инфу и меняем владельца
             mysql.execute("""
                 UPDATE computer 
                 SET user_id = %s, hostname = %s, os_id = %s, hardware_config_id = %s,
                     is_online = 1, last_online = NOW()
                 WHERE computer_id = %s
             """, (user_id, hostname, os_id, hardware_config_id, computer_id))
-            print(f"✅ [СЕРВЕР] Обновлен компьютер: ID={computer_id}")
+            print(f"✅ [СЕРВЕР] Обновлен компьютер: ID={computer_id}, перепривязан к пользователю ID={user_id}")
         else:
             # Создаем новый компьютер
             computer_id = mysql.execute("""

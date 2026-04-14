@@ -204,9 +204,12 @@ def create_session():
                 }), 400
                 
         session_id = mysql.execute("""
-            INSERT INTO sessions (computer_id, user_id, start_time, status_id, created_at)
-            VALUES (%s, %s, NOW(), 1, NOW())
-        """, (data['computer_id'], data['user_id']))
+            INSERT INTO session (computer_id, session_token, start_time, last_activity, status_id, json_sent_count, error_count, created_at)
+            VALUES (%s, %s, NOW(), NOW(), 1, 0, 0, NOW())
+        """, (
+            data['computer_id'],
+            data.get('session_token', f"session_{int(datetime.now().timestamp())}")
+        ))
         
         return jsonify({
             'success': True,

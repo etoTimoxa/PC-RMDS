@@ -17,6 +17,7 @@ import threading
 import boto3
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from core.api_client import APIClient as DatabaseManager
 
 # Импортируем Windows-специфичные модули только на Windows
 if sys.platform == 'win32':

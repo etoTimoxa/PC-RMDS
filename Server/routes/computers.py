@@ -328,10 +328,10 @@ def update_computer_status(computer_id):
         session_id = data.get('session_id')
         
         success = mysql.execute("""
-            UPDATE computers 
-            SET is_online = %s, last_seen = NOW(), current_session_id = %s
+            UPDATE computer 
+            SET is_online = %s, last_online = NOW()
             WHERE computer_id = %s
-        """, (is_online, session_id, computer_id))
+        """, (is_online, computer_id))
         
         if not success:
             return jsonify({

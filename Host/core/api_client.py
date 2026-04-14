@@ -5,7 +5,6 @@ from datetime import datetime
 import socket
 import platform
 import hashlib
-import bcrypt
 
 from utils.constants import API_BASE_URL, STATUS_ACTIVE, STATUS_DISCONNECTED
 from core.hardware_id import HardwareIDGenerator
@@ -116,82 +115,94 @@ class APIClient:
 
     @classmethod
     def register_computer_for_user(cls, user_id: int, force_rebind: bool = False) -> Optional[Dict[str, Any]]:
-        """Регистрация компьютера для пользователя"""
+        """Регистрация компьютера для пользователя с полной информацией о железе"""
         try:
             hardware_id = HardwareIDGenerator.generate_unique_id()
             hostname = socket.gethostname()
             mac_address = HardwareIDGenerator.get_mac_address()
             
-            # Получаем информацию о железе
-            cpu_model = HardwareIDGenerator.get_cpu_serial()
-            ram_total = cls._get_ram_total()
-            storage_total = cls._get_storage_total()
+            # Получаем ПОЛНУЮ информацию о железе
+            hardware_info = HardwareIDGenerator.get_full_hardware_info()
             
-            # Сначала пробуем зарегистрировать
-            try:
-                response = requests.post(
-                    f"{API_BASE_URL}/api/computers/register",
-                    json={
-                        "user_id": user_id,
-                        "hardware_hash": hardware_id,
-                        "hostname": hostname,
-                        "mac_address": mac_address,
-                        "cpu_model": cpu_model[:100],
-                        "ram_total_gb": ram_total,
-                        "storage_total_gb": storage_total,
-                        "force_rebind": force_rebind
-                    },
-                    headers=cls._headers(),
-                    timeout=15
-                )
-                response.raise_for_status()
-                data = response.json()
+            # Получаем IP адрес
+            ip_address = cls._get_ip_address()
+            
+            # Формируем payload с правильными именами полей для сервера
+            payload = {
+                "user_id": user_id,
+                "hardware_hash": hardware_id,
+                "hostname": hostname,
+                "mac_address": mac_address,
+                "ip_address": ip_address,
                 
-                if data.get('success'):
-                    return data['data']
-            except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 409:
-                    # Компьютер уже существует - ищем его по hardware_hash и обновляем пользователя
-                    print("Компьютер уже зарегистрирован, пробуем перепривязать к новому пользователю...")
-                    
-                    # Получаем список компьютеров и ищем наш
-                    computers = cls.get_computers()
-                    target_computer = None
-                    
-                    if computers and isinstance(computers, list):
-                        for comp in computers:
-                            if isinstance(comp, dict) and comp.get('hardware_hash') == hardware_id:
-                                target_computer = comp
-                                break
-                    
-                    if target_computer and isinstance(target_computer, dict):
-                        # Обновляем пользователя для существующего компьютера
-                        computer_id = target_computer.get('computer_id')
-                        if computer_id:
-                            try:
-                                update_response = requests.put(
-                                    f"{API_BASE_URL}/api/computers/{computer_id}",
-                                    json={
-                                        "user_id": user_id,
-                                        "hostname": hostname,
-                                        "mac_address": mac_address
-                                    },
-                                    headers=cls._headers(),
-                                    timeout=15
-                                )
-                                update_response.raise_for_status()
-                                update_data = update_response.json()
-                                
-                                if update_data.get('success'):
-                                    print(f"✅ Компьютер успешно перепривязан к пользователю ID: {user_id}")
-                                    return target_computer
-                            except Exception as update_err:
-                                print(f"❌ Ошибка обновления компьютера: {update_err}")
+                # Поля для hardware_config
+                "cpu_model": hardware_info.get('cpu_model', 'Unknown'),
+                "cpu_cores": hardware_info.get('cpu_cores', 0),
+                "ram_total": hardware_info.get('ram_total', 0),
+                "storage_total": hardware_info.get('storage_total', 0),
+                "gpu_model": hardware_info.get('gpu_model', 'Unknown'),
+                "motherboard": hardware_info.get('motherboard', 'Unknown'),
+                "bios_version": hardware_info.get('bios_version', 'Unknown'),
+                
+                # Информация об ОС
+                "os_name": hardware_info.get('os_name', 'Unknown'),
+                "os_version": hardware_info.get('os_version', 'Unknown'),
+                "os_architecture": hardware_info.get('os_architecture', 'x64'),
+                
+                # Даты
+                "detected_at": hardware_info.get('detected_at'),
+                "updated_at": hardware_info.get('updated_at'),
+                
+                "force_rebind": force_rebind
+            }
             
+            # Логируем для отладки
+            print(f"🔍 Регистрация компьютера:")
+            print(f"   user_id: {user_id}")
+            print(f"   hostname: {hostname}")
+            print(f"   mac_address: {mac_address}")
+            print(f"   CPU Model: {payload['cpu_model']}")
+            print(f"   CPU Cores: {payload['cpu_cores']}")
+            print(f"   RAM Total: {payload['ram_total']} GB")
+            print(f"   Storage Total: {payload['storage_total']} GB")
+            print(f"   GPU Model: {payload['gpu_model']}")
+            print(f"   Motherboard: {payload['motherboard']}")
+            print(f"   BIOS Version: {payload['bios_version']}")
+            print(f"   OS: {payload['os_name']} {payload['os_version']}")
+            
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/register",
+                json=payload,
+                headers=cls._headers(),
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('success'):
+                print(f"✅ Компьютер успешно зарегистрирован!")
+                print(f"   computer_id: {data['data'].get('computer_id')}")
+                print(f"   hardware_config_id: {data['data'].get('hardware_config_id')}")
+                print(f"   os_id: {data['data'].get('os_id')}")
+                return data['data']
             return None
         except Exception as e:
-            print(f"Ошибка регистрации/перепривязки компьютера: {e}")
+            print(f"❌ Ошибка регистрации компьютера: {e}")
+            if hasattr(e, 'response') and e.response:
+                print(f"   Ответ сервера: {e.response.text}")
             return None
+    
+    @staticmethod
+    def _get_ip_address() -> str:
+        """Получает текущий IP адрес"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "Unknown"
     
     @staticmethod
     def _get_ram_total() -> float:
@@ -309,7 +320,6 @@ class APIClient:
             if user_id:
                 payload["user_id"] = user_id
             
-            # Логируем запрос для отладки
             print(f"[DEBUG] Отправляем запрос на создание сессии:")
             print(f"[DEBUG] URL: {API_BASE_URL}/api/sessions")
             print(f"[DEBUG] BODY: {json.dumps(payload, indent=2, ensure_ascii=False)}")
@@ -328,11 +338,13 @@ class APIClient:
             data = response.json()
             
             if data.get('success'):
-                cls.current_session_id = data['data']['session_id']
-                return cls.current_session_id
+                session_id = data['data']['session_id']
+                cls.current_session_id = session_id
+                print(f"✅ Сессия создана: ID={session_id}")
+                return session_id
             return None
         except Exception as e:
-            print(f"Ошибка создания сессии: {e}")
+            print(f"❌ Ошибка создания сессии: {e}")
             return None
 
     @classmethod
@@ -342,7 +354,10 @@ class APIClient:
             sid = session_id if session_id is not None else cls.current_session_id
             
             if not sid:
+                print("⚠️ Нет активной сессии для закрытия")
                 return False
+            
+            print(f"🔵 Закрытие сессии {sid}")
             
             response = requests.put(
                 f"{API_BASE_URL}/api/sessions/{sid}",
@@ -359,9 +374,10 @@ class APIClient:
                 cls.update_computer_status(cls.current_computer_id, False, sid)
             
             cls.current_session_id = None
+            print(f"✅ Сессия {sid} закрыта")
             return True
         except Exception as e:
-            print(f"Ошибка закрытия сессии: {e}")
+            print(f"❌ Ошибка закрытия сессии: {e}")
             return False
 
     @classmethod
@@ -429,6 +445,11 @@ class APIClient:
         except Exception as e:
             print(f"Ошибка получения пользователя: {e}")
             return None
+    
+    @classmethod
+    def create_user(cls, login: str, password: str, full_name: str, role: str = 'client') -> Optional[int]:
+        """Создание нового пользователя"""
+        return cls.register(login, password, full_name)
     
     # ==============================================
     # МЕТРИКИ

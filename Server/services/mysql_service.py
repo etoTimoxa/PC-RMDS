@@ -226,7 +226,7 @@ class MySQLService:
     
     def update_computer(self, computer_id: int, data: Dict) -> bool:
         """Обновить данные компьютера"""
-        allowed_fields = ['hostname', 'description', 'computer_type']
+        allowed_fields = ['hostname', 'description', 'computer_type', 'user_id', 'location', 'os_id', 'hardware_config_id', 'department', 'inventory_number']
         update_fields = {k: v for k, v in data.items() if k in allowed_fields}
         
         if not update_fields:

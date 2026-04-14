@@ -127,29 +127,70 @@ class APIClient:
             ram_total = cls._get_ram_total()
             storage_total = cls._get_storage_total()
             
-            response = requests.post(
-                f"{API_BASE_URL}/api/computers/register",
-                json={
-                    "user_id": user_id,
-                    "hardware_hash": hardware_id,
-                    "hostname": hostname,
-                    "mac_address": mac_address,
-                    "cpu_model": cpu_model[:100],
-                    "ram_total_gb": ram_total,
-                    "storage_total_gb": storage_total,
-                    "force_rebind": force_rebind
-                },
-                headers=cls._headers(),
-                timeout=15
-            )
-            response.raise_for_status()
-            data = response.json()
+            # Сначала пробуем зарегистрировать
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/computers/register",
+                    json={
+                        "user_id": user_id,
+                        "hardware_hash": hardware_id,
+                        "hostname": hostname,
+                        "mac_address": mac_address,
+                        "cpu_model": cpu_model[:100],
+                        "ram_total_gb": ram_total,
+                        "storage_total_gb": storage_total,
+                        "force_rebind": force_rebind
+                    },
+                    headers=cls._headers(),
+                    timeout=15
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get('success'):
+                    return data['data']
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code == 409:
+                    # Компьютер уже существует - ищем его по hardware_hash и обновляем пользователя
+                    print("Компьютер уже зарегистрирован, пробуем перепривязать к новому пользователю...")
+                    
+                    # Получаем список компьютеров и ищем наш
+                    computers = cls.get_computers()
+                    target_computer = None
+                    
+                    if computers and isinstance(computers, list):
+                        for comp in computers:
+                            if isinstance(comp, dict) and comp.get('hardware_hash') == hardware_id:
+                                target_computer = comp
+                                break
+                    
+                    if target_computer and isinstance(target_computer, dict):
+                        # Обновляем пользователя для существующего компьютера
+                        computer_id = target_computer.get('computer_id')
+                        if computer_id:
+                            try:
+                                update_response = requests.put(
+                                    f"{API_BASE_URL}/api/computers/{computer_id}",
+                                    json={
+                                        "user_id": user_id,
+                                        "hostname": hostname,
+                                        "mac_address": mac_address
+                                    },
+                                    headers=cls._headers(),
+                                    timeout=15
+                                )
+                                update_response.raise_for_status()
+                                update_data = update_response.json()
+                                
+                                if update_data.get('success'):
+                                    print(f"✅ Компьютер успешно перепривязан к пользователю ID: {user_id}")
+                                    return target_computer
+                            except Exception as update_err:
+                                print(f"❌ Ошибка обновления компьютера: {update_err}")
             
-            if data.get('success'):
-                return data['data']
             return None
         except Exception as e:
-            print(f"Ошибка регистрации компьютера: {e}")
+            print(f"Ошибка регистрации/перепривязки компьютера: {e}")
             return None
     
     @staticmethod

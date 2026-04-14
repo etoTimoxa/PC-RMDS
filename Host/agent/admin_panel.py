@@ -137,6 +137,7 @@ class AdminPanelWindow(QMainWindow):
         self.computers_table.setAlternatingRowColors(True)
         self.computers_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.computers_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.computers_table.cellDoubleClicked.connect(self.open_computer_details)
         
         table_layout.addWidget(self.computers_table)
         
@@ -341,6 +342,29 @@ class AdminPanelWindow(QMainWindow):
         from agent.settings_dialog import SettingsDialog
         settings_dialog = SettingsDialog(self)
         settings_dialog.exec()
+        
+    def open_computer_details(self, row, column):
+        """Открывает диалог с детальной информацией по компьютеру"""
+        computer_id_item = self.computers_table.item(row, 0)
+        if not computer_id_item:
+            return
+            
+        try:
+            computer_id = int(computer_id_item.text())
+            hostname_item = self.computers_table.item(row, 1)
+            
+            computer_data = {
+                'computer_id': computer_id,
+                'hostname': hostname_item.text() if hostname_item else 'Unknown',
+                'is_online': self.computers_table.item(row, 4).text() == "🟢 Онлайн"
+            }
+            
+            from agent.computer_details_dialog import ComputerDetailsDialog
+            dialog = ComputerDetailsDialog(computer_id, computer_data, self)
+            dialog.exec()
+            
+        except Exception as e:
+            print(f"Ошибка открытия деталей компьютера: {e}")
     
     def logout(self):
         """Выход из системы"""

@@ -332,11 +332,11 @@ class AuthDialog(QDialog):
             # Подключаем компьютер
             computer_result = DatabaseManager.register_computer_for_user(user_id)
             
-            computer_id = 1
+            computer_id = computer_result['computer_id']
             hostname = socket.gethostname()
             mac_address = HardwareIDGenerator.get_mac_address()
             
-            session_id = 1
+            session_id = None
             session_token = DatabaseManager.auth_token
             
             self.computer_data = {

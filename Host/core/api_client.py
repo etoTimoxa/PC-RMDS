@@ -262,10 +262,16 @@ class APIClient:
             
             payload = {
                 "computer_id": computer_id,
-                "session_token": session_token
+                "session_token": session_token,
+                "status_id": 1
             }
             if user_id:
                 payload["user_id"] = user_id
+            
+            # Логируем запрос для отладки
+            print(f"[DEBUG] Отправляем запрос на создание сессии:")
+            print(f"[DEBUG] URL: {API_BASE_URL}/api/sessions")
+            print(f"[DEBUG] BODY: {json.dumps(payload, indent=2, ensure_ascii=False)}")
             
             response = requests.post(
                 f"{API_BASE_URL}/api/sessions",
@@ -273,6 +279,10 @@ class APIClient:
                 headers=cls._headers(),
                 timeout=10
             )
+            
+            print(f"[DEBUG] Статус ответа: {response.status_code}")
+            print(f"[DEBUG] Ответ сервера: {response.text}")
+            
             response.raise_for_status()
             data = response.json()
             

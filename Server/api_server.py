@@ -18,7 +18,8 @@ from routes import (
     statuses_bp,
     metrics_bp,
     dashboard_bp,
-    auth_bp
+    auth_bp,
+    sessions_bp  
 )
 
 
@@ -35,20 +36,30 @@ def create_app():
         }
     })
     
-    # Регистрация blueprints
+    # Регистрация blueprints - ВСЕ ЭНДПОИНТЫ
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(computers_bp, url_prefix='/api/computers')
     app.register_blueprint(users_bp, url_prefix='/api/users')
     app.register_blueprint(statuses_bp, url_prefix='/api/statuses')
     app.register_blueprint(metrics_bp, url_prefix='/api/metrics')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
-    
+    app.register_blueprint(sessions_bp, url_prefix='/api/sessions') 
+
     # Health check
     @app.route('/health')
     def health():
         return jsonify({
             'status': 'healthy',
-            'service': 'PC-RMDS API Server'
+            'service': 'PC-RMDS API Server',
+            'registered_blueprints': [
+                '/api/auth',
+                '/api/computers', 
+                '/api/users',
+                '/api/statuses',
+                '/api/metrics',
+                '/api/dashboard',
+                '/api/sessions'  
+            ]
         })
     
     # Корневой эндпоинт
@@ -58,11 +69,13 @@ def create_app():
             'service': 'PC-RMDS REST API',
             'version': '1.0.0',
             'endpoints': {
+                'auth': '/api/auth',
                 'computers': '/api/computers',
                 'users': '/api/users',
                 'statuses': '/api/statuses',
                 'metrics': '/api/metrics',
                 'dashboard': '/api/dashboard',
+                'sessions': '/api/sessions',  
                 'health': '/health'
             }
         })
@@ -101,12 +114,19 @@ def main():
  ║  Debug mode: {str(debug):5}                                  
  ╠═══════════════════════════════════════════════════════════╣
  ║  Endpoints:                                              ║
- ║    GET  /api/computers          - Список компьютеров      ║
- ║    GET  /api/users              - Список пользователей    ║
- ║    GET  /api/statuses           - Список статусов        ║
- ║    GET  /api/metrics            - Метрики из S3          ║
- ║    GET  /api/dashboard/stats   - Статистика              ║
- ║    GET  /health                 - Health check           ║
+ ║    POST /api/auth/login          - Вход в систему        ║
+ ║    POST /api/auth/register       - Регистрация           ║
+ ║    POST /api/computers/register  - Регистрация компа     ║
+ ║    GET  /api/computers           - Список компьютеров    ║
+ ║    POST /api/sessions            - СОЗДАНИЕ СЕССИИ       ║
+ ║    GET  /api/sessions            - Список сессий         ║
+ ║    GET  /api/sessions/active     - Активные сессии       ║
+ ║    PUT  /api/sessions/<id>       - Обновление сессии     ║
+ ║    GET  /api/users               - Список пользователей  ║
+ ║    GET  /api/statuses            - Список статусов       ║
+ ║    GET  /api/metrics             - Метрики из S3         ║
+ ║    GET  /api/dashboard/stats     - Статистика            ║
+ ║    GET  /health                  - Health check          ║
  ╚═══════════════════════════════════════════════════════════╝
      """)
     

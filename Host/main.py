@@ -105,8 +105,29 @@ def main():
     app.setStyle('Fusion')
     app.setApplicationName("Remote Access Agent")
     
-    # Устанавливаем обработчик для очистки мьютекса при выходе
-    def cleanup_mutex():
+    # Обработчик корректного завершения работы
+    def on_application_quit():
+        print("\n[MAIN] Завершение работы, закрываем сессию...")
+        
+        # Закрываем активную сессию
+        from core.api_client import APIClient
+        
+        if APIClient.current_session_id:
+            try:
+                if APIClient.close_session():
+                    print(f"[MAIN] ✅ Сессия {APIClient.current_session_id} успешно закрыта")
+            except Exception as e:
+                print(f"[MAIN] ❌ Ошибка закрытия сессии: {e}")
+        
+        # Выполняем выход из системы
+        if APIClient.auth_token:
+            try:
+                APIClient.logout()
+                print("[MAIN] ✅ Выполнен выход из системы")
+            except Exception as e:
+                print(f"[MAIN] ❌ Ошибка выхода: {e}")
+        
+        # Очищаем мьютекс
         if sys.platform == 'win32':
             try:
                 from ctypes import windll
@@ -123,12 +144,23 @@ def main():
             except:
                 pass
     
+    # Используем сигнал Qt (гарантированно вызывается всегда)
+    app.aboutToQuit.connect(on_application_quit)
+    
+    # Регистрируем также на случай аварийного завершения
     import atexit
-    atexit.register(cleanup_mutex)
+    atexit.register(on_application_quit)
     
     auth_dialog = AuthDialog()
     if auth_dialog.exec() == AuthDialog.DialogCode.Accepted:
         computer_data = auth_dialog.computer_data
+        
+        # Создаем сессию при успешном входе
+        from core.api_client import APIClient
+        session_id = APIClient.create_session(computer_data['computer_id'], computer_data.get('user_id'))
+        if session_id:
+            computer_data['session_id'] = session_id
+            print(f"[MAIN] Сессия создана успешно, ID: {session_id}")
         
         # Проверяем, является ли пользователь админом
         is_admin = computer_data.get('is_admin') or computer_data.get('role_id') in (2, 3)
@@ -169,7 +201,7 @@ def main():
             window.show()
             sys.exit(app.exec())
     else:
-        cleanup_mutex()
+        on_application_quit()
         sys.exit(0)
 
 

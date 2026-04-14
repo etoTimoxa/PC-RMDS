@@ -156,44 +156,8 @@ class APIClient:
             hardware_id = HardwareIDGenerator.generate_unique_id()
             hostname = socket.gethostname()
             
-            # Сначала проверяем существует ли уже компьютер с таким hardware_id
-            check_response = requests.get(
-                f"{API_BASE_URL}/api/computers?search={hardware_id}",
-                headers=cls._headers(),
-                timeout=10
-            )
-            
-            computer_exists = False
-            existing_computer_id = None
-            
-            if check_response.status_code == 200:
-                check_data = check_response.json()
-                if check_data.get('success') and check_data.get('data', {}).get('items', []):
-                    # Компьютер уже существует в базе данных
-                    existing_computer = check_data['data']['items'][0]
-                    existing_computer_id = existing_computer['computer_id']
-                    computer_exists = True
-            
-            if computer_exists and existing_computer_id:
-                # Компьютер уже есть - просто обновляем user_id
-                print(f"Компьютер уже зарегистрирован ID: {existing_computer_id}, обновляем пользователя")
-                update_response = requests.put(
-                    f"{API_BASE_URL}/api/computers/{existing_computer_id}",
-                    json={
-                        "user_id": user_id,
-                        "hostname": hostname
-                    },
-                    headers=cls._headers(),
-                    timeout=15
-                )
-                update_response.raise_for_status()
-                update_data = update_response.json()
-                
-                if update_data.get('success'):
-                    # После обновления получаем актуальные данные компьютера
-                    return cls.get_computer(existing_computer_id)
-            
-            # Если компьютера нет или обновление не прошло - создаем новый
+            # ✅ ЭНДПОИНТ САМ УМЕЕТ И ОБНОВЛЯТЬ И СОЗДАВАТЬ
+            # ✅ НЕ НУЖНО ПРЕДВАРИТЕЛЬНЫХ ЗАПРОСОВ
             response = requests.post(
                 f"{API_BASE_URL}/api/computers/register",
                 json={
@@ -386,6 +350,64 @@ class APIClient:
     # СЕССИИ
     # ==============================================
     
+    @classmethod
+    def create_session(cls, computer_id: int, session_token: str = None) -> Optional[int]:
+        """✅ СОЗДАТЬ НОВУЮ СЕССИЮ"""
+        try:
+            if session_token is None:
+                session_token = f"{socket.gethostname()}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
+            
+            response = requests.post(
+                f"{API_BASE_URL}/api/sessions",
+                json={
+                    "computer_id": computer_id,
+                    "session_token": session_token
+                },
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('success'):
+                cls.current_session_id = data['data']['session_id']
+                return cls.current_session_id
+            return None
+        except Exception as e:
+            print(f"Ошибка создания сессии: {e}")
+            return None
+
+    @classmethod
+    def close_session(cls, session_id: int = None) -> bool:
+        """✅ ЗАКРЫТЬ СЕССИЮ ПРИ ВЫХОДЕ"""
+        try:
+            sid = session_id if session_id is not None else cls.current_session_id
+            
+            if not sid:
+                return False
+            
+            # Обновляем статус и время окончания
+            response = requests.put(
+                f"{API_BASE_URL}/api/sessions/{sid}",
+                json={
+                    "status_id": 2,
+                    "end_time": datetime.now().isoformat()
+                },
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            # Обновляем статус компьютера на оффлайн
+            if cls.current_computer_id:
+                cls.update_computer_status(cls.current_computer_id, False, sid)
+            
+            cls.current_session_id = None
+            return True
+        except Exception as e:
+            print(f"Ошибка закрытия сессии: {e}")
+            return False
+
     @classmethod
     def update_session_activity(cls, session_id: int) -> bool:
         """Обновление активности сессии"""

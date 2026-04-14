@@ -59,12 +59,16 @@ def register_computer():
                 VALUES (%s, %s, %s, 'client', 1, NOW(), NOW())
             """, (user_id, hardware_id, hostname))
         
-        computer = mysql.get_computer_by_id(computer_id)
-        
         return jsonify({
             'success': True,
             'message': 'Компьютер успешно зарегистрирован',
-            'data': computer
+            'data': {
+                'computer_id': computer_id,
+                'user_id': user_id,
+                'hardware_config_id': hardware_id,
+                'hostname': hostname,
+                'is_online': 1
+            }
         })
         
     except Exception as e:

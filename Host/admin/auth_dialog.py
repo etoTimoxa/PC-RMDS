@@ -324,7 +324,6 @@ class AuthDialog(QDialog):
             if not user_data:
                 return
             
-            
             user_id = user_data['user_id']
             role_id = user_data.get('role_id')
             is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
@@ -332,9 +331,27 @@ class AuthDialog(QDialog):
             # Подключаем компьютер
             computer_result = DatabaseManager.register_computer_for_user(user_id)
             
+            if not computer_result:
+                return
+            
             computer_id = computer_result['computer_id']
             hostname = socket.gethostname()
             mac_address = HardwareIDGenerator.get_mac_address()
+            
+            # Если компьютер уже был привязан к другому пользователю - перепривязываем
+            if computer_result.get('already_bound') and computer_result.get('other_user_id'):
+                other_user_id = computer_result.get('other_user_id')
+                print(f"⚠️ Компьютер был привязан к пользователю {other_user_id}")
+                
+                # Перепривязываем компьютер к текущему пользователю
+                rebind_result = DatabaseManager.rebind_computer(
+                    computer_id=computer_id,
+                    user_id=user_id,
+                    computer_type='admin' if is_admin else 'client'
+                )
+                
+                if not rebind_result:
+                    print(f"⚠️ Не удалось перепривязать компьютер, но продолжаем")
             
             session_id = None
             session_token = DatabaseManager.auth_token
@@ -386,10 +403,9 @@ class AuthDialog(QDialog):
             if not user_data:
                 raise Exception("Неверный логин или пароль")
             
-            
             user_id = user_data['user_id']
             role_id = user_data.get('role_id')
-            is_admin = user_data.get('is_admin', False)
+            is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
             
             self.status_label.setText("Регистрация компьютера...")
             QApplication.processEvents()
@@ -399,18 +415,30 @@ class AuthDialog(QDialog):
             if not computer_result:
                 raise Exception("Не удалось зарегистрировать компьютер")
             
-            if computer_result.get('already_bound'):
-                # Автоматически перепривязываем компьютер к текущему пользователю
-                other_user = computer_result.get('other_user_login', 'Unknown')
-                print(f"Компьютер был привязан к '{other_user}', перепривязываем к '{login}'")
-                
-                computer_result = DatabaseManager.register_computer_for_user(user_id, force_rebind=True)
-                if not computer_result:
-                    raise Exception("Не удалось перепривязать компьютер")
-            
             computer_id = computer_result['computer_id']
             hostname = computer_result['hostname']
             mac_address = computer_result.get('mac_address', '')
+            
+            # Если компьютер уже был привязан к другому пользователю - перепривязываем
+            if computer_result.get('already_bound') and computer_result.get('other_user_id'):
+                other_user_id = computer_result.get('other_user_id')
+                other_user_login = computer_result.get('other_user_login', 'Unknown')
+                print(f"⚠️ Компьютер был привязан к пользователю {other_user_login} (ID: {other_user_id})")
+                
+                # Перепривязываем компьютер к текущему пользователю
+                self.status_label.setText("Перепривязка компьютера...")
+                QApplication.processEvents()
+                
+                rebind_result = DatabaseManager.rebind_computer(
+                    computer_id=computer_id,
+                    user_id=user_id,
+                    computer_type='admin' if is_admin else 'client'
+                )
+                
+                if not rebind_result:
+                    print(f"⚠️ Не удалось перепривязать компьютер, но продолжаем")
+                else:
+                    print(f"✅ Компьютер успешно перепривязан к {login}")
             
             session_id = computer_result.get('session_id')
             session_token = DatabaseManager.auth_token
@@ -472,14 +500,12 @@ class AuthDialog(QDialog):
         QApplication.processEvents()
         
         try:
-            connection = DatabaseManager.get_connection()
-            if not connection:
-                raise Exception("Нет подключения к базе данных")
-            
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT user_id FROM user WHERE login = %s", (login,))
-                if cursor.fetchone():
-                    raise Exception("Логин уже занят")
+            # Проверяем существование пользователя через API
+            existing = DatabaseManager.get_users()
+            if existing:
+                for user in existing.get('users', []):
+                    if user.get('login') == login:
+                        raise Exception("Логин уже занят")
             
             user_id = DatabaseManager.create_user(login, password, login, 'client')
             
@@ -494,27 +520,12 @@ class AuthDialog(QDialog):
             if not computer_result:
                 raise Exception("Не удалось зарегистрировать компьютер")
             
-            # Автоматически перепривязываем компьютер к новому клиенту
-            if computer_result.get('already_bound'):
-                other_user = computer_result.get('other_user_login', 'Unknown')
-                print(f"Компьютер был привязан к '{other_user}', перепривязываем к '{login}'")
-                
-                computer_result = DatabaseManager.register_computer_for_user(user_id, force_rebind=True)
-                if not computer_result:
-                    raise Exception("Не удалось перепривязать компьютер")
-            
             computer_id = computer_result['computer_id']
             hostname = computer_result['hostname']
             mac_address = computer_result['mac_address']
             
-            session_id = DatabaseManager.create_session(computer_id, hostname)
-            session_token = None
-            if session_id:
-                connection = DatabaseManager.get_connection()
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT session_token FROM session WHERE session_id = %s", (session_id,))
-                    token_data = cursor.fetchone()
-                    session_token = token_data['session_token'] if token_data else None
+            session_id = computer_result.get('session_id')
+            session_token = DatabaseManager.auth_token
             
             self.computer_data = {
                 'computer_id': computer_id,

@@ -116,18 +116,50 @@ def register_computer():
             (mac_address,)
         )
         
+        already_bound = False
+        other_user_id = None
+        other_user_login = None
+        
         if existing_computer:
             computer_id = existing_computer['computer_id']
+            current_user_id = existing_computer['user_id']
             
-            # Автоматически перепривязываем компьютер к новому пользователю
-            # Если компьютер существует - просто обновляем инфу и меняем владельца
-            mysql.execute("""
-                UPDATE computer 
-                SET user_id = %s, hostname = %s, os_id = %s, hardware_config_id = %s,
-                    is_online = 1, last_online = NOW()
-                WHERE computer_id = %s
-            """, (user_id, hostname, os_id, hardware_config_id, computer_id))
-            print(f"✅ [СЕРВЕР] Обновлен компьютер: ID={computer_id}, перепривязан к пользователю ID={user_id}")
+            # Если компьютер уже привязан к другому пользователю
+            if current_user_id and current_user_id != user_id:
+                already_bound = True
+                other_user_id = current_user_id
+                # Получаем логин другого пользователя
+                other_user = mysql.fetch_one("SELECT login FROM user WHERE user_id = %s", (current_user_id,))
+                other_user_login = other_user['login'] if other_user else 'Unknown'
+                print(f"⚠️ [СЕРВЕР] Компьютер {computer_id} уже привязан к пользователю {other_user_login} (ID: {current_user_id})")
+                
+                if force_rebind:
+                    print(f"🔄 [СЕРВЕР] Перепривязываем компьютер к пользователю {user_id}")
+                    mysql.execute("""
+                        UPDATE computer 
+                        SET user_id = %s, hostname = %s, os_id = %s, hardware_config_id = %s,
+                            is_online = 1, last_online = NOW()
+                        WHERE computer_id = %s
+                    """, (user_id, hostname, os_id, hardware_config_id, computer_id))
+                    print(f"✅ [СЕРВЕР] Компьютер перепривязан: ID={computer_id}")
+                else:
+                    # Просто обновляем данные без смены владельца
+                    mysql.execute("""
+                        UPDATE computer 
+                        SET hostname = %s, os_id = %s, hardware_config_id = %s,
+                            is_online = 1, last_online = NOW()
+                        WHERE computer_id = %s
+                    """, (hostname, os_id, hardware_config_id, computer_id))
+                    print(f"✅ [СЕРВЕР] Обновлен компьютер: ID={computer_id}")
+            else:
+                # Обновляем данные компьютера
+                mysql.execute("""
+                    UPDATE computer 
+                    SET hostname = %s, os_id = %s, hardware_config_id = %s,
+                        is_online = 1, last_online = NOW()
+                    WHERE computer_id = %s
+                """, (hostname, os_id, hardware_config_id, computer_id))
+                print(f"✅ [СЕРВЕР] Обновлен компьютер: ID={computer_id}")
         else:
             # Создаем новый компьютер
             computer_id = mysql.execute("""
@@ -139,14 +171,30 @@ def register_computer():
             print(f"✅ [СЕРВЕР] Создан новый компьютер: ID={computer_id}")
         
         # ============================================
-        # 4. ДОБАВЛЯЕМ IP АДРЕС
+        # 4. ДОБАВЛЯЕМ IP АДРЕС (только если он изменился или его нет)
         # ============================================
         if ip_address:
-            mysql.execute("""
-                INSERT INTO ip_address (computer_id, ip_address, detected_at)
-                VALUES (%s, %s, NOW())
+            # Проверяем, есть ли уже такой IP адрес для этого компьютера
+            existing_ip = mysql.fetch_one("""
+                SELECT ip_id FROM ip_address 
+                WHERE computer_id = %s AND ip_address = %s
+                ORDER BY detected_at DESC LIMIT 1
             """, (computer_id, ip_address))
-            print(f"✅ [СЕРВЕР] Добавлен IP адрес: {ip_address}")
+            
+            if not existing_ip:
+                # Добавляем новый IP только если его нет
+                mysql.execute("""
+                    INSERT INTO ip_address (computer_id, ip_address, detected_at)
+                    VALUES (%s, %s, NOW())
+                """, (computer_id, ip_address))
+                print(f"✅ [СЕРВЕР] Добавлен новый IP адрес: {ip_address}")
+            else:
+                # Обновляем время обнаружения существующего IP
+                mysql.execute("""
+                    UPDATE ip_address SET detected_at = NOW()
+                    WHERE ip_id = %s
+                """, (existing_ip['ip_id'],))
+                print(f"✅ [СЕРВЕР] Обновлено время для IP адреса: {ip_address}")
         
         # ============================================
         # 5. ВОЗВРАЩАЕМ РЕЗУЛЬТАТ
@@ -162,7 +210,10 @@ def register_computer():
                 'os_id': os_id,
                 'hardware_config_id': hardware_config_id,
                 'is_online': 1,
-                'is_new': existing_computer is None
+                'is_new': existing_computer is None,
+                'already_bound': already_bound,
+                'other_user_id': other_user_id,
+                'other_user_login': other_user_login
             }
         })
         
@@ -170,6 +221,58 @@ def register_computer():
         print(f"❌ [СЕРВЕР] Ошибка регистрации компьютера: {e}")
         import traceback
         traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@computers_bp.route('/<int:computer_id>/ip', methods=['POST'])
+def update_computer_ip(computer_id):
+    """
+    POST /api/computers/{id}/ip
+    Обновить IP адрес компьютера (только если он изменился)
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'ip_address' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Отсутствует обязательное поле: ip_address'
+            }), 400
+        
+        ip_address = data['ip_address']
+        
+        # Проверяем, есть ли уже такой IP адрес для этого компьютера
+        existing_ip = mysql.fetch_one("""
+            SELECT ip_id, detected_at FROM ip_address 
+            WHERE computer_id = %s AND ip_address = %s
+            ORDER BY detected_at DESC LIMIT 1
+        """, (computer_id, ip_address))
+        
+        if existing_ip:
+            # IP уже существует, обновляем время
+            mysql.execute("""
+                UPDATE ip_address SET detected_at = NOW()
+                WHERE ip_id = %s
+            """, (existing_ip['ip_id'],))
+            print(f"✅ [СЕРВЕР] Обновлено время для IP адреса {ip_address} компьютера {computer_id}")
+        else:
+            # Новый IP - добавляем запись
+            mysql.execute("""
+                INSERT INTO ip_address (computer_id, ip_address, detected_at)
+                VALUES (%s, %s, NOW())
+            """, (computer_id, ip_address))
+            print(f"✅ [СЕРВЕР] Добавлен новый IP адрес {ip_address} для компьютера {computer_id}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'IP адрес обновлен'
+        })
+        
+    except Exception as e:
+        print(f"❌ Ошибка обновления IP адреса: {e}")
         return jsonify({
             'success': False,
             'error': str(e)
@@ -335,7 +438,7 @@ def update_computer_status(computer_id):
 
 @computers_bp.route('/<int:computer_id>', methods=['PUT'])
 def update_computer(computer_id):
-    """Обновить данные компьютера"""
+    """Обновить данные компьютера (в том числе смена владельца)"""
     try:
         data = request.get_json()
         
@@ -345,7 +448,7 @@ def update_computer(computer_id):
                 'error': 'No data provided'
             }), 400
         
-        allowed_fields = ['hostname', 'description', 'computer_type', 'user_id']
+        allowed_fields = ['hostname', 'description', 'computer_type', 'user_id', 'location']
         update_fields = {k: v for k, v in data.items() if k in allowed_fields}
         
         if not update_fields:
@@ -354,14 +457,29 @@ def update_computer(computer_id):
                 'error': 'No valid fields to update'
             }), 400
         
+        # Если меняется user_id, проверяем что пользователь существует
+        if 'user_id' in update_fields:
+            new_user_id = update_fields['user_id']
+            user_exists = mysql.fetch_one("SELECT user_id FROM user WHERE user_id = %s", (new_user_id,))
+            if not user_exists:
+                return jsonify({
+                    'success': False,
+                    'error': f'Пользователь с ID {new_user_id} не найден'
+                }), 404
+            print(f"🔄 [СЕРВЕР] Перепривязка компьютера {computer_id} к пользователю {new_user_id}")
+        
         set_clause = ", ".join([f"{k} = %s" for k in update_fields.keys()])
         sql = f"UPDATE computer SET {set_clause} WHERE computer_id = %s"
         
         mysql.execute(sql, list(update_fields.values()) + [computer_id])
         
+        # Получаем обновленные данные
+        updated_computer = mysql.fetch_one("SELECT * FROM computer WHERE computer_id = %s", (computer_id,))
+        
         return jsonify({
             'success': True,
-            'message': 'Computer updated successfully'
+            'message': 'Computer updated successfully',
+            'data': updated_computer
         })
         
     except Exception as e:

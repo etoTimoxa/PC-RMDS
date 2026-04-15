@@ -8,9 +8,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from agent.auth_dialog import AuthDialog
+from admin.auth_dialog import AuthDialog
 from agent.remote_agent import RemoteAgentWindow
-from agent.admin_panel import AdminPanelWindow
+from admin.admin_panel import AdminPanelWindow
 from utils.dependencies import DependencyChecker
 from utils.platform_utils import ensure_dirs, get_platform_name, get_data_dir
 

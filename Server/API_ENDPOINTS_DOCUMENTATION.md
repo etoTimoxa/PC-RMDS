@@ -151,3 +151,159 @@ Content-Type: application/json
 - `404` - ресурс не найден
 - `409` - конфликт данных
 - `500` - внутренняя ошибка сервера
+
+---
+
+## 📋 Данные возвращаемые GET эндпоинтами
+
+### 💻 GET /api/computers/{id}
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `computer_id` | int | Уникальный ID компьютера |
+| `hostname` | string | Имя компьютера в сети |
+| `mac_address` | string | MAC адрес сетевого адаптера |
+| `computer_type` | string | Тип компьютера (client/server/laptop) |
+| `is_online` | bool | Статус онлайн |
+| `last_online` | datetime | Время последней активности |
+| `description` | string | Описание компьютера |
+| `location` | string | Физическое расположение |
+| `department` | string | Отдел |
+| `inventory_number` | string | Инвентарный номер |
+| `user_id` | int | ID владельца пользователя |
+| `os_id` | int | ID операционной системы |
+| `hardware_config_id` | int | ID конфигурации железа |
+| `created_at` | datetime | Дата регистрации компьютера |
+| `login` | string | Логин владельца |
+| `full_name` | string | Полное имя владельца |
+| `os_name` | string | Название операционной системы |
+| `os_version` | string | Версия операционной системы |
+| `cpu_model` | string | Модель процессора |
+| `cpu_cores` | int | Количество ядер процессора |
+| `ram_total` | float | Объем оперативной памяти ГБ |
+| `storage_total` | float | Объем диска ГБ |
+| `gpu_model` | string | Модель видеокарты |
+| `current_ip` | string | Последний известный IP адрес |
+
+---
+
+### 📊 GET /api/metrics/performance
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `timestamp` | datetime | Время замера |
+| `cpu_usage` | float | Загрузка процессора % |
+| `ram_usage` | float | Загрузка оперативной памяти % |
+| `ram_used` | float | Использовано памяти МБ |
+| `disk_usage` | float | Загрузка диска % |
+| `disk_read` | float | Скорость чтения с диска МБ/с |
+| `disk_write` | float | Скорость записи на диск МБ/с |
+| `network_rx` | float | Входящий трафик МБ/с |
+| `network_tx` | float | Исходящий трафик МБ/с |
+| `uptime` | int | Время работы системы в секундах |
+| `process_count` | int | Количество запущенных процессов |
+
+---
+
+### 📊 GET /api/metrics/average
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `period_from` | datetime | Начало периода |
+| `period_to` | datetime | Конец периода |
+| `avg_cpu` | float | Средняя загрузка CPU % |
+| `max_cpu` | float | Максимальная загрузка CPU % |
+| `min_cpu` | float | Минимальная загрузка CPU % |
+| `avg_ram` | float | Средняя загрузка RAM % |
+| `max_ram` | float | Максимальная загрузка RAM % |
+| `avg_disk` | float | Средняя загрузка диска % |
+| `total_network_rx` | float | Общий входящий трафик за период |
+| `total_network_tx` | float | Общий исходящий трафик за период |
+| `measurement_count` | int | Количество точек замера |
+
+---
+
+### 📊 GET /api/metrics/events
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `timestamp` | datetime | Время события |
+| `event_type` | string | Тип события |
+| `event_level` | string | Уровень критичности (info/warning/error/critical) |
+| `source` | string | Источник события |
+| `message` | string | Текст описания события |
+| `data` | object | Дополнительные данные события |
+
+---
+
+### 👤 GET /api/users/{id}
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `user_id` | int | Уникальный ID пользователя |
+| `login` | string | Логин |
+| `full_name` | string | Полное имя |
+| `email` | string | Email адрес |
+| `role_id` | int | ID роли |
+| `role_name` | string | Название роли |
+| `is_active` | bool | Статус активности |
+| `last_login` | datetime | Время последнего входа |
+| `created_at` | datetime | Дата регистрации |
+| `computer_count` | int | Количество компьютеров закрепленных за пользователем |
+
+---
+
+### 🕒 GET /api/sessions/{id}
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `session_id` | int | Уникальный ID сессии |
+| `computer_id` | int | ID компьютера |
+| `hostname` | string | Имя компьютера |
+| `user_id` | int | ID пользователя сессии |
+| `start_time` | datetime | Время начала сессии |
+| `end_time` | datetime | Время окончания сессии |
+| `last_activity` | datetime | Время последней активности |
+| `status_id` | int | ID статуса |
+| `status_name` | string | Название статуса |
+| `json_sent_count` | int | Количество отправленных метрик |
+| `error_count` | int | Количество ошибок за сессию |
+
+---
+
+### ⚙️ GET /api/hardware/{id}
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `config_id` | int | Уникальный ID конфигурации |
+| `cpu_model` | string | Модель процессора |
+| `cpu_cores` | int | Количество ядер процессора |
+| `ram_total` | float | Объем оперативной памяти ГБ |
+| `storage_total` | float | Объем дискового хранилища ГБ |
+| `gpu_model` | string | Модель видеокарты |
+| `motherboard` | string | Модель материнской платы |
+| `bios_version` | string | Версия BIOS |
+| `detected_at` | datetime | Дата первого обнаружения конфигурации |
+| `computer_count` | int | Количество компьютеров с такой конфигурацией |
+
+---
+
+### 📈 GET /api/dashboard/overview
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `total_computers` | int | Общее количество компьютеров в системе |
+| `online_computers` | int | Количество компьютеров онлайн |
+| `offline_computers` | int | Количество компьютеров оффлайн |
+| `total_users` | int | Количество активных пользователей |
+| `active_sessions` | int | Количество активных сессий сейчас |
+| `sessions_24h` | int | Количество сессий за последние 24 часа |
+| `by_operating_system` | array | Статистика по операционным системам |
+
+---
+
+### 🌐 GET /api/computers/{id}/ip-addresses
+Возвращает полную историю всех IP адресов которые использовал компьютер
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `computer_id` | int | ID компьютера |
+| `ip_addresses` | array | Массив записей истории IP |
+| `ip_address` | string | IPv4/IPv6 адрес |
+| `subnet_mask` | string | Маска подсети |
+| `gateway` | string | Адрес шлюза |
+| `detected_at` | datetime | Время когда этот IP был обнаружен |
+
+

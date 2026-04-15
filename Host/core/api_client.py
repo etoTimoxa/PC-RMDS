@@ -14,6 +14,7 @@ class APIClient:
     current_session_id: Optional[int] = None
     current_computer_id: Optional[int] = None
     auth_token: Optional[str] = None
+    _last_ip: Optional[str] = None  # Сохраняем последний IP
     
     @classmethod
     def get_connection(cls):
@@ -52,6 +53,80 @@ class APIClient:
         if APIClient.auth_token:
             headers['Authorization'] = f'Bearer {APIClient.auth_token}'
         return headers
+
+    @classmethod
+    def get(cls, url: str, params: dict = None, **kwargs):
+        """Общий метод GET запросов для совместимости"""
+        try:
+            full_url = API_BASE_URL + (url if url.startswith('/api') else f'/api{url}')
+            response = requests.get(
+                full_url,
+                headers=cls._headers(),
+                params=params,
+                timeout=10,
+                **kwargs
+            )
+            response.raise_for_status()
+            try:
+                result = response.json()
+                if not isinstance(result, dict):
+                    return {'success': False, 'data': []}
+                return result
+            except:
+                return {'success': False, 'data': []}
+        except Exception as e:
+            print(f"GET запрос ошибка {url}: {e}")
+            return {'success': False, 'data': []}
+
+    @classmethod
+    def post(cls, url: str, json: dict = None, **kwargs):
+        """Общий метод POST запросов для совместимости"""
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}{url}",
+                headers=cls._headers(),
+                json=json,
+                timeout=10,
+                **kwargs
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"POST запрос ошибка {url}: {e}")
+            return None
+
+    @classmethod
+    def put(cls, url: str, json: dict = None, **kwargs):
+        """Общий метод PUT запросов для совместимости"""
+        try:
+            response = requests.put(
+                f"{API_BASE_URL}{url}",
+                headers=cls._headers(),
+                json=json,
+                timeout=10,
+                **kwargs
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"PUT запрос ошибка {url}: {e}")
+            return None
+
+    @classmethod
+    def delete(cls, url: str, **kwargs):
+        """Общий метод DELETE запросов для совместимости"""
+        try:
+            response = requests.delete(
+                f"{API_BASE_URL}{url}",
+                headers=cls._headers(),
+                timeout=10,
+                **kwargs
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"DELETE запрос ошибка {url}: {e}")
+            return None
 
     # ==============================================
     # АВТОРИЗАЦИЯ / АУТЕНТИФИКАЦИЯ
@@ -114,6 +189,18 @@ class APIClient:
             return False
 
     @classmethod
+    def _get_ip_address(cls) -> str:
+        """Получает текущий IP адрес"""
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except:
+            return "Unknown"
+
+    @classmethod
     def register_computer_for_user(cls, user_id: int, force_rebind: bool = False) -> Optional[Dict[str, Any]]:
         """Регистрация компьютера для пользователя с полной информацией о железе"""
         try:
@@ -121,21 +208,16 @@ class APIClient:
             hostname = socket.gethostname()
             mac_address = HardwareIDGenerator.get_mac_address()
             
-            # Получаем ПОЛНУЮ информацию о железе
             hardware_info = HardwareIDGenerator.get_full_hardware_info()
+            current_ip = cls._get_ip_address()
             
-            # Получаем IP адрес
-            ip_address = cls._get_ip_address()
-            
-            # Формируем payload с правильными именами полей для сервера
             payload = {
                 "user_id": user_id,
                 "hardware_hash": hardware_id,
                 "hostname": hostname,
                 "mac_address": mac_address,
-                "ip_address": ip_address,
+                "ip_address": current_ip,
                 
-                # Поля для hardware_config
                 "cpu_model": hardware_info.get('cpu_model', 'Unknown'),
                 "cpu_cores": hardware_info.get('cpu_cores', 0),
                 "ram_total": hardware_info.get('ram_total', 0),
@@ -144,31 +226,21 @@ class APIClient:
                 "motherboard": hardware_info.get('motherboard', 'Unknown'),
                 "bios_version": hardware_info.get('bios_version', 'Unknown'),
                 
-                # Информация об ОС
                 "os_name": hardware_info.get('os_name', 'Unknown'),
                 "os_version": hardware_info.get('os_version', 'Unknown'),
                 "os_architecture": hardware_info.get('os_architecture', 'x64'),
                 
-                # Даты
                 "detected_at": hardware_info.get('detected_at'),
                 "updated_at": hardware_info.get('updated_at'),
                 
                 "force_rebind": force_rebind
             }
             
-            # Логируем для отладки
             print(f"🔍 Регистрация компьютера:")
             print(f"   user_id: {user_id}")
             print(f"   hostname: {hostname}")
             print(f"   mac_address: {mac_address}")
-            print(f"   CPU Model: {payload['cpu_model']}")
-            print(f"   CPU Cores: {payload['cpu_cores']}")
-            print(f"   RAM Total: {payload['ram_total']} GB")
-            print(f"   Storage Total: {payload['storage_total']} GB")
-            print(f"   GPU Model: {payload['gpu_model']}")
-            print(f"   Motherboard: {payload['motherboard']}")
-            print(f"   BIOS Version: {payload['bios_version']}")
-            print(f"   OS: {payload['os_name']} {payload['os_version']}")
+            print(f"   current_ip: {current_ip}")
             
             response = requests.post(
                 f"{API_BASE_URL}/api/computers/register",
@@ -182,8 +254,7 @@ class APIClient:
             if data.get('success'):
                 print(f"✅ Компьютер успешно зарегистрирован!")
                 print(f"   computer_id: {data['data'].get('computer_id')}")
-                print(f"   hardware_config_id: {data['data'].get('hardware_config_id')}")
-                print(f"   os_id: {data['data'].get('os_id')}")
+                cls._last_ip = current_ip
                 return data['data']
             return None
         except Exception as e:
@@ -192,34 +263,54 @@ class APIClient:
                 print(f"   Ответ сервера: {e.response.text}")
             return None
     
-    @staticmethod
-    def _get_ip_address() -> str:
-        """Получает текущий IP адрес"""
+    @classmethod
+    def update_computer_ip(cls, computer_id: int, ip_address: str) -> bool:
+        """Обновляет IP адрес компьютера, только если он изменился"""
+        if cls._last_ip == ip_address:
+            print(f"IP адрес не изменился: {ip_address}, пропускаем")
+            return True
+        
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except:
-            return "Unknown"
+            print(f"🔄 Обновление IP адреса компьютера {computer_id}: {ip_address}")
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/{computer_id}/ip",
+                json={"ip_address": ip_address},
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            cls._last_ip = ip_address
+            print(f"✅ IP адрес обновлен")
+            return True
+        except Exception as e:
+            print(f"❌ Ошибка обновления IP: {e}")
+            return False
     
-    @staticmethod
-    def _get_ram_total() -> float:
+    @classmethod
+    def rebind_computer(cls, computer_id: int, user_id: int, computer_type: str) -> Optional[Dict[str, Any]]:
+        """Перепривязывает компьютер к другому пользователю"""
         try:
-            import psutil
-            return round(psutil.virtual_memory().total / (1024**3), 2)
-        except:
-            return 0.0
-    
-    @staticmethod
-    def _get_storage_total() -> float:
-        try:
-            import psutil
-            return round(psutil.disk_usage('/').total / (1024**3), 2)
-        except:
-            return 0.0
-    
+            print(f"🔄 Перепривязка компьютера {computer_id} к пользователю {user_id} (тип: {computer_type})")
+            
+            response = cls.put(
+                f"/api/computers/{computer_id}",
+                json={
+                    "user_id": user_id,
+                    "computer_type": computer_type
+                }
+            )
+            
+            if response and response.get('success'):
+                print(f"✅ Компьютер успешно перепривязан")
+                return response.get('data')
+            else:
+                error = response.get('error', 'Неизвестная ошибка') if response else 'Нет ответа от сервера'
+                print(f"❌ Ошибка перепривязки: {error}")
+                return None
+        except Exception as e:
+            print(f"❌ Ошибка перепривязки: {e}")
+            return None
+
     # ==============================================
     # КОМПЬЮТЕРЫ
     # ==============================================
@@ -269,6 +360,28 @@ class APIClient:
         except Exception as e:
             print(f"Ошибка обновления статуса: {e}")
             return False
+
+    @classmethod
+    def update_computer(cls, computer_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Обновление информации о компьютере (в том числе смена владельца)"""
+        try:
+            response = requests.put(
+                f"{API_BASE_URL}/api/computers/{computer_id}",
+                json=data,
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            result = response.json()
+            if result.get('success'):
+                print(f"✅ Компьютер {computer_id} успешно обновлен")
+                return result.get('data')
+            return None
+        except Exception as e:
+            print(f"❌ Ошибка обновления компьютера {computer_id}: {e}")
+            if hasattr(e, 'response') and e.response:
+                print(f"   Ответ сервера: {e.response.text}")
+            return None
     
     @classmethod
     def get_computer_ip_addresses(cls, computer_id: int) -> Optional[List[Dict[str, Any]]]:

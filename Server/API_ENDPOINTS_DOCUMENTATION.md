@@ -39,7 +39,7 @@ GET /api/metrics/average?hostname=WORKSTATION-07&from=2026-04-10&to=2026-04-14
 
 #### 🔹 Получить аномалии с кастомным порогом:
 ```
-GET /api/metrics/anomalies?computer_id=45&from=2026-04-01&to=2026-04-14&cpu_threshold=85&ram_threshold=95
+GET /api/
 ```
 
 ---
@@ -57,7 +57,7 @@ GET /api/metrics/anomalies?computer_id=45&from=2026-04-01&to=2026-04-14&cpu_thre
 | GET | `/api/computers/{id}/sessions` | Получить историю сессий компьютера | `limit` |
 | GET | `/api/computers/{id}/ip-addresses` | Получить историю IP адресов компьютера | |
 
-### ✨ Пример обновления информации о компьютере:
+metrics/anomalies?computer_id=45&from=2026-04-01&to=2026-04-14&cpu_threshold=85&ram_threshold=95### ✨ Пример обновления информации о компьютере:
 ```http
 PUT /api/computers/123
 Content-Type: application/json

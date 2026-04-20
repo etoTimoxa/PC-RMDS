@@ -60,7 +60,7 @@ def register():
 
         user_id = mysql.execute("""
             INSERT INTO user (login, password_hash, full_name, role_id, is_active, created_at)
-            VALUES (%s, %s, %s, 2, 1, NOW())
+            VALUES (%s, %s, %s, 1, 1, NOW())
         """, (
             data['login'],
             password_hash,

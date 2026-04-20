@@ -926,3 +926,25 @@ def change_password(user_id):
             'success': False,
             'error': str(e)
         }), 500
+    
+@computers_bp.route('/groups/<int:group_id>', methods=['GET'])
+def get_computer_group_by_id(group_id):
+    """Получить группу по ID"""
+    try:
+        group = mysql.fetch_one("SELECT * FROM computer_group WHERE group_id = %s", (group_id,))
+        
+        if not group:
+            return jsonify({
+                'success': False,
+                'error': 'Group not found'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'data': group
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

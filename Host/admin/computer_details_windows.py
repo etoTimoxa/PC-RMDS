@@ -7,9 +7,10 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QDateEdit, QGroupBox, QApplication, QComboBox,
                              QGridLayout, QScrollArea, QMessageBox,
                              QCalendarWidget, QDialog, QDialogButtonBox,
-                             QProgressBar)
+                             QProgressBar, QLineEdit, QTextEdit, QFormLayout,
+                             QSpinBox, QDoubleSpinBox)
 from PyQt6.QtCore import Qt, QDate, pyqtSignal, QTimer
-from PyQt6.QtGui import QIcon, QPixmap, QColor
+from PyQt6.QtGui import QIcon, QPixmap, QColor, QFont
 
 from core.api_client import APIClient
 from .styles import get_main_window_stylesheet
@@ -24,6 +25,21 @@ try:
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
     print("Matplotlib не установлен. Графики будут недоступны.")
+
+# Попытка импортировать reportlab для PDF
+try:
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch, cm
+    from reportlab.pdfgen import canvas
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    print("ReportLab не установлен. Экспорт в PDF будет недоступен.")
 
 
 def get_app_icon() -> QIcon:
@@ -103,6 +119,142 @@ class DiskSpaceWidget(QWidget):
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("Нет данных")
             self.info_label.setText("Нет данных о диске")
+
+
+class EditComputerDialog(QDialog):
+    """Диалог для редактирования информации о компьютере"""
+    
+    def __init__(self, computer_data, computer_id, parent=None):
+        super().__init__(parent)
+        self.computer_data = computer_data
+        self.computer_id = computer_id
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("Редактирование компьютера")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(self)
+        
+        # Форма
+        form_layout = QFormLayout()
+        
+        # Hostname
+        self.hostname_edit = QLineEdit()
+        self.hostname_edit.setText(self.computer_data.get('hostname', ''))
+        form_layout.addRow("Hostname:", self.hostname_edit)
+        
+        # Описание
+        self.description_edit = QTextEdit()
+        self.description_edit.setText(self.computer_data.get('description', ''))
+        self.description_edit.setMaximumHeight(80)
+        form_layout.addRow("Описание:", self.description_edit)
+        
+        # Расположение
+        self.location_edit = QLineEdit()
+        self.location_edit.setText(self.computer_data.get('location', ''))
+        form_layout.addRow("Расположение:", self.location_edit)
+        
+        # Отдел
+        self.department_edit = QLineEdit()
+        self.department_edit.setText(self.computer_data.get('department', ''))
+        form_layout.addRow("Отдел:", self.department_edit)
+        
+        # Инвентарный номер
+        self.inventory_edit = QLineEdit()
+        self.inventory_edit.setText(self.computer_data.get('inventory_number', ''))
+        form_layout.addRow("Инвентарный номер:", self.inventory_edit)
+        
+        # Тип компьютера
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["client", "admin", "server"])
+        current_type = self.computer_data.get('computer_type', 'client')
+        index = self.type_combo.findText(current_type)
+        if index >= 0:
+            self.type_combo.setCurrentIndex(index)
+        form_layout.addRow("Тип:", self.type_combo)
+        
+        layout.addLayout(form_layout)
+        
+        # Кнопки
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+    
+    def save(self):
+        """Сохраняет изменения"""
+        data = {}
+        
+        if self.hostname_edit.text() != self.computer_data.get('hostname', ''):
+            data['hostname'] = self.hostname_edit.text()
+        
+        if self.description_edit.toPlainText() != self.computer_data.get('description', ''):
+            data['description'] = self.description_edit.toPlainText()
+        
+        if self.location_edit.text() != self.computer_data.get('location', ''):
+            data['location'] = self.location_edit.text()
+        
+        if self.department_edit.text() != self.computer_data.get('department', ''):
+            data['department'] = self.department_edit.text()
+        
+        if self.inventory_edit.text() != self.computer_data.get('inventory_number', ''):
+            data['inventory_number'] = self.inventory_edit.text()
+        
+        if self.type_combo.currentText() != self.computer_data.get('computer_type', 'client'):
+            data['computer_type'] = self.type_combo.currentText()
+        
+        if data:
+            self.accept()
+            self.update_data = data
+        else:
+            self.reject()
+    
+    def get_update_data(self):
+        return getattr(self, 'update_data', {})
+
+
+class EditSessionDialog(QDialog):
+    """Диалог для просмотра информации о сессии"""
+    
+    def __init__(self, session_data, parent=None):
+        super().__init__(parent)
+        self.session_data = session_data
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle(f"Информация о сессии #{self.session_data.get('session_id', '')}")
+        self.setModal(True)
+        self.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(self)
+        
+        # Информация о сессии
+        info_group = QGroupBox("Детали сессии")
+        info_layout = QFormLayout(info_group)
+        
+        info_layout.addRow("ID сессии:", QLabel(str(self.session_data.get('session_id', '—'))))
+        info_layout.addRow("Токен:", QLabel(self.session_data.get('session_token', '—')[:50] + "..."))
+        info_layout.addRow("Статус:", QLabel(self.session_data.get('status_name', '—')))
+        info_layout.addRow("Начало:", QLabel(str(self.session_data.get('start_time', '—'))[:19]))
+        
+        end_time = self.session_data.get('end_time')
+        if end_time:
+            info_layout.addRow("Окончание:", QLabel(str(end_time)[:19]))
+        else:
+            info_layout.addRow("Окончание:", QLabel("Активна"))
+        
+        info_layout.addRow("Последняя активность:", QLabel(str(self.session_data.get('last_activity', '—'))[:19]))
+        info_layout.addRow("Отправлено JSON:", QLabel(str(self.session_data.get('json_sent_count', 0))))
+        info_layout.addRow("Ошибок:", QLabel(str(self.session_data.get('error_count', 0))))
+        
+        layout.addWidget(info_group)
+        
+        # Кнопка закрытия
+        close_btn = QPushButton("Закрыть")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
 
 
 class DateRangeDialog(QDialog):
@@ -386,6 +538,7 @@ class ComputerDetailsWindow(QMainWindow):
         self.event_statistics = {}
         self.all_events = []
         self.anomalies = []
+        self.sessions = []
         
         self.init_ui()
         self.load_computer_info()
@@ -415,7 +568,7 @@ class ComputerDetailsWindow(QMainWindow):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #ff8c42, stop:1 #e67e22);
                 border-radius: 12px;
-                padding: 15px;
+                padding: 5px;
             }
         """)
         header_layout = QVBoxLayout(header_frame)
@@ -429,6 +582,22 @@ class ComputerDetailsWindow(QMainWindow):
         self.status_label.setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(self.status_label)
+        
+        # Кнопка редактирования
+        edit_btn = QPushButton("✎ Редактировать")
+        edit_btn.setFixedWidth(120)
+        edit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255,255,255,0.2);
+                border-radius: 6px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255,255,255,0.3);
+            }
+        """)
+        edit_btn.clicked.connect(self.edit_computer_info)
+        header_layout.addWidget(edit_btn, alignment=Qt.AlignmentFlag.AlignRight)
         
         main_layout.addWidget(header_frame)
         
@@ -506,6 +675,232 @@ class ComputerDetailsWindow(QMainWindow):
     def connect_signals(self):
         self.date_range.periodChanged.connect(self.refresh_all_data)
     
+    def edit_computer_info(self):
+        """Открывает диалог редактирования информации о компьютере"""
+        if not self.computer_id:
+            QMessageBox.warning(self, "Ошибка", "ID компьютера не определен")
+            return
+        
+        dialog = EditComputerDialog(self.current_data, self.computer_id, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            update_data = dialog.get_update_data()
+            if update_data:
+                self.save_computer_info(update_data)
+    
+    def save_computer_info(self, update_data):
+        """Сохраняет изменения информации о компьютере"""
+        try:
+            result = APIClient.update_computer(self.computer_id, update_data)
+            if result:
+                QMessageBox.information(self, "Успех", "Информация о компьютере обновлена")
+                self.load_computer_info()
+                self.refresh_all_data()
+            else:
+                QMessageBox.warning(self, "Ошибка", "Не удалось обновить информацию")
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка при обновлении: {e}")
+    
+    def export_to_pdf(self):
+        """Экспортирует отчет в PDF"""
+        if not REPORTLAB_AVAILABLE:
+            QMessageBox.warning(self, "Ошибка", "Библиотека ReportLab не установлена.\nУстановите: pip install reportlab")
+            return
+        
+        try:
+            # Выбираем файл для сохранения
+            from PyQt6.QtWidgets import QFileDialog
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, "Сохранить отчет", 
+                f"report_{self.hostname}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                "PDF files (*.pdf)"
+            )
+            
+            if not file_path:
+                return
+            
+            period = self.date_range.get_period()
+            
+            # Создаем PDF документ
+            doc = SimpleDocTemplate(file_path, pagesize=A4, 
+                                   rightMargin=72, leftMargin=72,
+                                   topMargin=72, bottomMargin=72)
+            
+            story = []
+            
+            # Стили
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=16,
+                textColor=colors.HexColor('#ff8c42'),
+                alignment=1  # Center
+            )
+            heading_style = ParagraphStyle(
+                'CustomHeading',
+                parent=styles['Heading2'],
+                fontSize=12,
+                textColor=colors.HexColor('#2c3e50'),
+                spaceAfter=10
+            )
+            normal_style = styles['Normal']
+            
+            # Заголовок
+            title = Paragraph(f"Отчет по компьютеру: {self.hostname}", title_style)
+            story.append(title)
+            story.append(Spacer(1, 0.2*inch))
+            
+            # Период
+            period_text = Paragraph(f"Период: {period['from']} — {period['to']}", normal_style)
+            story.append(period_text)
+            story.append(Spacer(1, 0.3*inch))
+            
+            # Информация о компьютере
+            story.append(Paragraph("Информация о компьютере", heading_style))
+            
+            computer_info_data = [
+                ["Характеристика", "Значение"],
+                ["Hostname", self.current_data.get('hostname', '—')],
+                ["IP адрес", self.current_data.get('current_ip', '—')],
+                ["Пользователь", self.current_data.get('login', '—')],
+                ["MAC адрес", self.current_data.get('mac_address', '—')],
+                ["Тип", self.current_data.get('computer_type', '—')],
+                ["ОС", f"{self.current_data.get('os_name', '—')} {self.current_data.get('os_version', '—')}"],
+                ["CPU", self.current_data.get('cpu_model', '—')],
+                ["RAM", f"{self.current_data.get('ram_total', '—')} GB"],
+                ["Диск", f"{self.current_data.get('storage_total', '—')} GB"],
+                ["GPU", self.current_data.get('gpu_model', '—')],
+                ["Описание", self.current_data.get('description', '—')],
+                ["Расположение", self.current_data.get('location', '—')],
+                ["Отдел", self.current_data.get('department', '—')],
+            ]
+            
+            computer_table = Table(computer_info_data, colWidths=[2*inch, 3*inch])
+            computer_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#ff8c42')),
+                ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
+                ('ALIGN', (0, 0), (1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f8f9fa')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(computer_table)
+            story.append(Spacer(1, 0.3*inch))
+            
+            # Средние метрики
+            story.append(Paragraph("Средние показатели за период", heading_style))
+            
+            # Получаем средние метрики
+            try:
+                result = APIClient.get('/metrics/average', params={
+                    'computer_id': self.computer_id,
+                    'from': period['from'],
+                    'to': period['to']
+                })
+                
+                if result and result.get('success'):
+                    avg_data = result.get('data', {}).get('average', {})
+                    
+                    metrics_data = [
+                        ["Показатель", "Значение"],
+                        ["CPU, %", f"{avg_data.get('cpu_usage', '—')}"],
+                        ["RAM, %", f"{avg_data.get('ram_usage', '—')}"],
+                        ["Disk, %", f"{avg_data.get('disk_usage', '—')}"],
+                        ["Network отправлено, MB", f"{avg_data.get('network_sent_mb', '—')}"],
+                        ["Network получено, MB", f"{avg_data.get('network_recv_mb', '—')}"],
+                    ]
+                    
+                    metrics_table = Table(metrics_data, colWidths=[2*inch, 3*inch])
+                    metrics_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#ff8c42')),
+                        ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
+                        ('ALIGN', (0, 0), (1, 0), 'CENTER'),
+                        ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (1, 0), 10),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 9),
+                    ]))
+                    story.append(metrics_table)
+                    story.append(Spacer(1, 0.3*inch))
+            except Exception as e:
+                print(f"Ошибка получения средних метрик для PDF: {e}")
+            
+            # События
+            story.append(Paragraph("Статистика событий", heading_style))
+            
+            if self.event_statistics:
+                events_data = [["Тип события", "Количество"]]
+                for event_type, count in self.event_statistics.items():
+                    events_data.append([event_type, str(count)])
+                
+                events_table = Table(events_data, colWidths=[2.5*inch, 2.5*inch])
+                events_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#ff8c42')),
+                    ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
+                    ('ALIGN', (0, 0), (1, 0), 'CENTER'),
+                    ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (1, 0), 10),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 1), (-1, -1), 9),
+                ]))
+                story.append(events_table)
+            else:
+                story.append(Paragraph("Нет данных о событиях за выбранный период", normal_style))
+            
+            story.append(Spacer(1, 0.3*inch))
+            
+            # Аномалии
+            story.append(Paragraph("Аномалии", heading_style))
+            
+            if self.anomalies:
+                anomalies_data = [["Время", "CPU, %", "RAM, %", "Тип"]]
+                for anomaly in self.anomalies[:50]:  # Ограничиваем 50 записями
+                    cpu = anomaly.get('cpu_usage', '—')
+                    ram = anomaly.get('ram_usage', '—')
+                    anomaly_type = []
+                    if cpu and isinstance(cpu, (int, float)) and cpu > 90:
+                        anomaly_type.append("CPU")
+                    if ram and isinstance(ram, (int, float)) and ram > 90:
+                        anomaly_type.append("RAM")
+                    anomalies_data.append([
+                        anomaly.get('timestamp', '')[:19],
+                        f"{cpu:.1f}" if cpu else "—",
+                        f"{ram:.1f}" if ram else "—",
+                        ", ".join(anomaly_type) if anomaly_type else "Высокая нагрузка"
+                    ])
+                
+                anomalies_table = Table(anomalies_data, colWidths=[1.5*inch, 1*inch, 1*inch, 1.5*inch])
+                anomalies_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 9),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ]))
+                story.append(anomalies_table)
+            else:
+                story.append(Paragraph("Нет аномалий за выбранный период", normal_style))
+            
+            # Создаем PDF
+            doc.build(story)
+            
+            QMessageBox.information(self, "Успех", f"Отчет сохранен в:\n{file_path}")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Ошибка при создании PDF: {e}")
+    
     def load_computer_info(self):
         try:
             result = APIClient.get('/computers', params={'search': self.hostname})
@@ -558,6 +953,10 @@ class ComputerDetailsWindow(QMainWindow):
         bios_version = data.get('bios_version', 'Unknown')
         last_online = data.get('last_online', 'N/A')
         created_at = data.get('created_at', 'N/A')
+        description = data.get('description', '—')
+        location = data.get('location', '—')
+        department = data.get('department', '—')
+        inventory_number = data.get('inventory_number', '—')
         
         if last_online and isinstance(last_online, str):
             last_online = last_online[:19]
@@ -605,10 +1004,24 @@ class ComputerDetailsWindow(QMainWindow):
                 <td style="padding: 8px;">{bios_version}</td>
             </tr>
             <tr>
+                <td style="padding: 8px;"><b>Описание:</b></td>
+                <td style="padding: 8px;" colspan="3">{description}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><b>Расположение:</b></td>
+                <td style="padding: 8px;">{location}</td>
+                <td style="padding: 8px;"><b>Отдел:</b></td>
+                <td style="padding: 8px;">{department}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px;"><b>Инв. номер:</b></td>
+                <td style="padding: 8px;">{inventory_number}</td>
                 <td style="padding: 8px;"><b>Создан:</b></td>
                 <td style="padding: 8px;">{created_at}</td>
+            </tr>
+            <tr>
                 <td style="padding: 8px;"><b>Последний вход:</b></td>
-                <td style="padding: 8px;">{last_online}</td>
+                <td style="padding: 8px;" colspan="3">{last_online}</td>
             </tr>
         </table>
         """
@@ -841,10 +1254,11 @@ class ComputerDetailsWindow(QMainWindow):
         layout = QVBoxLayout(self.tab_sessions)
         
         self.sessions_table = QTableWidget()
-        self.sessions_table.setColumnCount(4)
-        self.sessions_table.setHorizontalHeaderLabels(["Начало", "Конец", "Статус", "Длительность"])
+        self.sessions_table.setColumnCount(5)
+        self.sessions_table.setHorizontalHeaderLabels(["ID", "Начало", "Конец", "Статус", "Длительность"])
         self.sessions_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.sessions_table.setAlternatingRowColors(True)
+        self.sessions_table.cellDoubleClicked.connect(self.open_session_details)
         
         layout.addWidget(self.sessions_table)
     
@@ -911,7 +1325,7 @@ class ComputerDetailsWindow(QMainWindow):
         # Для метрик - выбор показателя
         control_layout.addWidget(QLabel("Показатель:"), 0, 2)
         self.report_metric = QComboBox()
-        self.report_metric.addItems(["CPU, %", "RAM, %", "Disk, %", "Network, MB/s"])
+        self.report_metric.addItems(["Все метрики", "CPU, %", "RAM, %", "Disk, %", "Network, MB/s"])
         self.report_metric.setMinimumWidth(120)
         control_layout.addWidget(self.report_metric, 0, 3)
         
@@ -923,7 +1337,9 @@ class ComputerDetailsWindow(QMainWindow):
         self.report_view_type.currentTextChanged.connect(self.on_report_view_type_changed)
         control_layout.addWidget(self.report_view_type, 1, 1)
         
-        # Кнопка формирования
+        # Кнопки
+        button_layout = QHBoxLayout()
+        
         self.generate_btn = QPushButton("Сформировать отчет")
         self.generate_btn.setMinimumHeight(35)
         self.generate_btn.setMinimumWidth(150)
@@ -938,7 +1354,26 @@ class ComputerDetailsWindow(QMainWindow):
             }
         """)
         self.generate_btn.clicked.connect(self.generate_report)
-        control_layout.addWidget(self.generate_btn, 1, 2, 1, 2)
+        button_layout.addWidget(self.generate_btn)
+        
+        # Кнопка экспорта в PDF
+        self.export_pdf_btn = QPushButton("📄 Экспорт в PDF")
+        self.export_pdf_btn.setMinimumHeight(35)
+        self.export_pdf_btn.setMinimumWidth(150)
+        self.export_pdf_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #219a52;
+            }
+        """)
+        self.export_pdf_btn.clicked.connect(self.export_to_pdf)
+        button_layout.addWidget(self.export_pdf_btn)
+        
+        control_layout.addLayout(button_layout, 1, 2, 1, 2)
         
         # Настройка видимости
         self.on_report_data_type_changed(self.report_data_type.currentText())
@@ -962,12 +1397,19 @@ class ComputerDetailsWindow(QMainWindow):
         
         layout.addWidget(self.report_area)
     
+    def open_session_details(self, row, column):
+        """Открывает диалог с деталями сессии"""
+        if not self.sessions or row >= len(self.sessions):
+            return
+        
+        session = self.sessions[row]
+        dialog = EditSessionDialog(session, self)
+        dialog.exec()
+    
     def on_report_data_type_changed(self, data_type):
         """Обработчик изменения типа данных"""
-        # Показываем/скрываем выбор показателя для метрик
         self.report_metric.setVisible(data_type == "Метрики")
         
-        # Для событий и аномалий меняем доступные виды
         if data_type == "События":
             current_view = self.report_view_type.currentText()
             self.report_view_type.clear()
@@ -988,7 +1430,6 @@ class ComputerDetailsWindow(QMainWindow):
                 self.report_view_type.setCurrentText("Таблица")
     
     def on_report_view_type_changed(self, view_type):
-        """Обработчик изменения вида отчета"""
         pass
     
     def refresh_all_data(self):
@@ -1003,7 +1444,7 @@ class ComputerDetailsWindow(QMainWindow):
         self.load_events()
         self.load_sessions()
         self.load_anomalies()
-        self.load_disk_space()  # Диск обновляется вместе с остальными данными
+        self.load_disk_space()
     
     def load_overview_summary(self):
         if not self.computer_id:
@@ -1125,7 +1566,6 @@ class ComputerDetailsWindow(QMainWindow):
                 data = result.get('data', {})
                 self.event_statistics = data.get('statistics', {})
                 
-                # Загружаем сырые события для фильтрации
                 events_result = APIClient.get('/metrics/events', params={
                     'computer_id': self.computer_id,
                     'from': period['from'],
@@ -1218,7 +1658,8 @@ class ComputerDetailsWindow(QMainWindow):
             sessions = []
             if result and result.get('success'):
                 data = result.get('data', {})
-                sessions = data.get('sessions', [])
+                self.sessions = data.get('sessions', [])
+                sessions = self.sessions
             
             if sessions:
                 filtered_sessions = []
@@ -1233,6 +1674,7 @@ class ComputerDetailsWindow(QMainWindow):
                 self.sessions_table.setRowCount(len(filtered_sessions))
                 
                 for row, session in enumerate(filtered_sessions):
+                    session_id = session.get('session_id', '—')
                     start_time_str = session.get('start_time', '')
                     start_time = self.parse_datetime(start_time_str)
                     start_display = start_time.strftime("%Y-%m-%d %H:%M:%S") if start_time else str(start_time_str)[:19] if start_time_str else "—"
@@ -1263,10 +1705,11 @@ class ComputerDetailsWindow(QMainWindow):
                         else:
                             duration = f"{seconds}с"
                     
-                    self.sessions_table.setItem(row, 0, QTableWidgetItem(start_display))
-                    self.sessions_table.setItem(row, 1, QTableWidgetItem(end_display))
-                    self.sessions_table.setItem(row, 2, QTableWidgetItem(status_display))
-                    self.sessions_table.setItem(row, 3, QTableWidgetItem(duration))
+                    self.sessions_table.setItem(row, 0, QTableWidgetItem(str(session_id)))
+                    self.sessions_table.setItem(row, 1, QTableWidgetItem(start_display))
+                    self.sessions_table.setItem(row, 2, QTableWidgetItem(end_display))
+                    self.sessions_table.setItem(row, 3, QTableWidgetItem(status_display))
+                    self.sessions_table.setItem(row, 4, QTableWidgetItem(duration))
                 
                 self.statusBar().showMessage(f"Загружено {len(filtered_sessions)} сессий за период", 3000)
             else:
@@ -1331,10 +1774,8 @@ class ComputerDetailsWindow(QMainWindow):
         view_type = self.report_view_type.currentText()
         period = self.date_range.get_period()
         
-        # Очищаем область отчета
         self.clear_report_area()
         
-        # Заголовок отчета
         title = QLabel(f"Отчет: {data_type}\nПериод: {period['from']} — {period['to']}")
         title.setStyleSheet("""
             font-size: 18px;
@@ -1354,14 +1795,12 @@ class ComputerDetailsWindow(QMainWindow):
             self.generate_anomalies_report_view(view_type, period)
     
     def clear_report_area(self):
-        """Очищает область отчета"""
         while self.report_container_layout.count():
             child = self.report_container_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
     
     def generate_metrics_report_view(self, view_type, period):
-        """Генерирует отчет по метрикам"""
         if not self.current_metrics:
             error_label = QLabel("Нет данных метрик за выбранный период")
             error_label.setStyleSheet("color: red; padding: 20px;")
@@ -1369,24 +1808,71 @@ class ComputerDetailsWindow(QMainWindow):
             self.report_container_layout.addWidget(error_label)
             return
         
-        metric_map = {
-            "CPU, %": ("cpu_usage", "CPU, %"),
-            "RAM, %": ("ram_usage", "RAM, %"),
-            "Disk, %": ("disk_usage", "Disk, %"),
-            "Network, MB/s": ("network", "Network, MB/s")
-        }
-        
-        metric_key, metric_name = metric_map.get(self.report_metric.currentText(), ("cpu_usage", "CPU, %"))
+        selected_metric = self.report_metric.currentText()
         
         if view_type == "Таблица":
-            self.create_metrics_table(metric_key, metric_name, period)
+            if selected_metric == "Все метрики":
+                self.create_metrics_full_table(period)
+            else:
+                metric_map = {
+                    "CPU, %": ("cpu_usage", "CPU, %"),
+                    "RAM, %": ("ram_usage", "RAM, %"),
+                    "Disk, %": ("disk_usage", "Disk, %"),
+                    "Network, MB/s": ("network", "Network, MB/s")
+                }
+                metric_key, metric_name = metric_map.get(selected_metric, ("cpu_usage", "CPU, %"))
+                self.create_metrics_single_table(metric_key, metric_name, period)
         elif view_type == "Гистограмма":
-            self.create_metrics_histogram(metric_key, metric_name, period)
+            if selected_metric == "Все метрики":
+                self.create_metrics_all_histograms(period)
+            else:
+                metric_map = {
+                    "CPU, %": ("cpu_usage", "CPU, %"),
+                    "RAM, %": ("ram_usage", "RAM, %"),
+                    "Disk, %": ("disk_usage", "Disk, %"),
+                    "Network, MB/s": ("network", "Network, MB/s")
+                }
+                metric_key, metric_name = metric_map.get(selected_metric, ("cpu_usage", "CPU, %"))
+                self.create_metrics_single_histogram(metric_key, metric_name, period)
         elif view_type == "Линейный график":
-            self.create_metrics_line_chart(metric_key, metric_name, period)
+            if selected_metric == "Все метрики":
+                self.create_metrics_all_line_charts(period)
+            else:
+                metric_map = {
+                    "CPU, %": ("cpu_usage", "CPU, %"),
+                    "RAM, %": ("ram_usage", "RAM, %"),
+                    "Disk, %": ("disk_usage", "Disk, %"),
+                    "Network, MB/s": ("network", "Network, MB/s")
+                }
+                metric_key, metric_name = metric_map.get(selected_metric, ("cpu_usage", "CPU, %"))
+                self.create_metrics_single_line_chart(metric_key, metric_name, period)
     
-    def create_metrics_table(self, metric_key, metric_name, period):
-        """Создает таблицу метрик"""
+    def create_metrics_full_table(self, period):
+        table = QTableWidget()
+        table.setColumnCount(6)
+        table.setHorizontalHeaderLabels(["Время", "CPU, %", "RAM, %", "RAM, GB", "Disk, %", "Network, MB/s"])
+        table.setRowCount(len(self.current_metrics))
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.setAlternatingRowColors(True)
+        
+        for row, metric in enumerate(self.current_metrics):
+            timestamp = metric.get('timestamp', '')[:19]
+            cpu = metric.get('cpu_usage')
+            ram_percent = metric.get('ram_usage')
+            ram_gb = metric.get('ram_used_gb')
+            disk = metric.get('disk_usage')
+            network = metric.get('network_sent_mb', 0) + metric.get('network_recv_mb', 0)
+            
+            table.setItem(row, 0, QTableWidgetItem(timestamp))
+            table.setItem(row, 1, QTableWidgetItem(f"{cpu:.1f}" if cpu else "—"))
+            table.setItem(row, 2, QTableWidgetItem(f"{ram_percent:.1f}" if ram_percent else "—"))
+            table.setItem(row, 3, QTableWidgetItem(f"{ram_gb:.1f}" if ram_gb else "—"))
+            table.setItem(row, 4, QTableWidgetItem(f"{disk:.1f}" if disk else "—"))
+            table.setItem(row, 5, QTableWidgetItem(f"{network:.2f}" if network else "—"))
+        
+        self.report_container_layout.addWidget(table)
+    
+    def create_metrics_single_table(self, metric_key, metric_name, period):
         table = QTableWidget()
         table.setColumnCount(2)
         table.setHorizontalHeaderLabels(["Время", metric_name])
@@ -1408,15 +1894,12 @@ class ComputerDetailsWindow(QMainWindow):
             table.setItem(row, 1, QTableWidgetItem(value_str))
         
         self.report_container_layout.addWidget(table)
-        self.add_metrics_stats(metric_key, metric_name)
     
-    def create_metrics_histogram(self, metric_key, metric_name, period):
-        """Создает гистограмму метрик (усредненные значения по дням)"""
+    def create_metrics_single_histogram(self, metric_key, metric_name, period):
         if not MATPLOTLIB_AVAILABLE:
             self.show_matplotlib_error()
             return
         
-        # Группируем по дням
         daily_data = {}
         for m in self.current_metrics:
             date_str = m.get('timestamp', '')[:10]
@@ -1438,7 +1921,6 @@ class ComputerDetailsWindow(QMainWindow):
                 'value': avg_value
             })
         
-        # Создаем фигуру
         figure = Figure(figsize=(10, 5), facecolor='white')
         canvas = FigureCanvas(figure)
         ax = figure.add_subplot(111)
@@ -1455,7 +1937,6 @@ class ComputerDetailsWindow(QMainWindow):
         ax.grid(True, alpha=0.3, axis='y')
         ax.set_facecolor('#f8f9fa')
         
-        # Добавляем значения на столбцы
         for bar, value in zip(bars, values):
             height = bar.get_height()
             ax.annotate(f'{value:.1f}',
@@ -1467,10 +1948,51 @@ class ComputerDetailsWindow(QMainWindow):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
-        self.add_metrics_stats(metric_key, metric_name)
     
-    def create_metrics_line_chart(self, metric_key, metric_name, period):
-        """Создает линейный график метрик"""
+    def create_metrics_all_histograms(self, period):
+        if not MATPLOTLIB_AVAILABLE:
+            self.show_matplotlib_error()
+            return
+        
+        cpu_values = [m.get('cpu_usage', 0) for m in self.current_metrics if m.get('cpu_usage') is not None]
+        ram_values = [m.get('ram_usage', 0) for m in self.current_metrics if m.get('ram_usage') is not None]
+        disk_values = [m.get('disk_usage', 0) for m in self.current_metrics if m.get('disk_usage') is not None]
+        network_values = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) 
+                         for m in self.current_metrics if m.get('network_sent_mb') is not None]
+        
+        cpu_avg = sum(cpu_values) / len(cpu_values) if cpu_values else 0
+        ram_avg = sum(ram_values) / len(ram_values) if ram_values else 0
+        disk_avg = sum(disk_values) / len(disk_values) if disk_values else 0
+        network_avg = sum(network_values) / len(network_values) if network_values else 0
+        
+        categories = ['CPU, %', 'RAM, %', 'Disk, %', 'Network, MB/s']
+        values = [cpu_avg, ram_avg, disk_avg, network_avg]
+        colors = ['#3498db', '#2ecc71', '#9b59b6', '#e74c3c']
+        
+        figure = Figure(figsize=(10, 6), facecolor='white')
+        canvas = FigureCanvas(figure)
+        ax = figure.add_subplot(111)
+        
+        bars = ax.bar(categories, values, color=colors, edgecolor='white', linewidth=2)
+        ax.set_title(f"Средние значения метрик\n{period['from']} — {period['to']}", 
+                     fontsize=14, fontweight='bold', color='#2c3e50')
+        ax.set_ylabel("Среднее значение", fontsize=11, color='#7f8c8d')
+        ax.grid(True, alpha=0.3, axis='y')
+        ax.set_facecolor('#f8f9fa')
+        
+        for bar, value in zip(bars, values):
+            height = bar.get_height()
+            ax.annotate(f'{value:.1f}',
+                       xy=(bar.get_x() + bar.get_width() / 2, height),
+                       xytext=(0, 5),
+                       textcoords="offset points",
+                       ha='center', va='bottom', fontsize=10, fontweight='bold')
+        
+        figure.tight_layout()
+        canvas.draw()
+        self.report_container_layout.addWidget(canvas)
+    
+    def create_metrics_single_line_chart(self, metric_key, metric_name, period):
         if not MATPLOTLIB_AVAILABLE:
             self.show_matplotlib_error()
             return
@@ -1489,7 +2011,6 @@ class ComputerDetailsWindow(QMainWindow):
                 'value': value
             })
         
-        # Создаем фигуру
         figure = Figure(figsize=(10, 5), facecolor='white')
         canvas = FigureCanvas(figure)
         ax = figure.add_subplot(111)
@@ -1509,47 +2030,48 @@ class ComputerDetailsWindow(QMainWindow):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
-        self.add_metrics_stats(metric_key, metric_name)
     
-    def add_metrics_stats(self, metric_key, metric_name):
-        """Добавляет статистику по метрикам"""
-        values = []
-        for m in self.current_metrics:
-            if metric_key == "network":
-                value = m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0)
-            else:
-                value = m.get(metric_key, 0)
-            if value:
-                values.append(value)
+    def create_metrics_all_line_charts(self, period):
+        if not MATPLOTLIB_AVAILABLE:
+            self.show_matplotlib_error()
+            return
         
-        if values:
-            stats_frame = QFrame()
-            stats_frame.setStyleSheet("""
-                QFrame {
-                    background-color: #f8f9fa;
-                    border-radius: 8px;
-                    padding: 10px;
-                    margin-top: 10px;
-                }
-            """)
-            stats_layout = QHBoxLayout(stats_frame)
-            
-            avg_val = sum(values) / len(values)
-            max_val = max(values)
-            min_val = min(values)
-            
-            unit = " MB/s" if metric_key == "network" else "%"
-            
-            stats_layout.addWidget(QLabel(f"Среднее: {avg_val:.1f}{unit}"))
-            stats_layout.addWidget(QLabel(f"Максимум: {max_val:.1f}{unit}"))
-            stats_layout.addWidget(QLabel(f"Минимум: {min_val:.1f}{unit}"))
-            stats_layout.addWidget(QLabel(f"Всего точек: {len(values)}"))
-            
-            stats_layout.addStretch()
-            self.report_container_layout.addWidget(stats_frame)
+        timestamps = [m.get('timestamp', '')[:16] for m in self.current_metrics]
+        cpu_vals = [m.get('cpu_usage', 0) for m in self.current_metrics]
+        ram_vals = [m.get('ram_usage', 0) for m in self.current_metrics]
+        disk_vals = [m.get('disk_usage', 0) for m in self.current_metrics]
+        network_vals = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) for m in self.current_metrics]
+        
+        figure = Figure(figsize=(12, 6), facecolor='white')
+        canvas = FigureCanvas(figure)
+        ax = figure.add_subplot(111)
+        
+        ax.plot(timestamps, cpu_vals, color='#3498db', linewidth=2, marker='o', markersize=3, label='CPU, %')
+        ax.plot(timestamps, ram_vals, color='#2ecc71', linewidth=2, marker='s', markersize=3, label='RAM, %')
+        ax.plot(timestamps, disk_vals, color='#9b59b6', linewidth=2, marker='^', markersize=3, label='Disk, %')
+        
+        ax2 = ax.twinx()
+        ax2.plot(timestamps, network_vals, color='#e74c3c', linewidth=2, marker='d', markersize=3, label='Network, MB/s')
+        ax2.set_ylabel('Network, MB/s', fontsize=10, color='#e74c3c')
+        ax2.tick_params(axis='y', labelcolor='#e74c3c')
+        
+        ax.set_title(f"Динамика метрик\n{period['from']} — {period['to']}", 
+                     fontsize=14, fontweight='bold', color='#2c3e50')
+        ax.set_xlabel("Время", fontsize=10, color='#7f8c8d')
+        ax.set_ylabel("CPU / RAM / Disk, %", fontsize=10, color='#2c3e50')
+        ax.tick_params(axis='x', rotation=45)
+        ax.grid(True, alpha=0.3)
+        ax.set_facecolor('#f8f9fa')
+        
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=9)
+        
+        figure.tight_layout()
+        canvas.draw()
+        self.report_container_layout.addWidget(canvas)
     
     def generate_events_report_view(self, view_type, period):
-        """Генерирует отчет по событиям"""
         if not self.event_statistics:
             error_label = QLabel("Нет данных событий за выбранный период")
             error_label.setStyleSheet("color: red; padding: 20px;")
@@ -1563,7 +2085,6 @@ class ComputerDetailsWindow(QMainWindow):
             self.create_events_pie_chart(period)
     
     def create_events_table(self, period):
-        """Создает таблицу событий"""
         table = QTableWidget()
         table.setColumnCount(2)
         table.setHorizontalHeaderLabels(["Тип события", "Количество"])
@@ -1576,22 +2097,8 @@ class ComputerDetailsWindow(QMainWindow):
             table.setItem(row, 1, QTableWidgetItem(str(count)))
         
         self.report_container_layout.addWidget(table)
-        
-        # Добавляем итого
-        total = sum(self.event_statistics.values())
-        total_label = QLabel(f"Всего событий: {total}")
-        total_label.setStyleSheet("""
-            font-weight: bold;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            margin-top: 10px;
-        """)
-        total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.report_container_layout.addWidget(total_label)
     
     def create_events_pie_chart(self, period):
-        """Создает круговую диаграмму событий"""
         if not MATPLOTLIB_AVAILABLE:
             self.show_matplotlib_error()
             return
@@ -1621,22 +2128,8 @@ class ComputerDetailsWindow(QMainWindow):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
-        
-        # Добавляем итого
-        total = sum(self.event_statistics.values())
-        total_label = QLabel(f"Всего событий: {total}")
-        total_label.setStyleSheet("""
-            font-weight: bold;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            margin-top: 10px;
-        """)
-        total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.report_container_layout.addWidget(total_label)
     
     def generate_anomalies_report_view(self, view_type, period):
-        """Генерирует отчет по аномалиям"""
         if not self.anomalies:
             error_label = QLabel("Нет данных аномалий за выбранный период")
             error_label.setStyleSheet("color: red; padding: 20px;")
@@ -1650,7 +2143,6 @@ class ComputerDetailsWindow(QMainWindow):
             self.create_anomalies_histogram(period)
     
     def create_anomalies_table(self, period):
-        """Создает таблицу аномалий"""
         table = QTableWidget()
         table.setColumnCount(4)
         table.setHorizontalHeaderLabels(["Время", "CPU, %", "RAM, %", "Тип"])
@@ -1678,26 +2170,12 @@ class ComputerDetailsWindow(QMainWindow):
             table.setItem(row, 3, QTableWidgetItem(", ".join(anomaly_type) if anomaly_type else "Высокая нагрузка"))
         
         self.report_container_layout.addWidget(table)
-        
-        # Добавляем итого
-        total_label = QLabel(f"Всего аномалий: {len(self.anomalies)}")
-        total_label.setStyleSheet("""
-            font-weight: bold;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            margin-top: 10px;
-        """)
-        total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.report_container_layout.addWidget(total_label)
     
     def create_anomalies_histogram(self, period):
-        """Создает гистограмму аномалий по дням"""
         if not MATPLOTLIB_AVAILABLE:
             self.show_matplotlib_error()
             return
         
-        # Группируем по дням
         daily_anomalies = {}
         for anomaly in self.anomalies:
             date_str = anomaly.get('timestamp', '')[:10]
@@ -1721,7 +2199,6 @@ class ComputerDetailsWindow(QMainWindow):
         ax.grid(True, alpha=0.3, axis='y')
         ax.set_facecolor('#f8f9fa')
         
-        # Добавляем значения на столбцы
         for bar, value in zip(bars, values):
             height = bar.get_height()
             ax.annotate(str(value),
@@ -1733,21 +2210,8 @@ class ComputerDetailsWindow(QMainWindow):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
-        
-        # Добавляем итого
-        total_label = QLabel(f"Всего аномалий: {len(self.anomalies)}")
-        total_label.setStyleSheet("""
-            font-weight: bold;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
-            margin-top: 10px;
-        """)
-        total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.report_container_layout.addWidget(total_label)
     
     def show_matplotlib_error(self):
-        """Показывает ошибку о отсутствии matplotlib"""
         error_label = QLabel(
             "Для отображения графиков установите matplotlib:\n"
             "pip install matplotlib\n\n"

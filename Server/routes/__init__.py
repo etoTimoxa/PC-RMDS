@@ -7,7 +7,7 @@ from .statuses import statuses_bp
 from .metrics import metrics_bp
 from .dashboard import dashboard_bp
 from .auth import auth_bp
-from routes.sessions import sessions_bp
+from .sessions import sessions_bp
 
 __all__ = [
     'computers_bp',

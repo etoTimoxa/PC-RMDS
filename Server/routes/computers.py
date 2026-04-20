@@ -209,6 +209,8 @@ def register_computer():
         mac_address = data['mac_address']
         force_rebind = data.get('force_rebind', False)
         ip_address = data.get('ip_address')
+        
+        # Получаем group_id и inventory_number из запроса (если есть)
         group_id = data.get('group_id')
         description = data.get('description')
         inventory_number = data.get('inventory_number')
@@ -271,10 +273,10 @@ def register_computer():
                   gpu_model, motherboard, bios_version))
         
         # ============================================
-        # 3. РАБОТА С КОМПЬЮТЕРОМ
+        # 3. РАБОТА С КОМПЬЮТЕРОМ - СОХРАНЯЕМ СУЩЕСТВУЮЩИЕ ДАННЫЕ
         # ============================================
         existing_computer = mysql.fetch_one(
-            "SELECT computer_id, user_id FROM computer WHERE mac_address = %s",
+            "SELECT computer_id, user_id, group_id, inventory_number, description FROM computer WHERE mac_address = %s",
             (mac_address,)
         )
         
@@ -285,6 +287,14 @@ def register_computer():
         if existing_computer:
             computer_id = existing_computer['computer_id']
             current_user_id = existing_computer['user_id']
+            
+            # Если group_id, inventory_number не переданы в запросе, берем из существующей записи
+            if group_id is None and existing_computer.get('group_id'):
+                group_id = existing_computer['group_id']
+            if inventory_number is None and existing_computer.get('inventory_number'):
+                inventory_number = existing_computer['inventory_number']
+            if description is None and existing_computer.get('description'):
+                description = existing_computer['description']
             
             if current_user_id and current_user_id != user_id:
                 already_bound = True
@@ -356,6 +366,8 @@ def register_computer():
                 'os_id': os_id,
                 'hardware_config_id': hardware_config_id,
                 'group_id': group_id,
+                'inventory_number': inventory_number,
+                'description': description,
                 'is_online': 1,
                 'is_new': existing_computer is None,
                 'already_bound': already_bound,

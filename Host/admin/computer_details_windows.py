@@ -1,4 +1,6 @@
 import sys
+import os
+import shutil
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -8,7 +10,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QGridLayout, QScrollArea, QMessageBox,
                              QCalendarWidget, QDialog, QDialogButtonBox,
                              QProgressBar, QLineEdit, QTextEdit, QFormLayout,
-                             QSpinBox, QDoubleSpinBox)
+                             QSpinBox, QDoubleSpinBox, QFileDialog)
 from PyQt6.QtCore import Qt, QDate, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QFont
 
@@ -21,6 +23,7 @@ try:
     matplotlib.use('Qt5Agg')
     from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
+    import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -36,6 +39,8 @@ try:
     from reportlab.pdfgen import canvas
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
+    import reportlab.rl_config
+    reportlab.rl_config.warnOnMissingFontGlyphs = 0
     REPORTLAB_AVAILABLE = True
 except ImportError:
     REPORTLAB_AVAILABLE = False
@@ -65,6 +70,19 @@ def get_app_icon() -> QIcon:
     pixmap = QPixmap(32, 32)
     pixmap.fill(QColor(255, 140, 66))
     return QIcon(pixmap)
+
+
+def get_documents_path() -> Path:
+    """Возвращает путь к папке Документы пользователя"""
+    if sys.platform == 'win32':
+        import ctypes.wintypes
+        CSIDL_PERSONAL = 5
+        SHGFP_TYPE_CURRENT = 0
+        buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+        ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_PERSONAL, None, SHGFP_TYPE_CURRENT, buf)
+        return Path(buf.value)
+    else:
+        return Path.home() / "Documents"
 
 
 class DiskSpaceWidget(QWidget):
@@ -161,7 +179,7 @@ class EditComputerDialog(QDialog):
         # Инвентарный номер
         self.inventory_edit = QLineEdit()
         self.inventory_edit.setText(self.computer_data.get('inventory_number', ''))
-        form_layout.addRow("Инвентарный номер:", self.inventory_edit)
+        form_layout.addRow("Инв. номер:", self.inventory_edit)
         
         # Тип компьютера
         self.type_combo = QComboBox()
@@ -228,9 +246,10 @@ class EditComputerDialog(QDialog):
 class EditSessionDialog(QDialog):
     """Диалог для просмотра информации о сессии"""
     
-    def __init__(self, session_data, parent=None):
+    def __init__(self, session_data, computer_id=None, parent=None):
         super().__init__(parent)
         self.session_data = session_data
+        self.computer_id = computer_id or session_data.get('computer_id')
         self.init_ui()
     
     def init_ui(self):
@@ -245,9 +264,13 @@ class EditSessionDialog(QDialog):
         info_layout = QFormLayout(info_group)
         
         info_layout.addRow("ID сессии:", QLabel(str(self.session_data.get('session_id', '—'))))
-        info_layout.addRow("Токен:", QLabel(self.session_data.get('session_token', '—')[:50] + "..."))
+        info_layout.addRow("Компьютер ID:", QLabel(str(self.session_data.get('computer_id', '—'))))
+        info_layout.addRow("Токен:", QLabel(self.session_data.get('session_token', '—')[:50] + "..." if len(self.session_data.get('session_token', '')) > 50 else self.session_data.get('session_token', '—')))
         info_layout.addRow("Статус:", QLabel(self.session_data.get('status_name', '—')))
-        info_layout.addRow("Начало:", QLabel(str(self.session_data.get('start_time', '—'))[:19]))
+        
+        start_time = self.session_data.get('start_time', '')
+        if start_time:
+            info_layout.addRow("Начало:", QLabel(str(start_time)[:19]))
         
         end_time = self.session_data.get('end_time')
         if end_time:
@@ -255,14 +278,17 @@ class EditSessionDialog(QDialog):
         else:
             info_layout.addRow("Окончание:", QLabel("Активна"))
         
-        info_layout.addRow("Последняя активность:", QLabel(str(self.session_data.get('last_activity', '—'))[:19]))
+        last_activity = self.session_data.get('last_activity', '')
+        if last_activity:
+            info_layout.addRow("Последняя активность:", QLabel(str(last_activity)[:19]))
+        
         info_layout.addRow("Отправлено JSON:", QLabel(str(self.session_data.get('json_sent_count', 0))))
         info_layout.addRow("Ошибок:", QLabel(str(self.session_data.get('error_count', 0))))
         
         layout.addWidget(info_group)
         
         # Кнопка закрытия сессии (если активна)
-        if self.session_data.get('status_name') == 'active':
+        if self.session_data.get('status_name') == 'active' or self.session_data.get('status_id') == 1:
             close_btn = QPushButton("Завершить сессию")
             close_btn.setStyleSheet("background-color: #e74c3c;")
             close_btn.clicked.connect(self.close_session)
@@ -275,8 +301,16 @@ class EditSessionDialog(QDialog):
     
     def close_session(self):
         """Завершает сессию"""
-        computer_id = self.session_data.get('computer_id')
+        computer_id = self.computer_id or self.session_data.get('computer_id')
         session_id = self.session_data.get('session_id')
+        
+        if not computer_id:
+            QMessageBox.warning(self, "Ошибка", "ID компьютера не определен")
+            return
+        
+        if not session_id:
+            QMessageBox.warning(self, "Ошибка", "ID сессии не определен")
+            return
         
         reply = QMessageBox.question(
             self, "Подтверждение",
@@ -286,12 +320,13 @@ class EditSessionDialog(QDialog):
         
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                result = APIClient.close_session(computer_id, session_id)
-                if result:
+                result = APIClient.post(f'/api/computers/{computer_id}/sessions/{session_id}/close')
+                if result and result.get('success'):
                     QMessageBox.information(self, "Успех", f"Сессия #{session_id} успешно завершена")
                     self.accept()
                 else:
-                    QMessageBox.warning(self, "Ошибка", "Не удалось завершить сессию")
+                    error_msg = result.get('error', 'Неизвестная ошибка') if result else 'Нет ответа от сервера'
+                    QMessageBox.warning(self, "Ошибка", f"Не удалось завершить сессию: {error_msg}")
             except Exception as e:
                 QMessageBox.warning(self, "Ошибка", f"Ошибка: {str(e)}")
 
@@ -370,7 +405,6 @@ class DateRangeDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
     
-    def get_dates(self):
         return self.from_calendar.selectedDate(), self.to_calendar.selectedDate()
 
 
@@ -729,8 +763,8 @@ class ComputerDetailsWindow(QMainWindow):
     def save_computer_info(self, update_data):
         """Сохраняет изменения информации о компьютере"""
         try:
-            result = APIClient.update_computer(self.computer_id, update_data)
-            if result:
+            result = APIClient.put(f'/api/computers/{self.computer_id}', json=update_data)
+            if result and result.get('success'):
                 QMessageBox.information(self, "Успех", "Информация о компьютере обновлена")
                 self.load_computer_info()
                 self.refresh_all_data()
@@ -740,23 +774,52 @@ class ComputerDetailsWindow(QMainWindow):
             QMessageBox.warning(self, "Ошибка", f"Ошибка при обновлении: {e}")
     
     def export_to_pdf(self):
-        """Экспортирует отчет в PDF"""
+        """Экспортирует СФОРМИРОВАННЫЙ ОТЧЕТ (таблицу или схему) в PDF"""
         if not REPORTLAB_AVAILABLE:
             QMessageBox.warning(self, "Ошибка", "Библиотека ReportLab не установлена.\nУстановите: pip install reportlab")
             return
         
         try:
-            from PyQt6.QtWidgets import QFileDialog
+            # Получаем текущий тип отчета и вид
+            data_type = self.report_data_type.currentText()
+            view_type = self.report_view_type.currentText()
+            period = self.date_range.get_period()
+            
+            # Путь к папке Документы
+            documents_path = get_documents_path()
+            reports_path = documents_path / "PC-RMDS_Reports"
+            reports_path.mkdir(parents=True, exist_ok=True)
+            
             file_path, _ = QFileDialog.getSaveFileName(
                 self, "Сохранить отчет", 
-                f"report_{self.hostname}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                str(reports_path / f"report_{self.hostname}_{data_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"),
                 "PDF files (*.pdf)"
             )
             
             if not file_path:
                 return
             
-            period = self.date_range.get_period()
+            # Регистрируем шрифт с поддержкой кириллицы
+            try:
+                font_paths = [
+                    "C:/Windows/Fonts/arial.ttf",
+                    "C:/Windows/Fonts/tahoma.ttf",
+                    "C:/Windows/Fonts/calibri.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                ]
+                font_registered = False
+                for font_path in font_paths:
+                    if os.path.exists(font_path):
+                        try:
+                            pdfmetrics.registerFont(TTFont('RussianFont', font_path))
+                            font_registered = True
+                            break
+                        except:
+                            continue
+                if not font_registered:
+                    pdfmetrics.registerFont(TTFont('RussianFont', 'Helvetica'))
+            except:
+                pass
             
             doc = SimpleDocTemplate(file_path, pagesize=A4, 
                                    rightMargin=72, leftMargin=72,
@@ -764,170 +827,394 @@ class ComputerDetailsWindow(QMainWindow):
             
             story = []
             
+            # Стили
             styles = getSampleStyleSheet()
-            title_style = ParagraphStyle(
-                'CustomTitle',
-                parent=styles['Heading1'],
-                fontSize=16,
-                textColor=colors.HexColor('#ff8c42'),
-                alignment=1
-            )
-            heading_style = ParagraphStyle(
-                'CustomHeading',
-                parent=styles['Heading2'],
-                fontSize=12,
-                textColor=colors.HexColor('#2c3e50'),
-                spaceAfter=10
-            )
-            normal_style = styles['Normal']
+            title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'],
+                                         fontSize=16, textColor=colors.HexColor('#ff8c42'),
+                                         alignment=1, fontName='RussianFont')
+            heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'],
+                                           fontSize=12, textColor=colors.HexColor('#2c3e50'),
+                                           spaceAfter=10, fontName='RussianFont')
+            normal_style = ParagraphStyle('Normal', parent=styles['Normal'],
+                                          fontSize=9, fontName='RussianFont')
             
+            # Заголовок
             title = Paragraph(f"Отчет по компьютеру: {self.hostname}", title_style)
             story.append(title)
             story.append(Spacer(1, 0.2*inch))
             
-            period_text = Paragraph(f"Период: {period['from']} — {period['to']}", normal_style)
+            period_text = Paragraph(f"Тип отчета: {data_type}", normal_style)
             story.append(period_text)
+            period_text2 = Paragraph(f"Вид отчета: {view_type}", normal_style)
+            story.append(period_text2)
+            period_text3 = Paragraph(f"Период: {period['from']} — {period['to']}", normal_style)
+            story.append(period_text3)
             story.append(Spacer(1, 0.3*inch))
             
-            story.append(Paragraph("Информация о компьютере", heading_style))
-            
-            computer_info_data = [
-                ["Характеристика", "Значение"],
-                ["Hostname", self.current_data.get('hostname', '—')],
-                ["IP адрес", self.current_data.get('current_ip', '—')],
-                ["Пользователь", self.current_data.get('login', '—')],
-                ["MAC адрес", self.current_data.get('mac_address', '—')],
-                ["Тип", self.current_data.get('computer_type', '—')],
-                ["Группа", self.current_data.get('group_name', '—')],
-                ["Инв. номер", self.current_data.get('inventory_number', '—')],
-                ["ОС", f"{self.current_data.get('os_name', '—')} {self.current_data.get('os_version', '—')}"],
-                ["CPU", self.current_data.get('cpu_model', '—')],
-                ["RAM", f"{self.current_data.get('ram_total', '—')} GB"],
-                ["Диск", f"{self.current_data.get('storage_total', '—')} GB"],
-                ["GPU", self.current_data.get('gpu_model', '—')],
-                ["Описание", self.current_data.get('description', '—')],
-            ]
-            
-            computer_table = Table(computer_info_data, colWidths=[2*inch, 3*inch])
-            computer_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#ff8c42')),
-                ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
-                ('ALIGN', (0, 0), (1, 0), 'CENTER'),
-                ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (1, 0), 10),
-                ('BOTTOMPADDING', (0, 0), (1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f8f9fa')),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 1), (-1, -1), 9),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('TOPPADDING', (0, 0), (-1, -1), 6),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ]))
-            story.append(computer_table)
-            story.append(Spacer(1, 0.3*inch))
-            
-            story.append(Paragraph("Средние показатели за период", heading_style))
-            
+            # Экспортируем ТЕКУЩИЙ сформированный отчет
+            temp_files = []  # Список временных файлов для удаления
             try:
-                result = APIClient.get('/metrics/average', params={
-                    'computer_id': self.computer_id,
-                    'from': period['from'],
-                    'to': period['to']
-                })
+                if data_type == "Метрики":
+                    self.export_metrics_to_pdf(story, view_type, period, heading_style, normal_style, temp_files)
+                elif data_type == "События":
+                    self.export_events_to_pdf(story, view_type, period, heading_style, normal_style, temp_files)
+                elif data_type == "Аномалии":
+                    self.export_anomalies_to_pdf(story, view_type, period, heading_style, normal_style, temp_files)
                 
-                if result and result.get('success'):
-                    avg_data = result.get('data', {}).get('average', {})
-                    
-                    metrics_data = [
-                        ["Показатель", "Значение"],
-                        ["CPU, %", f"{avg_data.get('cpu_usage', '—')}"],
-                        ["RAM, %", f"{avg_data.get('ram_usage', '—')}"],
-                        ["Disk, %", f"{avg_data.get('disk_usage', '—')}"],
-                        ["Network отправлено, MB", f"{avg_data.get('network_sent_mb', '—')}"],
-                        ["Network получено, MB", f"{avg_data.get('network_recv_mb', '—')}"],
-                    ]
-                    
-                    metrics_table = Table(metrics_data, colWidths=[2*inch, 3*inch])
-                    metrics_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#ff8c42')),
-                        ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
-                        ('ALIGN', (0, 0), (1, 0), 'CENTER'),
-                        ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (1, 0), 10),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
-                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 9),
-                    ]))
-                    story.append(metrics_table)
-                    story.append(Spacer(1, 0.3*inch))
-            except Exception as e:
-                print(f"Ошибка получения средних метрик для PDF: {e}")
+                doc.build(story)
+                QMessageBox.information(self, "Успех", f"Отчет сохранен в:\n{file_path}")
+                
+            finally:
+                # Удаляем временные файлы
+                for tmp_file in temp_files:
+                    try:
+                        if os.path.exists(tmp_file):
+                            os.unlink(tmp_file)
+                    except Exception as e:
+                        print(f"Не удалось удалить временный файл {tmp_file}: {e}")
+        
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Ошибка", f"Ошибка при создании PDF: {str(e)}")
+    
+    def export_metrics_to_pdf(self, story, view_type, period, heading_style, normal_style, temp_files):
+        """Экспорт метрик в PDF"""
+        if not self.current_metrics:
+            story.append(Paragraph("Нет данных метрик за выбранный период", normal_style))
+            return
+        
+        selected_metric = self.report_metric.currentText()
+        
+        if view_type == "Таблица":
+            story.append(Paragraph("Таблица метрик", heading_style))
             
+            if selected_metric == "Все метрики":
+                # Полная таблица
+                data = [["Время", "CPU, %", "RAM, %", "RAM, GB", "Disk, %", "Network, MB/s"]]
+                for metric in self.current_metrics[:100]:  # Ограничиваем 100 записями для PDF
+                    timestamp = metric.get('timestamp', '')[:19]
+                    cpu = f"{metric.get('cpu_usage', 0):.1f}" if metric.get('cpu_usage') else "—"
+                    ram_percent = f"{metric.get('ram_usage', 0):.1f}" if metric.get('ram_usage') else "—"
+                    ram_gb = f"{metric.get('ram_used_gb', 0):.1f}" if metric.get('ram_used_gb') else "—"
+                    disk = f"{metric.get('disk_usage', 0):.1f}" if metric.get('disk_usage') else "—"
+                    network = f"{metric.get('network_sent_mb', 0) + metric.get('network_recv_mb', 0):.2f}"
+                    data.append([timestamp, cpu, ram_percent, ram_gb, disk, network])
+            else:
+                # Таблица с одним показателем
+                metric_map = {
+                    "CPU, %": ("cpu_usage", "CPU, %"),
+                    "RAM, %": ("ram_usage", "RAM, %"),
+                    "Disk, %": ("disk_usage", "Disk, %"),
+                    "Network, MB/s": ("network", "Network, MB/s")
+                }
+                metric_key, metric_name = metric_map.get(selected_metric, ("cpu_usage", "CPU, %"))
+                
+                data = [["Время", metric_name]]
+                for metric in self.current_metrics[:100]:
+                    timestamp = metric.get('timestamp', '')[:19]
+                    if metric_key == "network":
+                        value = metric.get('network_sent_mb', 0) + metric.get('network_recv_mb', 0)
+                        value_str = f"{value:.2f}"
+                    else:
+                        value = metric.get(metric_key, 0)
+                        value_str = f"{value:.1f}" if value else "—"
+                    data.append([timestamp, value_str])
+            
+            # Создаем таблицу
+            col_widths = [1.5*inch] + [0.8*inch] * (len(data[0]) - 1)
+            table = Table(data, colWidths=col_widths)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+                ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ]))
+            story.append(table)
+            
+        elif view_type == "Гистограмма" and MATPLOTLIB_AVAILABLE:
+            story.append(Paragraph("Гистограмма метрик", heading_style))
+            
+            if selected_metric == "Все метрики":
+                # Создаем гистограмму со средними значениями
+                cpu_values = [m.get('cpu_usage', 0) for m in self.current_metrics if m.get('cpu_usage') is not None]
+                ram_values = [m.get('ram_usage', 0) for m in self.current_metrics if m.get('ram_usage') is not None]
+                disk_values = [m.get('disk_usage', 0) for m in self.current_metrics if m.get('disk_usage') is not None]
+                network_values = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) for m in self.current_metrics]
+                
+                cpu_avg = sum(cpu_values) / len(cpu_values) if cpu_values else 0
+                ram_avg = sum(ram_values) / len(ram_values) if ram_values else 0
+                disk_avg = sum(disk_values) / len(disk_values) if disk_values else 0
+                network_avg = sum(network_values) / len(network_values) if network_values else 0
+                
+                figure = Figure(figsize=(10, 5), facecolor='white')
+                canvas = FigureCanvas(figure)
+                ax = figure.add_subplot(111)
+                
+                categories = ['CPU, %', 'RAM, %', 'Disk, %', 'Network, MB/s']
+                values = [cpu_avg, ram_avg, disk_avg, network_avg]
+                colors_list = ['#3498db', '#2ecc71', '#9b59b6', '#e74c3c']
+                
+                bars = ax.bar(categories, values, color=colors_list, edgecolor='white', linewidth=2)
+                ax.set_title(f"Средние значения метрик\n{period['from']} — {period['to']}", fontsize=12)
+                ax.set_ylabel("Среднее значение")
+                ax.grid(True, alpha=0.3, axis='y')
+                
+                for bar, value in zip(bars, values):
+                    height = bar.get_height()
+                    ax.annotate(f'{value:.1f}', xy=(bar.get_x() + bar.get_width() / 2, height),
+                               xytext=(0, 5), textcoords="offset points", ha='center', va='bottom')
+                
+                figure.tight_layout()
+                canvas.draw()
+                
+                # Сохраняем график во временный файл и добавляем в PDF
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    figure.savefig(tmp.name, format='png', dpi=150, bbox_inches='tight')
+                    img = RLImage(tmp.name, width=6*inch, height=3*inch)
+                    story.append(img)
+                    # Add to temp_files list for cleanup after PDF generation completes
+                    temp_files.append(tmp.name)
+                    # Close matplotlib resources to release file lock
+                    figure.clear()
+                    plt.close(figure)
+                    
+        elif view_type == "Линейный график" and MATPLOTLIB_AVAILABLE:
+            story.append(Paragraph("Линейный график метрик", heading_style))
+            
+            timestamps = [m.get('timestamp', '')[:16] for m in self.current_metrics[:50]]
+            
+            if selected_metric == "Все метрики":
+                cpu_vals = [m.get('cpu_usage', 0) for m in self.current_metrics[:50]]
+                ram_vals = [m.get('ram_usage', 0) for m in self.current_metrics[:50]]
+                disk_vals = [m.get('disk_usage', 0) for m in self.current_metrics[:50]]
+                network_vals = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) for m in self.current_metrics[:50]]
+                
+                figure = Figure(figsize=(10, 5), facecolor='white')
+                canvas = FigureCanvas(figure)
+                ax = figure.add_subplot(111)
+                
+                ax.plot(timestamps, cpu_vals, color='#3498db', linewidth=2, marker='o', markersize=3, label='CPU, %')
+                ax.plot(timestamps, ram_vals, color='#2ecc71', linewidth=2, marker='s', markersize=3, label='RAM, %')
+                ax.plot(timestamps, disk_vals, color='#9b59b6', linewidth=2, marker='^', markersize=3, label='Disk, %')
+                
+                ax2 = ax.twinx()
+                ax2.plot(timestamps, network_vals, color='#e74c3c', linewidth=2, marker='d', markersize=3, label='Network, MB/s')
+                ax2.set_ylabel('Network, MB/s', color='#e74c3c')
+                ax2.tick_params(axis='y', labelcolor='#e74c3c')
+                
+                ax.set_title(f"Динамика метрик\n{period['from']} — {period['to']}", fontsize=12)
+                ax.set_xlabel("Время")
+                ax.set_ylabel("CPU / RAM / Disk, %")
+                ax.tick_params(axis='x', rotation=45)
+                ax.grid(True, alpha=0.3)
+                
+                lines1, labels1 = ax.get_legend_handles_labels()
+                lines2, labels2 = ax2.get_legend_handles_labels()
+                ax.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=8)
+                
+                figure.tight_layout()
+                
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    figure.savefig(tmp.name, format='png', dpi=150, bbox_inches='tight')
+                    img = RLImage(tmp.name, width=6*inch, height=3*inch)
+                    story.append(img)
+                    temp_files.append(tmp.name)
+                    figure.clear()
+                    plt.close(figure)
+            else:
+                # График для одного показателя
+                metric_map = {
+                    "CPU, %": ("cpu_usage", "CPU, %"),
+                    "RAM, %": ("ram_usage", "RAM, %"),
+                    "Disk, %": ("disk_usage", "Disk, %"),
+                    "Network, MB/s": ("network", "Network, MB/s")
+                }
+                metric_key, metric_name = metric_map.get(selected_metric, ("cpu_usage", "CPU, %"))
+                
+                values = []
+                for m in self.current_metrics[:50]:
+                    if metric_key == "network":
+                        val = m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0)
+                    else:
+                        val = m.get(metric_key, 0)
+                    values.append(val)
+                
+                figure = Figure(figsize=(10, 5), facecolor='white')
+                canvas = FigureCanvas(figure)
+                ax = figure.add_subplot(111)
+                
+                ax.plot(timestamps, values, color='#ff8c42', linewidth=2, marker='o', markersize=3)
+                ax.set_title(f"Динамика {metric_name}\n{period['from']} — {period['to']}", fontsize=12)
+                ax.set_xlabel("Время")
+                ax.set_ylabel(metric_name)
+                ax.tick_params(axis='x', rotation=45)
+                ax.grid(True, alpha=0.3)
+                
+                figure.tight_layout()
+                
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                    figure.savefig(tmp.name, format='png', dpi=150, bbox_inches='tight')
+                    img = RLImage(tmp.name, width=6*inch, height=3*inch)
+                    story.append(img)
+                    temp_files.append(tmp.name)
+                    figure.clear()
+                    plt.close(figure)
+    
+    def export_events_to_pdf(self, story, view_type, period, heading_style, normal_style, temp_files):
+        """Экспорт событий в PDF"""
+        if not self.event_statistics:
+            story.append(Paragraph("Нет данных событий за выбранный период", normal_style))
+            return
+        
+        if view_type == "Таблица":
             story.append(Paragraph("Статистика событий", heading_style))
             
-            if self.event_statistics:
-                events_data = [["Тип события", "Количество"]]
-                for event_type, count in self.event_statistics.items():
-                    events_data.append([event_type, str(count)])
+            data = [["Тип события", "Количество"]]
+            for event_type, count in self.event_statistics.items():
+                data.append([event_type, str(count)])
+            
+            table = Table(data, colWidths=[3*inch, 2*inch])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+                ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ]))
+            story.append(table)
+            
+            # Добавляем список событий
+            if self.all_events:
+                story.append(Paragraph("Список событий", heading_style))
+                events_data = [["Время", "Тип", "Описание"]]
+                for event in self.all_events[:50]:
+                    timestamp = event.get('timestamp', '')[:19]
+                    event_type = event.get('type', 'unknown')
+                    description = self.get_event_description(event)
+                    events_data.append([timestamp, event_type, description])
                 
-                events_table = Table(events_data, colWidths=[2.5*inch, 2.5*inch])
+                events_table = Table(events_data, colWidths=[1.2*inch, 1.2*inch, 3*inch])
                 events_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (1, 0), colors.HexColor('#ff8c42')),
-                    ('TEXTCOLOR', (0, 0), (1, 0), colors.white),
-                    ('ALIGN', (0, 0), (1, 0), 'CENTER'),
-                    ('FONTNAME', (0, 0), (1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (1, 0), 10),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 9),
-                ]))
-                story.append(events_table)
-            else:
-                story.append(Paragraph("Нет данных о событиях за выбранный период", normal_style))
-            
-            story.append(Spacer(1, 0.3*inch))
-            
-            story.append(Paragraph("Аномалии", heading_style))
-            
-            if self.anomalies:
-                anomalies_data = [["Время", "CPU, %", "RAM, %", "Тип"]]
-                for anomaly in self.anomalies[:50]:
-                    cpu = anomaly.get('cpu_usage', '—')
-                    ram = anomaly.get('ram_usage', '—')
-                    anomaly_type = []
-                    if cpu and isinstance(cpu, (int, float)) and cpu > 90:
-                        anomaly_type.append("CPU")
-                    if ram and isinstance(ram, (int, float)) and ram > 90:
-                        anomaly_type.append("RAM")
-                    anomalies_data.append([
-                        anomaly.get('timestamp', '')[:19],
-                        f"{cpu:.1f}" if cpu else "—",
-                        f"{ram:.1f}" if ram else "—",
-                        ", ".join(anomaly_type) if anomaly_type else "Высокая нагрузка"
-                    ])
-                
-                anomalies_table = Table(anomalies_data, colWidths=[1.5*inch, 1*inch, 1*inch, 1.5*inch])
-                anomalies_table.setStyle(TableStyle([
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
                     ('FONTSIZE', (0, 0), (-1, 0), 9),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e0e0e0')),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+                    ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
                     ('FONTSIZE', (0, 1), (-1, -1), 8),
                 ]))
-                story.append(anomalies_table)
-            else:
-                story.append(Paragraph("Нет аномалий за выбранный период", normal_style))
+                story.append(events_table)
+                
+        elif view_type == "Круговая диаграмма" and MATPLOTLIB_AVAILABLE:
+            story.append(Paragraph("Распределение событий", heading_style))
             
-            doc.build(story)
+            figure = Figure(figsize=(8, 6), facecolor='white')
+            canvas = FigureCanvas(figure)
+            ax = figure.add_subplot(111)
             
-            QMessageBox.information(self, "Успех", f"Отчет сохранен в:\n{file_path}")
+            categories = list(self.event_statistics.keys())
+            values = list(self.event_statistics.values())
+            colors_list = ['#ff8c42', '#2ecc71', '#3498db', '#9b59b6', '#e74c3c', '#1abc9c', '#f39c12', '#e67e22']
             
-        except Exception as e:
-            QMessageBox.warning(self, "Ошибка", f"Ошибка при создании PDF: {e}")
+            ax.pie(values, labels=categories, autopct='%1.1f%%', colors=colors_list[:len(categories)], startangle=90)
+            ax.set_title(f"Распределение событий по типам\n{period['from']} — {period['to']}", fontsize=12)
+            
+            figure.tight_layout()
+            
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                figure.savefig(tmp.name, format='png', dpi=150, bbox_inches='tight')
+                img = RLImage(tmp.name, width=5*inch, height=4*inch)
+                story.append(img)
+                temp_files.append(tmp.name)
+                figure.clear()
+                plt.close(figure)
+    
+    def export_anomalies_to_pdf(self, story, view_type, period, heading_style, normal_style, temp_files):
+        """Экспорт аномалий в PDF"""
+        if not self.anomalies:
+            story.append(Paragraph("Нет данных аномалий за выбранный период", normal_style))
+            return
+        
+        if view_type == "Таблица":
+            story.append(Paragraph("Аномалии (высокая нагрузка)", heading_style))
+            
+            data = [["Время", "CPU, %", "RAM, %", "Тип"]]
+            for anomaly in self.anomalies[:100]:
+                timestamp = anomaly.get('timestamp', '')[:19]
+                cpu = anomaly.get('cpu_usage')
+                ram = anomaly.get('ram_usage')
+                anomaly_type = []
+                if cpu and cpu > 90:
+                    anomaly_type.append("CPU")
+                if ram and ram > 90:
+                    anomaly_type.append("RAM")
+                
+                data.append([
+                    timestamp,
+                    f"{cpu:.1f}" if cpu else "—",
+                    f"{ram:.1f}" if ram else "—",
+                    ", ".join(anomaly_type) if anomaly_type else "Высокая нагрузка"
+                ])
+            
+            table = Table(data, colWidths=[1.5*inch, 1*inch, 1*inch, 1.5*inch])
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e0e0e0')),
+                ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ]))
+            story.append(table)
+            
+        elif view_type == "Гистограмма" and MATPLOTLIB_AVAILABLE:
+            story.append(Paragraph("Количество аномалий по дням", heading_style))
+            
+            daily_anomalies = {}
+            for anomaly in self.anomalies:
+                date_str = anomaly.get('timestamp', '')[:10]
+                if date_str:
+                    daily_anomalies[date_str] = daily_anomalies.get(date_str, 0) + 1
+            
+            figure = Figure(figsize=(10, 5), facecolor='white')
+            canvas = FigureCanvas(figure)
+            ax = figure.add_subplot(111)
+            
+            categories = list(daily_anomalies.keys())
+            values = list(daily_anomalies.values())
+            
+            ax.bar(categories, values, color='#e74c3c', edgecolor='white', linewidth=2)
+            ax.set_title(f"Количество аномалий по дням\n{period['from']} — {period['to']}", fontsize=12)
+            ax.set_xlabel("Дата")
+            ax.set_ylabel("Количество аномалий")
+            ax.tick_params(axis='x', rotation=45)
+            ax.grid(True, alpha=0.3, axis='y')
+            
+            figure.tight_layout()
+            
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                figure.savefig(tmp.name, format='png', dpi=150, bbox_inches='tight')
+                img = RLImage(tmp.name, width=6*inch, height=3*inch)
+                story.append(img)
+                temp_files.append(tmp.name)
+                figure.clear()
+                plt.close(figure)
     
     def load_computer_info(self):
         try:
@@ -1003,10 +1290,10 @@ class ComputerDetailsWindow(QMainWindow):
         info_text = f"""
         <table style="width: 100%; border-collapse: collapse;">
             <tr>
-                <td style="padding: 8px; width: 33%;"><b>Hostname:</b></td>
-                <td style="padding: 8px;">{hostname}</td>
-                <td style="padding: 8px; width: 33%;"><b>IP адрес:</b></td>
-                <td style="padding: 8px;">{ip_address}</td>
+                <td style="padding: 8px; width: 25%;"><b>Hostname:</b></td>
+                <td style="padding: 8px; width: 25%;">{hostname}</td>
+                <td style="padding: 8px; width: 25%;"><b>IP адрес:</b></td>
+                <td style="padding: 8px; width: 25%;">{ip_address}</td>
             </tr>
             <tr>
                 <td style="padding: 8px;"><b>Пользователь:</b></td>
@@ -1041,18 +1328,18 @@ class ComputerDetailsWindow(QMainWindow):
             <tr>
                 <td style="padding: 8px;"><b>Группа:</b></td>
                 <td style="padding: 8px;">{group_name}</td>
-                <td style="padding: 8px;"><b>Инв. номер:</b></td>
+                <td style="padding: 8px;"><b>Инв. номер:</b>
                 <td style="padding: 8px;">{inventory_number}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px;"><b>Описание:</b></td>
-                <td style="padding: 8px;" colspan="3">{description}</td>
             </tr>
             <tr>
                 <td style="padding: 8px;"><b>Создан:</b></td>
                 <td style="padding: 8px;">{created_at}</td>
                 <td style="padding: 8px;"><b>Последний вход:</b></td>
                 <td style="padding: 8px;">{last_online}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px; vertical-align: top;"><b>Описание:</b></td>
+                <td style="padding: 8px;" colspan="3">{description}</td>
             </tr>
         </table>
         """
@@ -1421,7 +1708,7 @@ class ComputerDetailsWindow(QMainWindow):
             return
         
         session = self.sessions[row]
-        dialog = EditSessionDialog(session, self)
+        dialog = EditSessionDialog(session, self.computer_id, self)
         dialog.exec()
     
     def on_report_data_type_changed(self, data_type):

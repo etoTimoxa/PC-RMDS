@@ -8,7 +8,7 @@ def get_main_window_stylesheet():
     
     QWidget { 
         background-color: #f8f9fa; 
-        font-family: 'Segoe UI', 'Roboto', sans-serif;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     /* Кнопки */
@@ -20,6 +20,7 @@ def get_main_window_stylesheet():
         border-radius: 8px;
         font-weight: bold;
         font-size: 13px;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QPushButton:hover { 
@@ -41,6 +42,7 @@ def get_main_window_stylesheet():
         padding: 8px 10px;
         background-color: white;
         font-size: 13px;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QLineEdit:focus, QTextEdit:focus, QDateEdit:focus, QComboBox:focus {
@@ -54,6 +56,7 @@ def get_main_window_stylesheet():
         background-color: white;
         alternate-background-color: #fafafa;
         gridline-color: #f0f0f0;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QTableWidget::item {
@@ -73,6 +76,7 @@ def get_main_window_stylesheet():
         font-weight: bold;
         font-size: 12px;
         color: #2c3e50;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     /* Группы */
@@ -83,6 +87,7 @@ def get_main_window_stylesheet():
         margin-top: 12px;
         padding-top: 12px;
         background-color: white;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QGroupBox::title {
@@ -98,6 +103,7 @@ def get_main_window_stylesheet():
         color: #7f8c8d;
         border-top: 1px solid #e0e0e0;
         padding: 5px;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     /* Скроллбары */
@@ -150,6 +156,7 @@ def get_main_window_stylesheet():
         border-top-right-radius: 6px;
         font-weight: bold;
         color: #7f8c8d;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QTabBar::tab:selected {
@@ -168,6 +175,7 @@ def get_main_window_stylesheet():
         border-radius: 6px;
         text-align: center;
         background-color: white;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QProgressBar::chunk {
@@ -181,6 +189,7 @@ def get_main_window_stylesheet():
         border: 1px solid #e0e0e0;
         border-radius: 6px;
         padding: 5px;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QMenu::item {
@@ -203,11 +212,13 @@ def get_main_window_stylesheet():
         border: 1px solid #e0e0e0;
         border-radius: 6px;
         padding: 5px;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     /* Чекбоксы */
     QCheckBox {
         spacing: 8px;
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     
     QCheckBox::indicator {
@@ -221,6 +232,11 @@ def get_main_window_stylesheet():
     QCheckBox::indicator:checked {
         background-color: #ff8c42;
         border-color: #ff8c42;
+    }
+    
+    /* Метки */
+    QLabel {
+        font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
     }
     """
 

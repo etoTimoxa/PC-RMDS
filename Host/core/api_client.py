@@ -211,6 +211,20 @@ class APIClient:
             hardware_info = HardwareIDGenerator.get_full_hardware_info()
             current_ip = cls._get_ip_address()
             
+            # Получаем существующую информацию о компьютере, если он уже есть
+            existing_computer = None
+            try:
+                # Ищем компьютер по MAC адресу
+                computers_result = cls.get('/computers')
+                if computers_result and computers_result.get('success'):
+                    computers = computers_result.get('data', {}).get('computers', [])
+                    for comp in computers:
+                        if comp.get('mac_address') == mac_address:
+                            existing_computer = comp
+                            break
+            except Exception as e:
+                print(f"Ошибка поиска существующего компьютера: {e}")
+            
             payload = {
                 "user_id": user_id,
                 "hardware_hash": hardware_id,
@@ -235,6 +249,16 @@ class APIClient:
                 
                 "force_rebind": force_rebind
             }
+            
+            # Если компьютер уже существует, сохраняем group_id и inventory_number
+            if existing_computer:
+                if existing_computer.get('group_id'):
+                    payload['group_id'] = existing_computer['group_id']
+                if existing_computer.get('inventory_number'):
+                    payload['inventory_number'] = existing_computer['inventory_number']
+                if existing_computer.get('description'):
+                    payload['description'] = existing_computer['description']
+                print(f"📌 Сохраняем существующие данные: group_id={payload.get('group_id')}, inventory={payload.get('inventory_number')}")
             
             print(f"🔍 Регистрация компьютера:")
             print(f"   user_id: {user_id}")

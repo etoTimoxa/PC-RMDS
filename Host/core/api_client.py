@@ -363,7 +363,7 @@ class APIClient:
 
     @classmethod
     def update_computer(cls, computer_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Обновление информации о компьютере (в том числе смена владельца)"""
+        """Обновление информации о компьютере (в том числе смена владельца, группы, инвентарного номера)"""
         try:
             response = requests.put(
                 f"{API_BASE_URL}/api/computers/{computer_id}",
@@ -413,7 +413,154 @@ class APIClient:
         except Exception as e:
             print(f"Ошибка получения сессий: {e}")
             return None
+
+    @classmethod
+    def close_session(cls, computer_id: int, session_id: int) -> bool:
+        """Принудительно закрыть сессию компьютера"""
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/{computer_id}/sessions/{session_id}/close",
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка закрытия сессии: {e}")
+            return False
     
+    # ==============================================
+    # ГРУППЫ КОМПЬЮТЕРОВ
+    # ==============================================
+    
+    @classmethod
+    def get_computer_groups(cls) -> Optional[List[Dict[str, Any]]]:
+        """Получить список всех групп компьютеров"""
+        try:
+            response = requests.get(
+                f"{API_BASE_URL}/api/computers/groups",
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('data') if data.get('success') else None
+        except Exception as e:
+            print(f"Ошибка получения групп: {e}")
+            return None
+    
+    @classmethod
+    def create_computer_group(cls, group_name: str, description: str = None) -> Optional[int]:
+        """Создать новую группу компьютеров"""
+        try:
+            payload = {"group_name": group_name}
+            if description:
+                payload["description"] = description
+            
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/groups",
+                json=payload,
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('data', {}).get('group_id') if data.get('success') else None
+        except Exception as e:
+            print(f"Ошибка создания группы: {e}")
+            return None
+    
+    @classmethod
+    def update_computer_group(cls, group_id: int, group_name: str = None, description: str = None) -> bool:
+        """Обновить группу компьютеров"""
+        try:
+            payload = {}
+            if group_name:
+                payload["group_name"] = group_name
+            if description:
+                payload["description"] = description
+            
+            response = requests.put(
+                f"{API_BASE_URL}/api/computers/groups/{group_id}",
+                json=payload,
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка обновления группы: {e}")
+            return False
+    
+    @classmethod
+    def delete_computer_group(cls, group_id: int) -> bool:
+        """Удалить группу компьютеров"""
+        try:
+            response = requests.delete(
+                f"{API_BASE_URL}/api/computers/groups/{group_id}",
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка удаления группы: {e}")
+            return False
+    
+    # ==============================================
+    # УПРАВЛЕНИЕ ПАРОЛЯМИ
+    # ==============================================
+    
+    @classmethod
+    def reset_password(cls, reset_token: str, new_password: str) -> Optional[Dict[str, Any]]:
+        """Сброс пароля по токену"""
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/user/reset-password",
+                json={"reset_token": reset_token, "new_password": new_password},
+                headers=cls._headers(),
+                timeout=15
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Ошибка сброса пароля: {e}")
+            return None
+
+    @classmethod
+    def request_password_reset(cls, user_id: int) -> Optional[Dict[str, Any]]:
+        """Запрос на сброс пароля (создание токена)"""
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/user/{user_id}/reset-password",
+                headers=cls._headers(),
+                timeout=15
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Ошибка запроса сброса пароля: {e}")
+            return None
+
+    @classmethod
+    def change_password(cls, user_id: int, old_password: str, new_password: str) -> Optional[Dict[str, Any]]:
+        """Изменение пароля (требуется старый пароль)"""
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/api/computers/user/{user_id}/change-password",
+                json={"old_password": old_password, "new_password": new_password},
+                headers=cls._headers(),
+                timeout=15
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Ошибка изменения пароля: {e}")
+            return None
+
     # ==============================================
     # СЕССИИ
     # ==============================================
@@ -461,7 +608,7 @@ class APIClient:
             return None
 
     @classmethod
-    def close_session(cls, session_id: int = None) -> bool:
+    def close_session_by_id(cls, session_id: int = None) -> bool:
         """Закрыть сессию"""
         try:
             sid = session_id if session_id is not None else cls.current_session_id
@@ -562,7 +709,31 @@ class APIClient:
     @classmethod
     def create_user(cls, login: str, password: str, full_name: str, role: str = 'client') -> Optional[int]:
         """Создание нового пользователя"""
-        return cls.register(login, password, full_name)
+        # Определяем role_id по роли
+        role_id = 1 if role == 'client' else 2
+        
+        try:
+            # Хешируем пароль
+            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            
+            response = requests.post(
+                f"{API_BASE_URL}/api/users",
+                json={
+                    "login": login,
+                    "password": password,
+                    "full_name": full_name,
+                    "role_id": role_id,
+                    "is_active": 1
+                },
+                headers=cls._headers(),
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('data', {}).get('user_id') if data.get('success') else None
+        except Exception as e:
+            print(f"Ошибка создания пользователя: {e}")
+            return None
     
     # ==============================================
     # МЕТРИКИ

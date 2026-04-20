@@ -46,6 +46,101 @@ def get_base_path() -> Path:
         return Path(__file__).parent.parent
 
 
+class ResetPasswordDialog(QDialog):
+    """Диалог для сброса пароля"""
+    
+    def __init__(self, reset_token, parent=None):
+        super().__init__(parent)
+        self.reset_token = reset_token
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("Сброс пароля")
+        self.setModal(True)
+        self.setFixedSize(400, 300)
+        self.setStyleSheet("""
+            QDialog { background-color: white; border-radius: 10px; }
+            QLabel { color: #333333; }
+            QLineEdit {
+                border: 1px solid #ff8c42;
+                border-radius: 4px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QPushButton {
+                background-color: #ff8c42;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 10px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #e67e22; }
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        
+        title = QLabel("Сброс пароля")
+        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #ff8c42;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+        
+        info_label = QLabel("Введите новый пароль")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(info_label)
+        
+        self.new_password_edit = QLineEdit()
+        self.new_password_edit.setPlaceholderText("Новый пароль")
+        self.new_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.new_password_edit)
+        
+        self.confirm_password_edit = QLineEdit()
+        self.confirm_password_edit.setPlaceholderText("Подтвердите пароль")
+        self.confirm_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.confirm_password_edit)
+        
+        self.error_label = QLabel()
+        self.error_label.setStyleSheet("color: red; font-size: 12px;")
+        self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.error_label)
+        
+        reset_btn = QPushButton("Сбросить пароль")
+        reset_btn.clicked.connect(self.do_reset)
+        layout.addWidget(reset_btn)
+        
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.setStyleSheet("background-color: #95a5a6;")
+        cancel_btn.clicked.connect(self.reject)
+        layout.addWidget(cancel_btn)
+    
+    def do_reset(self):
+        new_password = self.new_password_edit.text()
+        confirm_password = self.confirm_password_edit.text()
+        
+        if not new_password:
+            self.error_label.setText("Введите новый пароль")
+            return
+        
+        if len(new_password) < 4:
+            self.error_label.setText("Пароль должен быть не менее 4 символов")
+            return
+        
+        if new_password != confirm_password:
+            self.error_label.setText("Пароли не совпадают")
+            return
+        
+        try:
+            result = DatabaseManager.reset_password(self.reset_token, new_password)
+            if result and result.get('success'):
+                QMessageBox.information(self, "Успех", "Пароль успешно изменен")
+                self.accept()
+            else:
+                self.error_label.setText(result.get('error', 'Ошибка сброса пароля'))
+        except Exception as e:
+            self.error_label.setText(f"Ошибка: {str(e)}")
+
+
 class AuthDialog(QDialog):
     """Главный диалог авторизации с переключением между входом и регистрацией"""
     
@@ -316,6 +411,20 @@ class AuthDialog(QDialog):
         self.error_label.setVisible(False)
         self.status_label.setVisible(False)
     
+    def check_reset_password_flag(self, user_id):
+        """Проверяет, есть ли флаг сброса пароля для пользователя"""
+        try:
+            user_data = DatabaseManager.get_user(user_id)
+            if user_data and user_data.get('reset_password_token'):
+                # Показываем диалог сброса пароля
+                dialog = ResetPasswordDialog(user_data['reset_password_token'], self)
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    return True
+            return False
+        except Exception as e:
+            print(f"Ошибка проверки флага сброса пароля: {e}")
+            return False
+    
     def do_auto_login(self, login: str, password: str):
         """Автоматический вход с сохранёнными данными"""
         try:
@@ -327,6 +436,12 @@ class AuthDialog(QDialog):
             user_id = user_data['user_id']
             role_id = user_data.get('role_id')
             is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
+            
+            # Проверяем флаг сброса пароля
+            if self.check_reset_password_flag(user_id):
+                # После сброса пароля нужно заново войти
+                self.do_login()
+                return
             
             # Подключаем компьютер
             computer_result = DatabaseManager.register_computer_for_user(user_id)
@@ -407,6 +522,14 @@ class AuthDialog(QDialog):
             role_id = user_data.get('role_id')
             is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
             
+            # Проверяем флаг сброса пароля
+            if self.check_reset_password_flag(user_id):
+                self.login_edit.setEnabled(True)
+                self.password_edit.setEnabled(True)
+                self.login_btn.setEnabled(True)
+                self.status_label.setVisible(False)
+                return
+            
             self.status_label.setText("Регистрация компьютера...")
             QApplication.processEvents()
             
@@ -443,6 +566,11 @@ class AuthDialog(QDialog):
             session_id = computer_result.get('session_id')
             session_token = DatabaseManager.auth_token
             
+            # Получаем информацию о группе и инвентарном номере
+            computer_info = DatabaseManager.get_computer(computer_id)
+            group_id = computer_info.get('group_id') if computer_info else None
+            inventory_number = computer_info.get('inventory_number') if computer_info else None
+            
             self.computer_data = {
                 'computer_id': computer_id,
                 'hostname': hostname,
@@ -454,6 +582,8 @@ class AuthDialog(QDialog):
                 'computer_type': 'admin' if is_admin else 'client',
                 'session_id': session_id,
                 'session_token': session_token,
+                'group_id': group_id,
+                'inventory_number': inventory_number,
                 'is_new': computer_result.get('is_new', False),
                 'hardware_changed': computer_result.get('hardware_changed', False)
             }
@@ -538,6 +668,8 @@ class AuthDialog(QDialog):
                 'computer_type': 'client',
                 'session_id': session_id,
                 'session_token': session_token,
+                'group_id': None,
+                'inventory_number': None,
                 'is_new': computer_result.get('is_new', False),
                 'hardware_changed': computer_result.get('hardware_changed', False)
             }

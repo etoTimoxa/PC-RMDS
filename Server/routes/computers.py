@@ -72,7 +72,7 @@ def create_computer_group():
 
 
 @computers_bp.route('/groups/<int:group_id>', methods=['PUT'])
-def update_computer_group(group_id):
+def update_computer_group_by_id(group_id):
     """Обновить группу компьютеров"""
     try:
         data = request.get_json()
@@ -147,7 +147,7 @@ def delete_computer_group(group_id):
 
 
 @computers_bp.route('/groups/<int:group_id>/computers', methods=['GET'])
-def get_group_computers(group_id):
+def get_computers_by_group(group_id):
     """Получить компьютеры в группе"""
     try:
         computers = mysql.fetch_all("""
@@ -469,7 +469,7 @@ def get_computers():
 
 
 @computers_bp.route('/<int:computer_id>', methods=['GET'])
-def get_computer(computer_id):
+def get_computer_by_id(computer_id):
     """Получить компьютер по ID"""
     try:
         with mysql.get_connection() as conn:
@@ -514,7 +514,7 @@ def get_computer(computer_id):
 
 
 @computers_bp.route('/<int:computer_id>', methods=['PUT'])
-def update_computer(computer_id):
+def update_computer_by_id(computer_id):
     """Обновить данные компьютера (группа, инвентарный номер, описание и т.д.)"""
     try:
         data = request.get_json()
@@ -575,48 +575,8 @@ def update_computer(computer_id):
         }), 500
 
 
-@computers_bp.route('/<int:computer_id>/group', methods=['PUT'])
-def update_computer_group(computer_id):
-    """Изменить группу компьютера"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'group_id' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Отсутствует обязательное поле: group_id'
-            }), 400
-        
-        group_id = data['group_id']
-        
-        # Проверяем существование группы (если group_id не NULL)
-        if group_id:
-            group_exists = mysql.fetch_one("SELECT group_id FROM computer_group WHERE group_id = %s", (group_id,))
-            if not group_exists:
-                return jsonify({
-                    'success': False,
-                    'error': f'Группа с ID {group_id} не найдена'
-                }), 404
-        
-        mysql.execute("""
-            UPDATE computer SET group_id = %s WHERE computer_id = %s
-        """, (group_id, computer_id))
-        
-        return jsonify({
-            'success': True,
-            'message': 'Группа компьютера обновлена'
-        })
-        
-    except Exception as e:
-        print(f"❌ Ошибка обновления группы компьютера: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-
 @computers_bp.route('/<int:computer_id>/sessions', methods=['GET'])
-def get_computer_sessions(computer_id):
+def get_computer_sessions_by_id(computer_id):
     """Получить сессии компьютера"""
     try:
         limit = request.args.get('limit', 50, type=int)
@@ -657,7 +617,6 @@ def get_computer_sessions(computer_id):
 def close_computer_session(computer_id, session_id):
     """Принудительно закрыть сессию компьютера"""
     try:
-        # Проверяем существование сессии
         session = mysql.fetch_one("""
             SELECT session_id, status_id, computer_id 
             FROM session 
@@ -676,14 +635,12 @@ def close_computer_session(computer_id, session_id):
                 'error': 'Сессия уже закрыта'
             }), 400
         
-        # Закрываем сессию
         mysql.execute("""
             UPDATE session 
             SET status_id = 2, end_time = NOW()
             WHERE session_id = %s
         """, (session_id,))
         
-        # Проверяем, есть ли другие активные сессии на этом компьютере
         active_sessions = mysql.fetch_one("""
             SELECT COUNT(*) as count FROM session 
             WHERE computer_id = %s AND status_id = 1

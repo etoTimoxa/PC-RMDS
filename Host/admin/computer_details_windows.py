@@ -128,7 +128,9 @@ class EditComputerDialog(QDialog):
         super().__init__(parent)
         self.computer_data = computer_data
         self.computer_id = computer_id
+        self.groups = []
         self.init_ui()
+        self.load_groups()
     
     def init_ui(self):
         self.setWindowTitle("Редактирование компьютера")
@@ -151,15 +153,10 @@ class EditComputerDialog(QDialog):
         self.description_edit.setMaximumHeight(80)
         form_layout.addRow("Описание:", self.description_edit)
         
-        # Расположение
-        self.location_edit = QLineEdit()
-        self.location_edit.setText(self.computer_data.get('location', ''))
-        form_layout.addRow("Расположение:", self.location_edit)
-        
-        # Отдел
-        self.department_edit = QLineEdit()
-        self.department_edit.setText(self.computer_data.get('department', ''))
-        form_layout.addRow("Отдел:", self.department_edit)
+        # Группа компьютера
+        self.group_combo = QComboBox()
+        self.group_combo.addItem("— Без группы —", None)
+        form_layout.addRow("Группа:", self.group_combo)
         
         # Инвентарный номер
         self.inventory_edit = QLineEdit()
@@ -168,7 +165,7 @@ class EditComputerDialog(QDialog):
         
         # Тип компьютера
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["client", "admin", "server"])
+        self.type_combo.addItems(["client", "admin"])
         current_type = self.computer_data.get('computer_type', 'client')
         index = self.type_combo.findText(current_type)
         if index >= 0:
@@ -183,6 +180,21 @@ class EditComputerDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
     
+    def load_groups(self):
+        """Загружает список групп"""
+        try:
+            result = APIClient.get('/computers/groups')
+            if result and result.get('success'):
+                self.groups = result.get('data', [])
+                current_group_id = self.computer_data.get('group_id')
+                
+                for group in self.groups:
+                    self.group_combo.addItem(group['group_name'], group['group_id'])
+                    if current_group_id == group['group_id']:
+                        self.group_combo.setCurrentIndex(self.group_combo.count() - 1)
+        except Exception as e:
+            print(f"Ошибка загрузки групп: {e}")
+    
     def save(self):
         """Сохраняет изменения"""
         data = {}
@@ -193,11 +205,9 @@ class EditComputerDialog(QDialog):
         if self.description_edit.toPlainText() != self.computer_data.get('description', ''):
             data['description'] = self.description_edit.toPlainText()
         
-        if self.location_edit.text() != self.computer_data.get('location', ''):
-            data['location'] = self.location_edit.text()
-        
-        if self.department_edit.text() != self.computer_data.get('department', ''):
-            data['department'] = self.department_edit.text()
+        group_id = self.group_combo.currentData()
+        if group_id != self.computer_data.get('group_id'):
+            data['group_id'] = group_id
         
         if self.inventory_edit.text() != self.computer_data.get('inventory_number', ''):
             data['inventory_number'] = self.inventory_edit.text()
@@ -251,10 +261,39 @@ class EditSessionDialog(QDialog):
         
         layout.addWidget(info_group)
         
-        # Кнопка закрытия
-        close_btn = QPushButton("Закрыть")
-        close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn)
+        # Кнопка закрытия сессии (если активна)
+        if self.session_data.get('status_name') == 'active':
+            close_btn = QPushButton("Завершить сессию")
+            close_btn.setStyleSheet("background-color: #e74c3c;")
+            close_btn.clicked.connect(self.close_session)
+            layout.addWidget(close_btn)
+        
+        # Кнопка закрытия диалога
+        close_dialog_btn = QPushButton("Закрыть")
+        close_dialog_btn.clicked.connect(self.accept)
+        layout.addWidget(close_dialog_btn)
+    
+    def close_session(self):
+        """Завершает сессию"""
+        computer_id = self.session_data.get('computer_id')
+        session_id = self.session_data.get('session_id')
+        
+        reply = QMessageBox.question(
+            self, "Подтверждение",
+            f"Вы уверены, что хотите завершить сессию #{session_id}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                result = APIClient.close_session(computer_id, session_id)
+                if result:
+                    QMessageBox.information(self, "Успех", f"Сессия #{session_id} успешно завершена")
+                    self.accept()
+                else:
+                    QMessageBox.warning(self, "Ошибка", "Не удалось завершить сессию")
+            except Exception as e:
+                QMessageBox.warning(self, "Ошибка", f"Ошибка: {str(e)}")
 
 
 class DateRangeDialog(QDialog):
@@ -707,7 +746,6 @@ class ComputerDetailsWindow(QMainWindow):
             return
         
         try:
-            # Выбираем файл для сохранения
             from PyQt6.QtWidgets import QFileDialog
             file_path, _ = QFileDialog.getSaveFileName(
                 self, "Сохранить отчет", 
@@ -720,21 +758,19 @@ class ComputerDetailsWindow(QMainWindow):
             
             period = self.date_range.get_period()
             
-            # Создаем PDF документ
             doc = SimpleDocTemplate(file_path, pagesize=A4, 
                                    rightMargin=72, leftMargin=72,
                                    topMargin=72, bottomMargin=72)
             
             story = []
             
-            # Стили
             styles = getSampleStyleSheet()
             title_style = ParagraphStyle(
                 'CustomTitle',
                 parent=styles['Heading1'],
                 fontSize=16,
                 textColor=colors.HexColor('#ff8c42'),
-                alignment=1  # Center
+                alignment=1
             )
             heading_style = ParagraphStyle(
                 'CustomHeading',
@@ -745,17 +781,14 @@ class ComputerDetailsWindow(QMainWindow):
             )
             normal_style = styles['Normal']
             
-            # Заголовок
             title = Paragraph(f"Отчет по компьютеру: {self.hostname}", title_style)
             story.append(title)
             story.append(Spacer(1, 0.2*inch))
             
-            # Период
             period_text = Paragraph(f"Период: {period['from']} — {period['to']}", normal_style)
             story.append(period_text)
             story.append(Spacer(1, 0.3*inch))
             
-            # Информация о компьютере
             story.append(Paragraph("Информация о компьютере", heading_style))
             
             computer_info_data = [
@@ -765,14 +798,14 @@ class ComputerDetailsWindow(QMainWindow):
                 ["Пользователь", self.current_data.get('login', '—')],
                 ["MAC адрес", self.current_data.get('mac_address', '—')],
                 ["Тип", self.current_data.get('computer_type', '—')],
+                ["Группа", self.current_data.get('group_name', '—')],
+                ["Инв. номер", self.current_data.get('inventory_number', '—')],
                 ["ОС", f"{self.current_data.get('os_name', '—')} {self.current_data.get('os_version', '—')}"],
                 ["CPU", self.current_data.get('cpu_model', '—')],
                 ["RAM", f"{self.current_data.get('ram_total', '—')} GB"],
                 ["Диск", f"{self.current_data.get('storage_total', '—')} GB"],
                 ["GPU", self.current_data.get('gpu_model', '—')],
                 ["Описание", self.current_data.get('description', '—')],
-                ["Расположение", self.current_data.get('location', '—')],
-                ["Отдел", self.current_data.get('department', '—')],
             ]
             
             computer_table = Table(computer_info_data, colWidths=[2*inch, 3*inch])
@@ -794,10 +827,8 @@ class ComputerDetailsWindow(QMainWindow):
             story.append(computer_table)
             story.append(Spacer(1, 0.3*inch))
             
-            # Средние метрики
             story.append(Paragraph("Средние показатели за период", heading_style))
             
-            # Получаем средние метрики
             try:
                 result = APIClient.get('/metrics/average', params={
                     'computer_id': self.computer_id,
@@ -833,7 +864,6 @@ class ComputerDetailsWindow(QMainWindow):
             except Exception as e:
                 print(f"Ошибка получения средних метрик для PDF: {e}")
             
-            # События
             story.append(Paragraph("Статистика событий", heading_style))
             
             if self.event_statistics:
@@ -858,12 +888,11 @@ class ComputerDetailsWindow(QMainWindow):
             
             story.append(Spacer(1, 0.3*inch))
             
-            # Аномалии
             story.append(Paragraph("Аномалии", heading_style))
             
             if self.anomalies:
                 anomalies_data = [["Время", "CPU, %", "RAM, %", "Тип"]]
-                for anomaly in self.anomalies[:50]:  # Ограничиваем 50 записями
+                for anomaly in self.anomalies[:50]:
                     cpu = anomaly.get('cpu_usage', '—')
                     ram = anomaly.get('ram_usage', '—')
                     anomaly_type = []
@@ -893,7 +922,6 @@ class ComputerDetailsWindow(QMainWindow):
             else:
                 story.append(Paragraph("Нет аномалий за выбранный период", normal_style))
             
-            # Создаем PDF
             doc.build(story)
             
             QMessageBox.information(self, "Успех", f"Отчет сохранен в:\n{file_path}")
@@ -916,10 +944,18 @@ class ComputerDetailsWindow(QMainWindow):
                 result = APIClient.get(f'/computers/{self.computer_id}')
                 if result and result.get('success'):
                     self.current_data = result.get('data', {})
+                    # Добавляем group_name из связанной таблицы
+                    if self.current_data.get('group_id'):
+                        group_result = APIClient.get(f'/computers/groups/{self.current_data["group_id"]}')
+                        if group_result and group_result.get('success'):
+                            self.current_data['group_name'] = group_result['data'].get('group_name', '—')
+                    else:
+                        self.current_data['group_name'] = '—'
                 else:
                     self.current_data = self.computer_data
             else:
                 self.current_data = self.computer_data
+                self.current_data['group_name'] = '—'
             
             is_online = self.current_data.get('is_online', False)
             self.status_label.setText("В сети" if is_online else "Не в сети")
@@ -954,8 +990,7 @@ class ComputerDetailsWindow(QMainWindow):
         last_online = data.get('last_online', 'N/A')
         created_at = data.get('created_at', 'N/A')
         description = data.get('description', '—')
-        location = data.get('location', '—')
-        department = data.get('department', '—')
+        group_name = data.get('group_name', '—')
         inventory_number = data.get('inventory_number', '—')
         
         if last_online and isinstance(last_online, str):
@@ -1004,24 +1039,20 @@ class ComputerDetailsWindow(QMainWindow):
                 <td style="padding: 8px;">{bios_version}</td>
             </tr>
             <tr>
+                <td style="padding: 8px;"><b>Группа:</b></td>
+                <td style="padding: 8px;">{group_name}</td>
+                <td style="padding: 8px;"><b>Инв. номер:</b></td>
+                <td style="padding: 8px;">{inventory_number}</td>
+            </tr>
+            <tr>
                 <td style="padding: 8px;"><b>Описание:</b></td>
                 <td style="padding: 8px;" colspan="3">{description}</td>
             </tr>
             <tr>
-                <td style="padding: 8px;"><b>Расположение:</b></td>
-                <td style="padding: 8px;">{location}</td>
-                <td style="padding: 8px;"><b>Отдел:</b></td>
-                <td style="padding: 8px;">{department}</td>
-            </tr>
-            <tr>
-                <td style="padding: 8px;"><b>Инв. номер:</b></td>
-                <td style="padding: 8px;">{inventory_number}</td>
                 <td style="padding: 8px;"><b>Создан:</b></td>
                 <td style="padding: 8px;">{created_at}</td>
-            </tr>
-            <tr>
                 <td style="padding: 8px;"><b>Последний вход:</b></td>
-                <td style="padding: 8px;" colspan="3">{last_online}</td>
+                <td style="padding: 8px;">{last_online}</td>
             </tr>
         </table>
         """
@@ -1041,7 +1072,6 @@ class ComputerDetailsWindow(QMainWindow):
         period = self.date_range.get_period()
         
         try:
-            # Получаем последнюю метрику за выбранный период
             result = APIClient.get('/metrics/performance', params={
                 'computer_id': self.computer_id,
                 'from': period['from'],
@@ -1065,7 +1095,6 @@ class ComputerDetailsWindow(QMainWindow):
                         self.update_computer_info_display()
                     return
             
-            # Если не удалось получить метрики, используем данные из computer_info
             total_gb = self.current_data.get('storage_total')
             if total_gb:
                 self.current_disk_info['total_gb'] = float(total_gb)
@@ -1089,7 +1118,6 @@ class ComputerDetailsWindow(QMainWindow):
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
         
-        # Информация о компьютере
         info_group = QGroupBox("Характеристики компьютера")
         info_group.setStyleSheet("""
             QGroupBox {
@@ -1117,7 +1145,6 @@ class ComputerDetailsWindow(QMainWindow):
         
         scroll_layout.addWidget(info_group)
         
-        # Виджет свободного места на диске
         disk_group = QGroupBox("Состояние диска")
         disk_group.setStyleSheet("""
             QGroupBox {
@@ -1142,7 +1169,6 @@ class ComputerDetailsWindow(QMainWindow):
         
         scroll_layout.addWidget(disk_group)
         
-        # Сводка за период
         summary_group = QGroupBox("Сводка за период")
         summary_group.setStyleSheet("""
             QGroupBox {
@@ -1302,7 +1328,6 @@ class ComputerDetailsWindow(QMainWindow):
         """Вкладка с отчетами"""
         layout = QVBoxLayout(self.tab_reports)
         
-        # Панель управления
         control_panel = QFrame()
         control_panel.setStyleSheet("""
             QFrame {
@@ -1314,7 +1339,6 @@ class ComputerDetailsWindow(QMainWindow):
         control_layout = QGridLayout(control_panel)
         control_layout.setSpacing(15)
         
-        # Что показывать
         control_layout.addWidget(QLabel("Тип данных:"), 0, 0)
         self.report_data_type = QComboBox()
         self.report_data_type.addItems(["Метрики", "События", "Аномалии"])
@@ -1322,14 +1346,12 @@ class ComputerDetailsWindow(QMainWindow):
         self.report_data_type.currentTextChanged.connect(self.on_report_data_type_changed)
         control_layout.addWidget(self.report_data_type, 0, 1)
         
-        # Для метрик - выбор показателя
         control_layout.addWidget(QLabel("Показатель:"), 0, 2)
         self.report_metric = QComboBox()
         self.report_metric.addItems(["Все метрики", "CPU, %", "RAM, %", "Disk, %", "Network, MB/s"])
         self.report_metric.setMinimumWidth(120)
         control_layout.addWidget(self.report_metric, 0, 3)
         
-        # Вид отображения
         control_layout.addWidget(QLabel("Вид:"), 1, 0)
         self.report_view_type = QComboBox()
         self.report_view_type.addItems(["Таблица", "Гистограмма", "Линейный график", "Круговая диаграмма"])
@@ -1337,7 +1359,6 @@ class ComputerDetailsWindow(QMainWindow):
         self.report_view_type.currentTextChanged.connect(self.on_report_view_type_changed)
         control_layout.addWidget(self.report_view_type, 1, 1)
         
-        # Кнопки
         button_layout = QHBoxLayout()
         
         self.generate_btn = QPushButton("Сформировать отчет")
@@ -1356,7 +1377,6 @@ class ComputerDetailsWindow(QMainWindow):
         self.generate_btn.clicked.connect(self.generate_report)
         button_layout.addWidget(self.generate_btn)
         
-        # Кнопка экспорта в PDF
         self.export_pdf_btn = QPushButton("📄 Экспорт в PDF")
         self.export_pdf_btn.setMinimumHeight(35)
         self.export_pdf_btn.setMinimumWidth(150)
@@ -1375,12 +1395,10 @@ class ComputerDetailsWindow(QMainWindow):
         
         control_layout.addLayout(button_layout, 1, 2, 1, 2)
         
-        # Настройка видимости
         self.on_report_data_type_changed(self.report_data_type.currentText())
         
         layout.addWidget(control_panel)
         
-        # Область для отчета
         self.report_area = QScrollArea()
         self.report_area.setWidgetResizable(True)
         self.report_area.setStyleSheet("""
@@ -1407,7 +1425,6 @@ class ComputerDetailsWindow(QMainWindow):
         dialog.exec()
     
     def on_report_data_type_changed(self, data_type):
-        """Обработчик изменения типа данных"""
         self.report_metric.setVisible(data_type == "Метрики")
         
         if data_type == "События":
@@ -1422,7 +1439,7 @@ class ComputerDetailsWindow(QMainWindow):
             self.report_view_type.addItems(["Таблица", "Гистограмма"])
             if current_view not in ["Таблица", "Гистограмма"]:
                 self.report_view_type.setCurrentText("Таблица")
-        else:  # Метрики
+        else:
             current_view = self.report_view_type.currentText()
             self.report_view_type.clear()
             self.report_view_type.addItems(["Таблица", "Гистограмма", "Линейный график"])
@@ -1433,7 +1450,6 @@ class ComputerDetailsWindow(QMainWindow):
         pass
     
     def refresh_all_data(self):
-        """Обновляет все данные"""
         if not self.computer_id:
             self.load_computer_info()
             if not self.computer_id:
@@ -1769,7 +1785,6 @@ class ComputerDetailsWindow(QMainWindow):
             self.anomalies_table.setRowCount(0)
     
     def generate_report(self):
-        """Генерирует отчет на основе выбранных параметров"""
         data_type = self.report_data_type.currentText()
         view_type = self.report_view_type.currentText()
         period = self.date_range.get_period()

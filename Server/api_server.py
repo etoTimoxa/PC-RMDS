@@ -5,6 +5,7 @@ API Server - Flask REST API для админки
 import sys
 import os
 import atexit
+from datetime import datetime
 
 # Добавляем путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +25,7 @@ from routes import (
     sessions_bp  
 )
 
-# Импортируем функцию из sessions.py (НО НЕ через blueprint)
+# Импортируем функцию из sessions.py
 from routes.sessions import auto_close_inactive_sessions
 
 # Глобальная переменная для планировщика
@@ -33,6 +34,7 @@ scheduler = None
 
 def close_inactive_sessions_job(app):
     """Задача для закрытия неактивных сессий"""
+    print(f"[SCHEDULER] Запуск проверки неактивных сессий в {datetime.now().strftime('%H:%M:%S')}")
     with app.app_context():
         try:
             # Вызываем функцию напрямую
@@ -107,6 +109,7 @@ def create_app():
     @app.route('/api/maintenance/close-inactive-sessions', methods=['GET', 'POST'])
     def manual_close_inactive():
         """Ручной вызов закрытия неактивных сессий"""
+        print(f"[MANUAL] Ручной вызов закрытия сессий в {datetime.now().strftime('%H:%M:%S')}")
         return auto_close_inactive_sessions()
     
     # Эндпоинт для проверки статуса планировщика
@@ -164,6 +167,7 @@ def create_app():
     
     scheduler.start()
     print("[SCHEDULER] Запущен планировщик авто-закрытия сессий (каждую минуту)")
+    print(f"[SCHEDULER] Следующий запуск: {scheduler.get_job('close_inactive_sessions').next_run_time}")
     
     # Останавливаем планировщик при завершении приложения
     atexit.register(lambda: scheduler.shutdown() if scheduler else None)

@@ -38,9 +38,31 @@ class AdminPanelWindow(QMainWindow):
         self.init_ui()
         self.setup_tray()
         
+        # Таймер для обновления данных таблицы (каждые 30 секунд)
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_data)
         self.refresh_timer.start(30000)
+        
+        # Таймер для обновления активности сессии (каждые 5 минут)
+        self.activity_timer = QTimer()
+        self.activity_timer.timeout.connect(self.update_session_activity)
+        self.activity_timer.start(5 * 60 * 1000)  # 5 минут в миллисекундах
+        
+        # Сразу обновляем активность при запуске
+        self.update_session_activity()
+    
+    def update_session_activity(self):
+        """Обновляет активность сессии администратора"""
+        session_id = self.computer_data.get('session_id')
+        if session_id:
+            try:
+                success = DatabaseManager.update_session_activity(session_id)
+                if success:
+                    print(f"[ADMIN] ✅ Активность сессии {session_id} обновлена")
+                else:
+                    print(f"[ADMIN] ⚠️ Не удалось обновить активность сессии {session_id}")
+            except Exception as e:
+                print(f"[ADMIN] ❌ Ошибка обновления активности: {e}")
     
     def init_ui(self):
         self.setWindowIcon(get_app_icon())
@@ -175,6 +197,13 @@ class AdminPanelWindow(QMainWindow):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         
+        # Добавляем индикатор статуса сессии
+        self.session_status_label = QLabel("● Сессия активна")
+        self.session_status_label.setStyleSheet("color: #27ae60; font-size: 12px; padding: 5px;")
+        btn_layout.addWidget(self.session_status_label)
+        
+        btn_layout.addStretch()
+        
         logout_btn = QPushButton("Выйти")
         logout_btn.setMinimumHeight(40)
         logout_btn.setMinimumWidth(140)
@@ -195,7 +224,7 @@ class AdminPanelWindow(QMainWindow):
         
         main_layout.addLayout(btn_layout)
         
-        self.statusBar().showMessage(f"Администратор: {self.computer_data.get('login', 'Unknown')} | PC-RMDS")
+        self.statusBar().showMessage(f"Администратор: {self.computer_data.get('login', 'Unknown')} | PC-RMDS | Сессия ID: {self.computer_data.get('session_id', 'N/A')}")
         
         self.refresh_data()
     
@@ -349,13 +378,24 @@ class AdminPanelWindow(QMainWindow):
                 'is_online': status_item.text() == "Онлайн" if status_item else False
             }
             
-            from .computer_details_windows import ComputerDetailsWindow
+            from .computer_details import ComputerDetailsWindow
             self.details_window = ComputerDetailsWindow(hostname, computer_data)
             self.hide()
             self.details_window.show()
             
         except Exception as e:
             print(f"Ошибка открытия деталей компьютера: {e}")
+    
+    def close_session(self):
+        """Закрывает сессию администратора"""
+        session_id = self.computer_data.get('session_id')
+        if session_id:
+            print(f"[ADMIN] Закрытие сессии {session_id}...")
+            try:
+                DatabaseManager.close_session_by_id(session_id)
+                print(f"[ADMIN] ✅ Сессия {session_id} закрыта")
+            except Exception as e:
+                print(f"[ADMIN] ❌ Ошибка закрытия сессии: {e}")
     
     def logout(self):
         """Выход из системы"""
@@ -368,6 +408,13 @@ class AdminPanelWindow(QMainWindow):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
+            # Останавливаем таймеры
+            self.refresh_timer.stop()
+            self.activity_timer.stop()
+            
+            # Закрываем сессию перед выходом
+            self.close_session()
+            
             settings = QSettings("RemoteAccess", "Agent")
             settings.setValue("auto_auth", False)
             settings.sync()
@@ -379,6 +426,13 @@ class AdminPanelWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Обработка закрытия окна"""
+        # Останавливаем таймеры
+        self.refresh_timer.stop()
+        self.activity_timer.stop()
+        
+        # Закрываем сессию при закрытии окна
+        self.close_session()
+        
         event.ignore()
         self.hide()
         if self.tray_icon:

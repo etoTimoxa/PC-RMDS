@@ -64,7 +64,7 @@ class RemoteAgentThread(QThread):
         self.hostname = computer_data['hostname']
         self.screenshot_interval = screenshot_interval
         self.quality = quality
-        self.max_resolution = max_resolution  # Максимальное разрешение для оптимизации
+        self.max_resolution = max_resolution
         self.is_running = True
         self.is_connected = False
         self.connected_clients = 0
@@ -72,17 +72,16 @@ class RemoteAgentThread(QThread):
         self.streaming_clients = set()
         self.ws = None
         self.sending_screenshots = False
-        self.adaptive_quality = quality  # Адаптивное качество
-        self.network_speed_test_counter = 0  # Счетчик для проверки скорости сети
-        self.fast_network = True  # Флаг быстрой сети
+        self.adaptive_quality = quality
+        self.network_speed_test_counter = 0
+        self.fast_network = True
         
         self.json_logger = JSONLogger()
         self.cloud_uploader = CloudUploader(self.json_logger)
         self.json_logger.set_session(self.hostname, self.session_token, self.cloud_uploader)
         self.event_grouper = EventGrouper()
-        self.initial_events_collected = False  # Флаг для предотвращения повторного сбора событий
+        self.initial_events_collected = False
         
-        # Устанавливаем callback для логирования действий пользователя
         self._setup_user_action_callback()
         
         self.mouse = MouseController()
@@ -96,22 +95,16 @@ class RemoteAgentThread(QThread):
     def _setup_user_action_callback(self):
         """Настраивает callback для логирования действий пользователя."""
         def on_user_action(action_type: str, description: str, details: dict):
-            # Определяем тип пользователя (клиент или админ)
-            # Приоритет: user_type из события (если есть) > role_id из computer_data
             user_type = details.get('user_type')
             if user_type:
-                # Используем тип пользователя из события (client, admin, system)
                 user_role = user_type
             else:
-                # Fallback на role_id из computer_data
                 user_role = 'client'
-                if self.computer_data.get('role_id') in (2, 3):  # admin или superadmin
+                if self.computer_data.get('role_id') in (2, 3):
                     user_role = 'admin'
             
-            # Определяем, удалённо ли выполнено действие
             is_remote = details.get('is_remote', False)
             
-            # Добавляем действие в JSON лог
             self.json_logger.add_user_action(
                 action_type=action_type,
                 description=description,
@@ -120,19 +113,17 @@ class RemoteAgentThread(QThread):
                 user_role=user_role,
                 is_remote=is_remote,
                 details=details,
-                force_write=True  # Сразу записываем важные события
+                force_write=True
             )
             
             self.log_message.emit(f"📝 Зафиксировано действие: {description}")
         
-        # Устанавливаем callback в WindowsEventCollector
         WindowsEventCollector.set_user_action_callback(on_user_action)
     
     def _handle_system_shutdown(self):
         """Обрабатывает сигнал выключения/перезагрузки системы."""
         self.log_message.emit("⚠️ Обнаружена команда на выключение/перезагрузку системы")
         
-        # Записываем событие в лог
         self.json_logger.add_user_action(
             action_type='shutdown',
             description='Выключение системы',
@@ -144,10 +135,7 @@ class RemoteAgentThread(QThread):
             force_write=True
         )
         
-        # Останавливаем агент
         self.stop()
-        
-        # Завершаем приложение
         self._shutdown_app()
     
     def _shutdown_app(self):
@@ -174,7 +162,6 @@ class RemoteAgentThread(QThread):
         asyncio.run(self.agent_main())
     
     async def collect_initial_metrics_and_events(self):
-        # Пропускаем если события уже были собраны
         if self.initial_events_collected:
             return
             
@@ -182,30 +169,22 @@ class RemoteAgentThread(QThread):
         self.json_logger.add_metric(metrics)
         
         if self.json_logger.should_collect_events():
-            # Собираем события с момента последней загрузки системы
-            # Это позволяет обнаружить перезагрузку/выключение, которые произошли до запуска агента
             events = WindowsEventCollector.get_events_since_boot()
             if events:
-                # Сначала проверяем события перезагрузки/выключения/загрузки
                 restart_shutdown_events = WindowsEventCollector.detect_restart_shutdown_events(events)
                 if restart_shutdown_events:
                     for action_info in restart_shutdown_events:
                         action_type = action_info.get('action_type', 'shutdown')
-                        # Вызываем callback для логирования действия
                         if WindowsEventCollector._user_action_callback:
                             from utils.constants import USER_ACTION_TYPES
                             description = USER_ACTION_TYPES.get(action_type, {}).get('description', action_type)
                             WindowsEventCollector._user_action_callback(action_type, description, action_info)
                         
-                        # Если обнаружена перезагрузка или выключение или загрузка
                         if action_type in ('restart', 'shutdown', 'system_boot', 'windows_restart', 'windows_shutdown'):
                             self.log_message.emit(f"⚠️ Обнаружено: {description}")
                 
-                # Потом группируем и записываем все события
                 grouped_events = self.event_grouper.group_events(events)
                 self.json_logger.add_windows_events(grouped_events, is_initial=True)
-                
-                # Помечаем что начальная коллекция событий выполнена
                 self.initial_events_collected = True
     
     async def collect_metrics_periodically(self):
@@ -227,20 +206,16 @@ class RemoteAgentThread(QThread):
                     break
                 events = WindowsEventCollector.get_new_events()
                 if events:
-                    # Проверяем события перезагрузки/выключения
                     restart_shutdown_events = WindowsEventCollector.detect_restart_shutdown_events(events)
                     if restart_shutdown_events:
                         for action_info in restart_shutdown_events:
                             action_type = action_info.get('action_type', 'shutdown')
-                            # Вызываем callback для логирования действия
                             if WindowsEventCollector._user_action_callback:
                                 description = 'Перезагрузка компьютера' if action_type == 'restart' else 'Выключение компьютера'
                                 WindowsEventCollector._user_action_callback(action_type, description, action_info)
                             
-                            # Если обнаружена перезагрузка или выключение
                             if action_type in ('restart', 'shutdown'):
                                 self.log_message.emit(f"⚠️ Обнаружено {description}")
-                                # Запускаем обработку в отдельной задаче
                                 asyncio.create_task(self._handle_system_shutdown_async())
                     
                     grouped_events = self.event_grouper.group_events(events)
@@ -251,21 +226,20 @@ class RemoteAgentThread(QThread):
     async def _handle_system_shutdown_async(self):
         """Асинхронная обработка сигнала выключения/перезагрузки системы."""
         try:
-            # Даем время на запись в лог
             await asyncio.sleep(2)
             self._handle_system_shutdown()
         except Exception as e:
             print(f"Ошибка обработки выключения системы: {e}")
     
     async def update_activity_periodically(self):
-        """Обновляет активность сессии на основе активности системы"""
+        """Обновляет активность сессии каждые 5 минут"""
         while self.is_running:
             try:
-                await asyncio.sleep(ACTIVITY_UPDATE_INTERVAL)
-                if self.session_id:
-                    # Проверяем активность системы
-                    if SystemActivityMonitor.is_system_active():
-                        APIClient.update_session_activity(self.session_id)
+                await asyncio.sleep(5 * 60)  # 5 минут
+                if self.is_running and self.session_id:
+                    success = APIClient.update_session_activity(self.session_id)
+                    if success:
+                        self.log_message.emit(f"🔄 Обновлена активность сессии {self.session_id}")
             except Exception as e:
                 self.log_message.emit(f"Ошибка обновления активности: {e}")
     
@@ -296,7 +270,6 @@ class RemoteAgentThread(QThread):
                 metrics = SystemInfoCollector.get_performance_metrics()
                 self.json_logger.add_metric(metrics)
                 
-                # Проверяем и помечаем вчерашний файл для отправки
                 if self.json_logger.check_and_mark_yesterday_file():
                     self.log_message.emit("Вчерашний файл помечен для отправки")
                 
@@ -310,7 +283,6 @@ class RemoteAgentThread(QThread):
             APIClient.update_json_sent_count(self.session_id, uploaded)
             self.log_message.emit(f"Загружено файлов при старте: {uploaded}")
         
-        # Проверяем и помечаем вчерашний файл
         if self.json_logger.check_and_mark_yesterday_file():
             self.log_message.emit("Вчерашний файл помечен для отправки")
     
@@ -375,12 +347,10 @@ class RemoteAgentThread(QThread):
     
     def _optimize_screenshot(self, img):
         """Оптимизирует скриншот: уменьшает разрешение и подбирает качество"""
-        # Уменьшаем разрешение если оно больше максимального
         max_width, max_height = self.max_resolution
         width, height = img.size
         
         if width > max_width or height > max_height:
-            # Сохраняем пропорции
             ratio = min(max_width / width, max_height / height)
             new_width = int(width * ratio)
             new_height = int(height * ratio)
@@ -392,11 +362,9 @@ class RemoteAgentThread(QThread):
         """Адаптивная подстройка качества на основе времени отправки"""
         self.network_speed_test_counter += 1
         
-        # Проверяем каждые 10 кадров
         if self.network_speed_test_counter >= 10:
             self.network_speed_test_counter = 0
             
-            # Если отправка занимает больше 200мс - сеть медленная
             if send_time > 0.2:
                 if self.fast_network:
                     self.fast_network = False
@@ -405,7 +373,6 @@ class RemoteAgentThread(QThread):
                 else:
                     self.adaptive_quality = max(30, self.adaptive_quality - 5)
             else:
-                # Если отправка быстрая - повышаем качество
                 if not self.fast_network:
                     self.fast_network = True
                     self.adaptive_quality = min(self.quality, self.adaptive_quality + 10)
@@ -424,27 +391,20 @@ class RemoteAgentThread(QThread):
             if screen is None:
                 return None
             
-            # Захватываем весь экран
-            pixmap = screen.grabWindow(0)  # 0 = весь экран
+            pixmap = screen.grabWindow(0)
             
             if pixmap.isNull():
                 return None
             
-            # Конвертируем в PIL Image
             width = pixmap.width()
             height = pixmap.height()
             
-            # Конвертируем QPixmap в QImage, затем в bytes
             image = pixmap.toImage()
             
-            # Получаем сырые данные изображения
             ptr = image.constBits()
             ptr.setsize(image.byteCount())
             
-            # Создаем PIL изображение из данных
             img = Image.frombytes("RGBA", (width, height), ptr.asstring())
-            
-            # Конвертируем в RGB (убираем альфа-канал)
             img = img.convert("RGB")
             
             return img
@@ -457,24 +417,17 @@ class RemoteAgentThread(QThread):
         """Создает скриншот на Linux через mss (для X11)."""
         try:
             with mss.mss() as sct:
-                # Получаем список мониторов
                 monitors = sct.monitors
                 
-                # Если есть мониторы, берем основной (индекс 1)
-                # monitors[0] - это все мониторы вместе
                 if len(monitors) > 1:
-                    monitor = monitors[1]  # Основной монитор
+                    monitor = monitors[1]
                 elif len(monitors) == 1:
                     monitor = monitors[0]
                 else:
                     self.log_message.emit("Мониторы не найдены")
                     return None
                 
-                # Захватываем скриншот
                 sct_img = sct.grab(monitor)
-                
-                # Конвертируем в PIL Image
-                # mss возвращает данные в формате BGR для X11
                 img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
                 
                 return img
@@ -486,12 +439,10 @@ class RemoteAgentThread(QThread):
     def _take_screenshot(self):
         """Создает скриншот экрана (кроссплатформенно)"""
         if platform.system() == "Linux":
-            # На Linux сначала пробуем mss (работает на X11)
             img = self._take_screenshot_linux_mss()
             if img is not None:
                 return img
             
-            # Если mss не сработал, пробуем PyQt6 как запасной вариант
             img = self._take_screenshot_qt()
             if img is not None:
                 return img
@@ -499,17 +450,15 @@ class RemoteAgentThread(QThread):
             self.log_message.emit("Не удалось создать скриншот на Linux")
             return None
         else:
-            # На Windows используем mss (быстрее)
             try:
                 with mss.mss() as sct:
-                    monitor = sct.monitors[1]  # Основной монитор
+                    monitor = sct.monitors[1]
                     sct_img = sct.grab(monitor)
                     img = Image.frombytes("RGB", sct_img.size, sct_img.rgb)
                     return img
             except Exception as e:
                 self.log_message.emit(f"Ошибка mss: {e}")
                 
-                # На Windows тоже пробуем Qt как запасной вариант
                 img = self._take_screenshot_qt()
                 if img is not None:
                     return img
@@ -520,13 +469,12 @@ class RemoteAgentThread(QThread):
     async def screenshot_loop(self, ws):
         self.sending_screenshots = True
         error_count = 0
-        max_errors = 5  # Максимальное количество ошибок подряд перед остановкой
+        max_errors = 5
         
         while self.sending_screenshots and self.is_connected and self.is_running and len(self.streaming_clients) > 0:
             try:
                 start_time = time.time()
                 
-                # Создаем скриншот
                 img = self._take_screenshot()
                 
                 if img is None:
@@ -534,16 +482,13 @@ class RemoteAgentThread(QThread):
                     if error_count >= max_errors:
                         self.log_message.emit(f"Слишком много ошибок скриншота ({max_errors}), остановка")
                         break
-                    # Ждем немного перед следующей попыткой
                     await asyncio.sleep(1)
                     continue
                 
-                error_count = 0  # Сбрасываем счетчик ошибок при успешном скриншоте
+                error_count = 0
                 
-                # Оптимизируем изображение
                 img = self._optimize_screenshot(img)
                 
-                # Используем адаптивное качество
                 current_quality = self.adaptive_quality
                 
                 buffer = BytesIO()
@@ -564,7 +509,6 @@ class RemoteAgentThread(QThread):
                 
                 send_time = time.time() - start_time
                 
-                # Адаптивная подстройка качества
                 await self._adaptive_quality_control(send_time)
                 
                 elapsed = time.time() - start_time
@@ -577,7 +521,6 @@ class RemoteAgentThread(QThread):
                 error_count += 1
                 if error_count >= max_errors:
                     break
-                # Ждем перед следующей попыткой
                 await asyncio.sleep(1)
         
         self.sending_screenshots = False
@@ -588,11 +531,9 @@ class RemoteAgentThread(QThread):
             async for msg in ws:
                 data = json.loads(msg)
                 cmd_type = data.get("type")
-                # Извлекаем client_id из разных возможных полей
                 client_id = data.get("client_id") or data.get("data", {}).get("client_id", "unknown")
                 
                 if cmd_type == "register_client":
-                    # Сервер присылает register_client когда клиент подключается
                     if client_id not in self.connected_clients_list:
                         self.connected_clients += 1
                         self.connected_clients_list.append(client_id)
@@ -603,7 +544,6 @@ class RemoteAgentThread(QThread):
                 elif cmd_type == "start_stream":
                     self.streaming_clients.add(client_id)
                     if not self.sending_screenshots and len(self.streaming_clients) > 0:
-                        # Создаем задачу и сохраняем ссылку на нее
                         screenshot_task = asyncio.create_task(self.screenshot_loop(ws))
                         self.log_message.emit(f"Запуск трансляции для клиента {client_id}")
                 
@@ -615,7 +555,6 @@ class RemoteAgentThread(QThread):
                         self.log_message.emit(f"Остановка трансляции")
                 
                 elif cmd_type == "unregister_client":
-                    # Удаляем клиента из списков
                     if client_id in self.connected_clients_list:
                         self.connected_clients_list.remove(client_id)
                         self.connected_clients -= 1
@@ -626,7 +565,6 @@ class RemoteAgentThread(QThread):
                         self.sending_screenshots = False
                 
                 elif cmd_type == "mouse_move":
-                    # Извлекаем данные из поля data или command_data
                     command_data = data.get("data", {})
                     if not command_data:
                         command_data = data.get("command_data", {})
@@ -651,12 +589,10 @@ class RemoteAgentThread(QThread):
                     await self.handle_keyboard_input(command_data)
                 
                 elif cmd_type == "key_press":
-                    # Альтернативный формат команды клавиатуры
                     command_data = data.get("data", {})
                     await self.handle_keyboard_input(command_data)
                 
                 elif cmd_type == "request_system_info":
-                    # Отправляем системную информацию (можно реализовать отдельно)
                     self.log_message.emit("Запрос системной информации")
                 
                 else:
@@ -665,7 +601,6 @@ class RemoteAgentThread(QThread):
         except Exception as e:
             self.log_message.emit(f"Ошибка в receive_commands: {e}")
         finally:
-            # Отменяем задачу скриншотов при выходе
             if screenshot_task and not screenshot_task.done():
                 screenshot_task.cancel()
                 self.sending_screenshots = False
@@ -716,6 +651,19 @@ class RemoteAgentThread(QThread):
         except:
             pass
     
+    def close_session(self):
+        """Закрывает текущую сессию (статус = 2)"""
+        if self.session_id:
+            self.log_message.emit(f"🔒 Закрытие сессии {self.session_id}...")
+            try:
+                success = APIClient.close_session_by_id(self.session_id)
+                if success:
+                    self.log_message.emit(f"✅ Сессия {self.session_id} закрыта")
+                else:
+                    self.log_message.emit(f"⚠️ Не удалось закрыть сессию {self.session_id}")
+            except Exception as e:
+                self.log_message.emit(f"⚠️ Ошибка закрытия сессии: {e}")
+    
     def stop(self):
         self.log_message.emit("🛑 Остановка агента...")
         self.is_running = False
@@ -724,7 +672,15 @@ class RemoteAgentThread(QThread):
         self.connected_clients_list.clear()
         self.sending_screenshots = False
         
-        APIClient.update_computer_status(self.computer_id, False, self.session_id)
+        # Закрываем сессию при остановке
+        self.close_session()
+        
+        # Обновляем статус компьютера на офлайн
+        try:
+            APIClient.update_computer_status(self.computer_id, False, self.session_id)
+        except Exception as e:
+            self.log_message.emit(f"⚠️ Ошибка обновления статуса: {e}")
+        
         self.log_message.emit(f"✅ Агент остановлен")
 
 
@@ -752,25 +708,19 @@ class RemoteAgentWindow(QMainWindow):
     
     def get_app_icon(self) -> QIcon:
         """Возвращает иконку приложения (кроссплатформенно)"""
-        # Определяем базовый путь для frozen/unfrozen состояния
         if getattr(sys, '_MEIPASS', None):
-            # Запущено через PyInstaller
             base_path = Path(sys._MEIPASS)
         else:
-            # Запущено в режиме разработки
             base_path = Path(__file__).parent.parent
         
-        # Пробуем PNG (для Linux/AppImage)
         icon_path = base_path / "app_icon.png"
         if icon_path.exists():
             return QIcon(str(icon_path))
         
-        # Пробуем ICO (для Windows)
         icon_path = base_path / "app_icon.ico"
         if icon_path.exists():
             return QIcon(str(icon_path))
         
-        # Пробуем в текущей директории
         icon_path = Path.cwd() / "app_icon.png"
         if icon_path.exists():
             return QIcon(str(icon_path))
@@ -779,7 +729,6 @@ class RemoteAgentWindow(QMainWindow):
         if icon_path.exists():
             return QIcon(str(icon_path))
         
-        # Если иконка не найдена, создаем цветной квадрат
         pixmap = QPixmap(32, 32)
         pixmap.fill(QColor(255, 140, 66))
         return QIcon(pixmap)
@@ -931,7 +880,6 @@ class RemoteAgentWindow(QMainWindow):
         self.auto_start = settings.value("auto_start", True, type=bool)
         self.first_run = settings.value("first_run", True, type=bool)
         
-        # При первом запуске устанавливаем значения по умолчанию
         if self.first_run:
             settings.setValue("first_run", False)
             settings.setValue("auto_start", True)
@@ -943,8 +891,6 @@ class RemoteAgentWindow(QMainWindow):
             self.auto_auth = True
             self.auto_start = True
         
-        # Всегда проверяем автозагрузку при запуске
-        # Если автозагрузка включена, добавляем в реестр
         if self.auto_start:
             self.add_to_startup()
     
@@ -1009,7 +955,6 @@ class RemoteAgentWindow(QMainWindow):
             app_path = sys.executable if getattr(sys, 'frozen', False) else sys.executable
             app_dir = os.path.dirname(app_path) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
             
-            # Создаем .desktop файл для автозагрузки
             desktop_content = f"""[Desktop Entry]
 Type=Application
 Name=Remote Access Agent
@@ -1019,7 +964,6 @@ Terminal=false
 X-GNOME-Autostart-enabled=true
 """
             
-            # Путь к автозагрузке пользователя
             autostart_dir = os.path.expanduser("~/.config/autostart")
             os.makedirs(autostart_dir, exist_ok=True)
             
@@ -1027,7 +971,6 @@ X-GNOME-Autostart-enabled=true
             with open(desktop_file, 'w') as f:
                 f.write(desktop_content)
             
-            # Делаем файл исполняемым
             os.chmod(desktop_file, 0o755)
             
         except Exception as e:
@@ -1144,9 +1087,20 @@ X-GNOME-Autostart-enabled=true
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
+            # Закрываем сессию перед выходом
+            session_id = self.computer_data.get('session_id')
+            if session_id:
+                print(f"[MAIN] Завершение работы, закрываем сессию {session_id}...")
+                try:
+                    DatabaseManager.close_session_by_id(session_id)
+                    print(f"[MAIN] ✅ Сессия {session_id} закрыта")
+                except Exception as e:
+                    print(f"[MAIN] ❌ Ошибка закрытия сессии: {e}")
+            
             if self.agent_thread:
                 self.agent_thread.stop()
                 self.agent_thread.wait(3000)
+            
             if self.computer_data.get('computer_id'):
                 DatabaseManager.update_computer_status(
                     self.computer_data['computer_id'], False,
@@ -1159,9 +1113,19 @@ X-GNOME-Autostart-enabled=true
             event.ignore()
             self.hide()
         else:
+            # Закрываем сессию при закрытии окна
+            session_id = self.computer_data.get('session_id')
+            if session_id:
+                print(f"[MAIN] Закрытие окна, закрываем сессию {session_id}...")
+                try:
+                    DatabaseManager.close_session_by_id(session_id)
+                except Exception as e:
+                    print(f"[MAIN] Ошибка закрытия сессии: {e}")
+            
             if self.agent_thread:
                 self.agent_thread.stop()
                 self.agent_thread.wait(3000)
+            
             if self.computer_data.get('computer_id'):
                 DatabaseManager.update_computer_status(
                     self.computer_data['computer_id'], False,

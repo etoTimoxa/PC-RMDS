@@ -79,6 +79,83 @@ def create_session():
         }), 500
 
 
+@sessions_bp.route('/auto-close-inactive', methods=['POST'])
+def auto_close_inactive_sessions():
+    """
+    POST /api/sessions/auto-close-inactive
+    Автоматическое закрытие неактивных сессий (вызывается по расписанию)
+    """
+    try:
+        # Находим сессии, у которых last_activity старше 10 минут
+        inactive_sessions = mysql.fetch_all("""
+            SELECT session_id, computer_id, user_id, last_activity, start_time
+            FROM session
+            WHERE status_id = 1
+                AND (
+                    last_activity < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+                    OR (last_activity IS NULL AND start_time < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+                )
+        """)
+        
+        closed_count = 0
+        closed_sessions = []
+        
+        for session in inactive_sessions:
+            session_id = session['session_id']
+            computer_id = session['computer_id']
+            
+            # Закрываем сессию
+            mysql.execute("""
+                UPDATE session 
+                SET status_id = 2, end_time = NOW(), error_count = error_count + 1
+                WHERE session_id = %s AND status_id = 1
+            """, (session_id,))
+            
+            closed_count += 1
+            closed_sessions.append({
+                'session_id': session_id,
+                'computer_id': computer_id,
+                'last_activity': session.get('last_activity'),
+                'start_time': session.get('start_time')
+            })
+            
+            print(f"🔒 Авто-закрытие сессии {session_id} (компьютер {computer_id}) - неактивна более 10 минут")
+        
+        # Обновляем статус компьютеров, у которых больше нет активных сессий
+        if closed_sessions:
+            computer_ids = list(set([s['computer_id'] for s in closed_sessions]))
+            
+            for computer_id in computer_ids:
+                active_count = mysql.fetch_one("""
+                    SELECT COUNT(*) as count FROM session
+                    WHERE computer_id = %s AND status_id = 1
+                """, (computer_id,))
+                
+                if active_count and active_count['count'] == 0:
+                    mysql.execute("""
+                        UPDATE computer SET is_online = 0, last_online = NOW()
+                        WHERE computer_id = %s AND is_online = 1
+                    """, (computer_id,))
+                    print(f"📴 Компьютер {computer_id} переведен в офлайн (нет активных сессий)")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Автоматически закрыто {closed_count} неактивных сессий',
+            'data': {
+                'closed_count': closed_count,
+                'closed_sessions': closed_sessions,
+                'timestamp': datetime.now().isoformat()
+            }
+        })
+        
+    except Exception as e:
+        print(f"❌ Ошибка авто-закрытия сессий: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @sessions_bp.route('', methods=['GET'])
 def get_sessions():
     try:

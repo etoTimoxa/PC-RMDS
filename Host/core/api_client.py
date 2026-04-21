@@ -439,20 +439,19 @@ class APIClient:
             return None
 
     @classmethod
-    def close_session(cls, computer_id: int, session_id: int) -> bool:
-        """Принудительно закрыть сессию компьютера"""
-        try:
-            response = requests.post(
-                f"{API_BASE_URL}/api/computers/{computer_id}/sessions/{session_id}/close",
-                headers=cls._headers(),
-                timeout=10
-            )
-            response.raise_for_status()
-            data = response.json()
-            return data.get('success', False)
-        except Exception as e:
-            print(f"Ошибка закрытия сессии: {e}")
-            return False
+    def close_session(self):
+        """Закрывает текущую сессию (статус = 2)"""
+        if self.session_id:
+            self.log_message.emit(f"🔒 Закрытие сессии {self.session_id}...")
+            try:
+                # Вызываем метод без аргументов, он сам возьмет session_id
+                success = APIClient.close_session_by_id(self.session_id)
+                if success:
+                    self.log_message.emit(f"✅ Сессия {self.session_id} закрыта")
+                else:
+                    self.log_message.emit(f"⚠️ Не удалось закрыть сессию {self.session_id}")
+            except Exception as e:
+                self.log_message.emit(f"⚠️ Ошибка закрытия сессии: {e}")
     
     # ==============================================
     # ГРУППЫ КОМПЬЮТЕРОВ
@@ -633,18 +632,20 @@ class APIClient:
 
     @classmethod
     def close_session_by_id(cls, session_id: int = None) -> bool:
-        """Закрыть сессию"""
+        """Закрывает сессию (статус = 2)"""
         try:
-            sid = session_id if session_id is not None else cls.current_session_id
+            # Если session_id не передан, используем текущий
+            if session_id is None:
+                session_id = cls.current_session_id
             
-            if not sid:
-                print("⚠️ Нет активной сессии для закрытия")
+            if not session_id:
+                print("⚠️ Нет ID сессии для закрытия")
                 return False
             
-            print(f"🔵 Закрытие сессии {sid}")
+            print(f"🔵 Закрытие сессии {session_id}")
             
             response = requests.put(
-                f"{API_BASE_URL}/api/sessions/{sid}",
+                f"{API_BASE_URL}/api/sessions/{session_id}",
                 json={
                     "status_id": 2,
                     "end_time": datetime.now().isoformat()
@@ -653,13 +654,19 @@ class APIClient:
                 timeout=10
             )
             response.raise_for_status()
+            data = response.json()
             
-            if cls.current_computer_id:
-                cls.update_computer_status(cls.current_computer_id, False, sid)
-            
-            cls.current_session_id = None
-            print(f"✅ Сессия {sid} закрыта")
-            return True
+            if data.get('success'):
+                # Очищаем текущую сессию, если это она
+                if cls.current_session_id == session_id:
+                    cls.current_session_id = None
+                
+                print(f"✅ Сессия {session_id} закрыта")
+                return True
+            else:
+                print(f"❌ Ошибка закрытия сессии: {data.get('error', 'Unknown error')}")
+                return False
+                
         except Exception as e:
             print(f"❌ Ошибка закрытия сессии: {e}")
             return False

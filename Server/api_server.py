@@ -24,6 +24,9 @@ from routes import (
     sessions_bp  
 )
 
+# Импортируем функцию из sessions.py (НО НЕ через blueprint)
+from routes.sessions import auto_close_inactive_sessions
+
 # Глобальная переменная для планировщика
 scheduler = None
 
@@ -32,13 +35,11 @@ def close_inactive_sessions_job(app):
     """Задача для закрытия неактивных сессий"""
     with app.app_context():
         try:
-            from routes.sessions import sessions_bp
-            # Создаем тестовый запрос к эндпоинту
-            with app.test_request_context():
-                response = sessions_bp.dispatch_request('auto_close_inactive_sessions')
-                if response and hasattr(response, 'json'):
-                    data = response.json
-                    print(f"[SCHEDULER] {data.get('message', 'OK')} - {data.get('data', {}).get('timestamp', '')}")
+            # Вызываем функцию напрямую
+            response = auto_close_inactive_sessions()
+            if response and hasattr(response, 'json'):
+                data = response.json
+                print(f"[SCHEDULER] {data.get('message', 'OK')}")
         except Exception as e:
             print(f"[SCHEDULER] Ошибка: {e}")
 
@@ -103,13 +104,10 @@ def create_app():
         })
     
     # Эндпоинт для ручного вызова закрытия сессий
-    @app.route('/api/maintenance/close-inactive-sessions', methods=['POST'])
+    @app.route('/api/maintenance/close-inactive-sessions', methods=['GET', 'POST'])
     def manual_close_inactive():
         """Ручной вызов закрытия неактивных сессий"""
-        from routes.sessions import sessions_bp
-        with app.test_request_context():
-            response = sessions_bp.dispatch_request('auto_close_inactive_sessions')
-            return response
+        return auto_close_inactive_sessions()
     
     # Эндпоинт для проверки статуса планировщика
     @app.route('/api/maintenance/scheduler-status', methods=['GET'])
@@ -197,7 +195,6 @@ def main():
  ║    GET  /api/sessions            - Список сессий         ║
  ║    GET  /api/sessions/active     - Активные сессии       ║
  ║    PUT  /api/sessions/<id>       - Обновление сессии     ║
- ║    POST /api/sessions/auto-close-inactive - Авто-закрытие ║
  ║    GET  /api/users               - Список пользователей  ║
  ║    GET  /api/statuses            - Список статусов       ║
  ║    GET  /api/metrics             - Метрики из S3         ║
@@ -213,7 +210,7 @@ def main():
         port=port,
         debug=debug,
         threaded=True,
-        use_reloader=False  # Отключаем перезагрузчик, чтобы планировщик не запускался дважды
+        use_reloader=False
     )
 
 

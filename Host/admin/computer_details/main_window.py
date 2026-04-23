@@ -1,13 +1,24 @@
 """Основное окно детальной информации о компьютере"""
 
 import sys
+import asyncio
+import json
+import base64
 from datetime import datetime, timedelta
+from io import BytesIO
+from pathlib import Path
+from PIL import Image
+
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                            QLabel, QPushButton, QFrame, QTabWidget, QMessageBox, QDialog)
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+                            QLabel, QPushButton, QFrame, QTabWidget, QMessageBox, 
+                            QDialog, QSplitter, QApplication)
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QPixmap, QImage
+
+import websockets
 
 from core.api_client import APIClient
+from utils.constants import RELAY_WS_URL
 from .widgets import DateRangeWidget, get_app_icon
 from .overview_tab import OverviewTab
 from .metrics_tab import MetricsTab
@@ -19,17 +30,524 @@ from .dialogs import EditComputerDialog
 from ..styles import get_main_window_stylesheet
 
 
+class RemoteClientThread(QThread):
+    """Поток для WebSocket соединения с relay-сервером"""
+    status_updated = pyqtSignal(str, str)
+    image_received = pyqtSignal(object)
+    system_info_received = pyqtSignal(dict)
+    connection_lost = pyqtSignal()
+    
+    def __init__(self, relay_server, computer_id, client_id, update_interval=0.033):
+        super().__init__()
+        self.relay_server = relay_server
+        self.computer_id = computer_id
+        self.client_id = client_id
+        self.update_interval = update_interval
+        self.ws = None
+        self.is_running = True
+        self.is_connected = False
+        self.command_queue = asyncio.Queue()
+        self.host_screen_width = None
+        self.host_screen_height = None
+        self.frame_count = 0
+        self.send_task = None
+        self.loop = None
+    
+    def run(self):
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_until_complete(self.client_loop())
+        finally:
+            self.loop.close()
+    
+    async def client_loop(self):
+        reconnect_delay = 2
+        while self.is_running:
+            try:
+                async with websockets.connect(self.relay_server) as websocket:
+                    self.ws = websocket
+                    
+                    register_msg = {
+                        "type": "register_client",
+                        "data": {
+                            "client_id": self.client_id, 
+                            "computer_id": self.computer_id
+                        },
+                        "computer_id": self.computer_id,
+                        "client_id": self.client_id
+                    }
+                    await self.ws.send(json.dumps(register_msg))
+                    
+                    self.is_connected = True
+                    self.status_updated.emit("Подключен к серверу", "success")
+                    
+                    await self.send_command({"type": "request_system_info", "data": {}})
+                    
+                    self.send_task = asyncio.create_task(self.process_command_queue())
+                    
+                    async for msg in self.ws:
+                        try:
+                            data = json.loads(msg)
+                            msg_type = data.get("type")
+                            
+                            if msg_type == "screenshot":
+                                img_data = base64.b64decode(data["data"])
+                                img = Image.open(BytesIO(img_data))
+                                
+                                self.host_screen_width = data.get("screen_width", img.size[0])
+                                self.host_screen_height = data.get("screen_height", img.size[1])
+                                self.image_received.emit(img)
+                                self.frame_count += 1
+                            
+                            elif msg_type == "system_info":
+                                system_data = data.get("data", {})
+                                self.system_info_received.emit(system_data)
+                            
+                        except Exception as e:
+                            pass
+                    
+            except Exception as e:
+                self.status_updated.emit(f"Ошибка: {str(e)}", "error")
+            
+            self.is_connected = False
+            if self.send_task:
+                self.send_task.cancel()
+                try:
+                    await self.send_task
+                except:
+                    pass
+            self.connection_lost.emit()
+            
+            if self.is_running:
+                await asyncio.sleep(reconnect_delay)
+    
+    async def process_command_queue(self):
+        while self.is_connected and self.is_running:
+            try:
+                try:
+                    command = await asyncio.wait_for(self.command_queue.get(), timeout=0.1)
+                    await self.send_command(command)
+                except asyncio.TimeoutError:
+                    pass
+            except asyncio.CancelledError:
+                break
+            except:
+                await asyncio.sleep(0.1)
+    
+    async def send_command(self, command):
+        if self.ws and self.is_connected:
+            try:
+                message = {
+                    "type": command.get("type", "command"),
+                    "data": command.get("data", {}),
+                    "computer_id": self.computer_id,
+                    "client_id": self.client_id
+                }
+                await self.ws.send(json.dumps(message))
+                return True
+            except Exception as e:
+                return False
+        return False
+    
+    def queue_command(self, command):
+        if self.is_connected and self.loop:
+            asyncio.run_coroutine_threadsafe(
+                self._queue_command_async(command), 
+                self.loop
+            )
+    
+    async def _queue_command_async(self, command):
+        await self.command_queue.put(command)
+    
+    def request_system_info(self):
+        if self.is_connected:
+            self.queue_command({"type": "request_system_info", "data": {}})
+    
+    def start_stream(self):
+        if self.is_connected:
+            self.queue_command({"type": "start_stream", "data": {}})
+    
+    def stop_stream(self):
+        if self.is_connected:
+            self.queue_command({"type": "stop_stream", "data": {}})
+    
+    def stop(self):
+        self.is_running = False
+        self.is_connected = False
+        if self.send_task:
+            asyncio.run_coroutine_threadsafe(self._cancel_task(), self.loop)
+    
+    async def _cancel_task(self):
+        if self.send_task:
+            self.send_task.cancel()
+            try:
+                await self.send_task
+            except:
+                pass
+
+
+class RemoteScreenWidget(QLabel):
+    """Виджет для отображения удаленного экрана с обработкой ввода"""
+    mouse_moved = pyqtSignal(int, int, int, int)
+    mouse_clicked = pyqtSignal(str, int, int)
+    mouse_wheeled = pyqtSignal(int)
+    key_pressed = pyqtSignal(str)
+    
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("background-color: black;")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMouseTracking(True)
+        self.host_screen_width = None
+        self.host_screen_height = None
+        self.display_image_width = 0
+        self.display_image_height = 0
+        self.image_offset_x = 0
+        self.image_offset_y = 0
+        self.scale_x = 1.0
+        self.scale_y = 1.0
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus()
+    
+    def set_display_info(self, host_width, host_height, display_width, display_height):
+        self.host_screen_width = host_width
+        self.host_screen_height = host_height
+        self.display_image_width = display_width
+        self.display_image_height = display_height
+        
+        if host_width and host_height and display_width and display_height:
+            self.scale_x = host_width / display_width
+            self.scale_y = host_height / display_height
+        else:
+            self.scale_x = 1.0
+            self.scale_y = 1.0
+    
+    def update_image_position(self):
+        pixmap = self.pixmap()
+        if pixmap:
+            self.image_offset_x = (self.width() - pixmap.width()) // 2
+            self.image_offset_y = (self.height() - pixmap.height()) // 2
+    
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_image_position()
+    
+    def client_to_host_coords(self, client_x, client_y):
+        if not (self.host_screen_width and self.host_screen_height):
+            return client_x, client_y
+        
+        pixmap = self.pixmap()
+        if not pixmap or pixmap.width() == 0 or pixmap.height() == 0:
+            return client_x, client_y
+        
+        pixmap_width = pixmap.width()
+        pixmap_height = pixmap.height()
+        
+        scale_x = self.host_screen_width / pixmap_width
+        scale_y = self.host_screen_height / pixmap_height
+        
+        host_x = int(client_x * scale_x)
+        host_y = int(client_y * scale_y)
+        
+        host_x = max(0, min(host_x, self.host_screen_width - 1))
+        host_y = max(0, min(host_y, self.host_screen_height - 1))
+        
+        return host_x, host_y
+    
+    def get_image_coords(self, widget_x, widget_y):
+        pixmap = self.pixmap()
+        if pixmap:
+            img_left = self.image_offset_x
+            img_right = img_left + pixmap.width()
+            img_top = self.image_offset_y
+            img_bottom = img_top + pixmap.height()
+            
+            if (img_left <= widget_x <= img_right and 
+                img_top <= widget_y <= img_bottom):
+                
+                img_x = widget_x - img_left
+                img_y = widget_y - img_top
+                
+                return img_x, img_y
+        
+        return None, None
+    
+    def mouseMoveEvent(self, event):
+        if self.host_screen_width and self.host_screen_height:
+            img_x, img_y = self.get_image_coords(
+                int(event.position().x()), 
+                int(event.position().y())
+            )
+            
+            if img_x is not None and img_y is not None:
+                host_x, host_y = self.client_to_host_coords(img_x, img_y)
+                self.mouse_moved.emit(img_x, img_y, host_x, host_y)
+    
+    def mousePressEvent(self, event):
+        if self.host_screen_width and self.host_screen_height:
+            img_x, img_y = self.get_image_coords(
+                int(event.position().x()), 
+                int(event.position().y())
+            )
+            
+            if img_x is not None and img_y is not None:
+                host_x, host_y = self.client_to_host_coords(img_x, img_y)
+                
+                if event.button() == Qt.MouseButton.LeftButton:
+                    button = "left"
+                elif event.button() == Qt.MouseButton.RightButton:
+                    button = "right"
+                else:
+                    button = "middle"
+                
+                self.mouse_clicked.emit(button, host_x, host_y)
+    
+    def wheelEvent(self, event):
+        delta = 1 if event.angleDelta().y() > 0 else -1
+        self.mouse_wheeled.emit(delta)
+    
+    def keyPressEvent(self, event):
+        text = event.text()
+        
+        if text:
+            self.key_pressed.emit(text)
+        else:
+            key = event.key()
+            if key == Qt.Key.Key_Backspace:
+                self.key_pressed.emit('\b')
+            elif key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
+                self.key_pressed.emit('\r')
+            elif key == Qt.Key.Key_Tab:
+                self.key_pressed.emit('\t')
+            elif key == Qt.Key.Key_Escape:
+                self.key_pressed.emit('\x1b')
+            elif key == Qt.Key.Key_Delete:
+                self.key_pressed.emit('\x7f')
+            elif key == Qt.Key.Key_Left:
+                self.key_pressed.emit('\x1b[D')
+            elif key == Qt.Key.Key_Right:
+                self.key_pressed.emit('\x1b[C')
+            elif key == Qt.Key.Key_Up:
+                self.key_pressed.emit('\x1b[A')
+            elif key == Qt.Key.Key_Down:
+                self.key_pressed.emit('\x1b[B')
+            elif key == Qt.Key.Key_Home:
+                self.key_pressed.emit('\x1b[H')
+            elif key == Qt.Key.Key_End:
+                self.key_pressed.emit('\x1b[F')
+            elif key == Qt.Key.Key_PageUp:
+                self.key_pressed.emit('\x1b[5~')
+            elif key == Qt.Key.Key_PageDown:
+                self.key_pressed.emit('\x1b[6~')
+        
+        super().keyPressEvent(event)
+    
+    def set_screen_size(self, width, height):
+        self.host_screen_width = width
+        self.host_screen_height = height
+    
+    def clear_screen(self):
+        self.clear()
+        self.setText("Соединение потеряно")
+        self.setStyleSheet("background-color: black; color: red; font-size: 16px;")
+
+
+class RemoteScreenWindow(QMainWindow):
+    """Окно для отображения удаленного экрана"""
+    key_pressed = pyqtSignal(str)
+    closed = pyqtSignal()
+    
+    def __init__(self, client_thread, computer_name=""):
+        super().__init__()
+        self.client_thread = client_thread
+        self.frame_count = 0
+        self.original_width = 0
+        self.original_height = 0
+        self.display_width = 0
+        self.display_height = 0
+        self.computer_name = computer_name
+        self.init_ui()
+        
+        self.screen_widget.mouse_moved.connect(self.on_mouse_move)
+        self.screen_widget.mouse_clicked.connect(self.on_mouse_click)
+        self.screen_widget.mouse_wheeled.connect(self.on_mouse_wheel)
+        self.screen_widget.key_pressed.connect(self.on_key_press)
+    
+    def init_ui(self):
+        self.setWindowTitle(f"Удаленный экран - {self.computer_name}")
+        self.setGeometry(200, 200, 1280, 800)
+        
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        
+        layout = QVBoxLayout(central_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Верхняя панель
+        status_bar = QFrame()
+        status_bar.setStyleSheet("background-color: #2c3e50;")
+        status_bar.setFixedHeight(35)
+        status_layout = QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(10, 0, 10, 0)
+        
+        self.status_label = QLabel(f"Подключение к {self.computer_name}...")
+        self.status_label.setStyleSheet("color: white; font-size: 12px;")
+        status_layout.addWidget(self.status_label)
+        
+        status_layout.addStretch()
+        
+        self.fps_label = QLabel("FPS: 0")
+        self.fps_label.setStyleSheet("color: #3498db; font-size: 11px; font-weight: bold;")
+        status_layout.addWidget(self.fps_label)
+        
+        self.resolution_label = QLabel("")
+        self.resolution_label.setStyleSheet("color: white; font-size: 11px;")
+        status_layout.addWidget(self.resolution_label)
+        
+        # Кнопка закрытия
+        close_btn = QPushButton("✕ Закрыть")
+        close_btn.setFixedSize(80, 25)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #e74c3c;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #c0392b;
+            }
+        """)
+        close_btn.clicked.connect(self.close)
+        status_layout.addWidget(close_btn)
+        
+        layout.addWidget(status_bar)
+        
+        # Виджет экрана
+        self.screen_widget = RemoteScreenWidget()
+        self.screen_widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        layout.addWidget(self.screen_widget, 1)
+        
+        QTimer.singleShot(100, self.set_focus)
+    
+    def set_focus(self):
+        self.screen_widget.setFocus()
+        self.activateWindow()
+        self.raise_()
+    
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(100, self.set_focus)
+    
+    def update_image(self, img):
+        widget_size = self.screen_widget.size()
+        if widget_size.width() <= 1 or widget_size.height() <= 1:
+            return
+        
+        host_width = self.client_thread.host_screen_width or img.width
+        host_height = self.client_thread.host_screen_height or img.height
+        
+        self.original_width = img.width
+        self.original_height = img.height
+        
+        img_ratio = img.width / img.height
+        widget_ratio = widget_size.width() / widget_size.height()
+        
+        if img_ratio > widget_ratio:
+            new_width = widget_size.width()
+            new_height = int(widget_size.width() / img_ratio)
+        else:
+            new_height = widget_size.height()
+            new_width = int(widget_size.height() * img_ratio)
+        
+        if new_width > 0 and new_height > 0:
+            self.display_width = new_width
+            self.display_height = new_height
+            
+            img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            img_byte_array = BytesIO()
+            img_resized.save(img_byte_array, format='PNG')
+            qimage = QImage.fromData(img_byte_array.getvalue())
+            pixmap = QPixmap.fromImage(qimage)
+            
+            self.screen_widget.setPixmap(pixmap)
+            
+            actual_pixmap_width = pixmap.width()
+            actual_pixmap_height = pixmap.height()
+            self.screen_widget.set_display_info(
+                host_width, host_height,
+                actual_pixmap_width, actual_pixmap_height
+            )
+            
+            self.screen_widget.set_screen_size(host_width, host_height)
+            self.screen_widget.update_image_position()
+            self.frame_count += 1
+            
+            scale_percent = int((new_width / img.width) * 100)
+            self.resolution_label.setText(
+                f"Сервер: {host_width}x{host_height} | "
+                f"Экран: {new_width}x{new_height} | "
+                f"Масштаб: {scale_percent}%"
+            )
+            self.status_label.setText(f"Подключен к {self.computer_name}")
+            self.status_label.setStyleSheet("color: #2ecc71; font-size: 12px;")
+    
+    def update_fps(self, fps):
+        self.fps_label.setText(f"FPS: {fps}")
+    
+    def clear_screen(self):
+        self.screen_widget.clear_screen()
+        self.status_label.setText("Соединение потеряно")
+        self.status_label.setStyleSheet("color: #e74c3c; font-size: 12px;")
+    
+    def on_mouse_move(self, client_x, client_y, host_x, host_y):
+        self.client_thread.queue_command({
+            "type": "mouse_move",
+            "data": {"x": host_x, "y": host_y}
+        })
+    
+    def on_mouse_click(self, button, host_x, host_y):
+        self.client_thread.queue_command({
+            "type": "mouse_click",
+            "data": {"button": button, "x": host_x, "y": host_y}
+        })
+    
+    def on_mouse_wheel(self, delta):
+        self.client_thread.queue_command({
+            "type": "mouse_wheel",
+            "data": {"delta": delta}
+        })
+    
+    def on_key_press(self, text):
+        self.key_pressed.emit(text)
+    
+    def closeEvent(self, event):
+        if self.client_thread and self.client_thread.is_connected:
+            self.client_thread.stop_stream()
+        self.closed.emit()
+        event.accept()
+
+
 class ComputerDetailsWindow(QMainWindow):
     """Окно с детальной информацией по компьютеру"""
     
-    def __init__(self, hostname, computer_data):
+    def __init__(self, hostname, computer_data, user_login=None):
         super().__init__()
         self.hostname = hostname
         self.computer_data = computer_data
+        self.user_login = user_login or computer_data.get('login', 'Admin')
         self.current_data = None
         self.computer_id = None
         self.current_disk_info = {'used_gb': None, 'total_gb': None}
-        self.admin_panel = None  # Сохраняем ссылку на админ-панель
+        
+        # Переменные для удаленного доступа
+        self.remote_client_thread = None
+        self.remote_window = None
+        self.frame_count = 0
+        self.fps_timer = None
         
         self.init_ui()
         self.connect_signals()
@@ -73,25 +591,28 @@ class ComputerDetailsWindow(QMainWindow):
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_layout.addWidget(self.status_label)
         
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        # Кнопки в заголовке
+        header_buttons_layout = QHBoxLayout()
+        header_buttons_layout.addStretch()
         
-        remote_btn = QPushButton("🖥️ Удаленный экран")
-        remote_btn.setFixedWidth(150)
-        remote_btn.setStyleSheet("""
+        self.remote_btn = QPushButton("🖥 Удаленный экран")
+        self.remote_btn.setFixedWidth(150)
+        self.remote_btn.setStyleSheet("""
             QPushButton {
-                background-color: #27ae60;
+                background-color: rgba(255,255,255,0.2);
                 border-radius: 6px;
                 padding: 5px;
-                color: white;
                 font-weight: bold;
             }
             QPushButton:hover {
-                background-color: #2ecc71;
+                background-color: rgba(255,255,255,0.3);
+            }
+            QPushButton:disabled {
+                background-color: rgba(255,255,255,0.1);
             }
         """)
-        remote_btn.clicked.connect(self.open_remote_screen)
-        btn_layout.addWidget(remote_btn)
+        self.remote_btn.clicked.connect(self.open_remote_screen)
+        header_buttons_layout.addWidget(self.remote_btn)
         
         edit_btn = QPushButton("✎ Редактировать")
         edit_btn.setFixedWidth(120)
@@ -106,10 +627,9 @@ class ComputerDetailsWindow(QMainWindow):
             }
         """)
         edit_btn.clicked.connect(self.edit_computer_info)
-        btn_layout.addWidget(edit_btn)
+        header_buttons_layout.addWidget(edit_btn)
         
-        header_layout.addLayout(btn_layout)
-        header_layout.setAlignment(btn_layout, Qt.AlignmentFlag.AlignRight)
+        header_layout.addLayout(header_buttons_layout)
         
         main_layout.addWidget(header_frame)
         
@@ -159,6 +679,7 @@ class ComputerDetailsWindow(QMainWindow):
         
         main_layout.addWidget(self.tabs)
         
+        # Нижняя панель с кнопками
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         
@@ -450,286 +971,176 @@ class ComputerDetailsWindow(QMainWindow):
         except Exception as e:
             print(f"Ошибка загрузки информации о диске: {e}")
     
-    def go_back(self):
-        """Возврат к админ-панели"""
-        from ..admin_panel import AdminPanelWindow
-        # Создаем новое окно админ-панели с данными пользователя
-        user_data = {
-            'login': self.computer_data.get('user_login', 'Admin'),
-            'computer_id': None,
-            'session_id': None,
-            'role_id': 2
-        }
-        self.admin_panel = AdminPanelWindow(user_data)
-        self.admin_panel.show()
-        self.close()
+    # ==================== Методы удаленного доступа ====================
     
     def open_remote_screen(self):
-        """Открывает окно удаленного доступа к компьютеру"""
+        """Открывает окно удаленного экрана"""
         if not self.computer_id:
             QMessageBox.warning(self, "Ошибка", "ID компьютера не определен")
             return
+        
+        # Проверяем онлайн статус
+        is_online = self.current_data.get('is_online', False) if self.current_data else False
+        if not is_online:
+            reply = QMessageBox.question(
+                self, "Подтверждение",
+                f"Компьютер {self.hostname} не в сети.\n"
+                "Удаленный доступ может быть недоступен.\n"
+                "Продолжить?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        
+        # Если уже есть активное подключение
+        if self.remote_window and self.remote_window.isVisible():
+            self.remote_window.raise_()
+            self.remote_window.activateWindow()
+            return
+        
+        # Если уже есть поток, но окно закрыто - пересоздаем
+        if self.remote_client_thread and self.remote_client_thread.isRunning():
+            self.disconnect_remote()
+        
+        # Используем адрес сервера из констант
+        relay_server = RELAY_WS_URL
+        
+        # Создаем клиентский поток
+        client_id = f"ADMIN_{self.user_login}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        self.remote_client_thread = RemoteClientThread(
+            relay_server=relay_server,
+            computer_id=str(self.computer_id),
+            client_id=client_id,
+            update_interval=0.033
+        )
+        
+        # Подключаем сигналы
+        self.remote_client_thread.status_updated.connect(self.on_remote_status_updated)
+        self.remote_client_thread.image_received.connect(self.on_remote_image_received)
+        self.remote_client_thread.connection_lost.connect(self.on_remote_connection_lost)
+        
+        # Запускаем поток
+        self.remote_client_thread.start()
+        
+        # Создаем таймер для FPS
+        self.fps_timer = QTimer()
+        self.fps_timer.timeout.connect(self.update_remote_fps)
+        
+        # Показываем индикатор загрузки
+        self.remote_btn.setEnabled(False)
+        self.remote_btn.setText("🖥 Подключение...")
+    
+    def on_remote_status_updated(self, message, msg_type):
+        """Обработчик обновления статуса удаленного подключения"""
+        if msg_type == "success":
+            self.remote_btn.setText("🖥 Удаленный экран")
+            self.remote_btn.setEnabled(True)
             
-        try:
-            import json
-            import asyncio
-            import websockets
-            from PIL import Image
-            from io import BytesIO
-            import base64
-            import time
+            # Запускаем стрим и создаем окно
+            QTimer.singleShot(500, self._create_remote_window)
             
-            from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                                        QLabel, QLineEdit, QPushButton, QFrame, QMessageBox,
-                                        QSizePolicy)
-            from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-            from PyQt6.QtGui import QPixmap, QImage, QFont
-            
-            class RemoteScreenWidget(QLabel):
-                mouse_moved = pyqtSignal(int, int, int, int)
-                mouse_clicked = pyqtSignal(str, int, int)
-                mouse_wheeled = pyqtSignal(int)
-                key_pressed = pyqtSignal(str)
-                
-                def __init__(self):
-                    super().__init__()
-                    self.setStyleSheet("background-color: black;")
-                    self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                    self.setMouseTracking(True)
-                    self.host_screen_width = None
-                    self.host_screen_height = None
-                    self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-                    self.setFocus()
-                
-                def set_screen_size(self, width, height):
-                    self.host_screen_width = width
-                    self.host_screen_height = height
-                    
-                def get_image_coords(self, widget_x, widget_y):
-                    pixmap = self.pixmap()
-                    if pixmap:
-                        img_left = (self.width() - pixmap.width()) // 2
-                        img_right = img_left + pixmap.width()
-                        img_top = (self.height() - pixmap.height()) // 2
-                        img_bottom = img_top + pixmap.height()
-                        
-                        if (img_left <= widget_x <= img_right and 
-                            img_top <= widget_y <= img_bottom):
-                            img_x = widget_x - img_left
-                            img_y = widget_y - img_top
-                            
-                            scale_x = self.host_screen_width / pixmap.width()
-                            scale_y = self.host_screen_height / pixmap.height()
-                            
-                            host_x = int(img_x * scale_x)
-                            host_y = int(img_y * scale_y)
-                            
-                            host_x = max(0, min(host_x, self.host_screen_width - 1))
-                            host_y = max(0, min(host_y, self.host_screen_height - 1))
-                            
-                            return img_x, img_y, host_x, host_y
-                    return None, None, None, None
-                
-                def mouseMoveEvent(self, event):
-                    if self.host_screen_width and self.host_screen_height:
-                        img_x, img_y, host_x, host_y = self.get_image_coords(
-                            int(event.position().x()), 
-                            int(event.position().y())
-                        )
-                        if img_x is not None:
-                            self.mouse_moved.emit(img_x, img_y, host_x, host_y)
-                
-                def mousePressEvent(self, event):
-                    if self.host_screen_width and self.host_screen_height:
-                        img_x, img_y, host_x, host_y = self.get_image_coords(
-                            int(event.position().x()), 
-                            int(event.position().y())
-                        )
-                        if img_x is not None:
-                            if event.button() == Qt.MouseButton.LeftButton:
-                                button = "left"
-                            elif event.button() == Qt.MouseButton.RightButton:
-                                button = "right"
-                            else:
-                                button = "middle"
-                            self.mouse_clicked.emit(button, host_x, host_y)
-                
-                def wheelEvent(self, event):
-                    delta = 1 if event.angleDelta().y() > 0 else -1
-                    self.mouse_wheeled.emit(delta)
-                
-                def keyPressEvent(self, event):
-                    text = event.text()
-                    if text:
-                        self.key_pressed.emit(text)
-                    super().keyPressEvent(event)
-            
-            class RemoteClientThread(QThread):
-                image_received = pyqtSignal(object, int, int)
-                connection_status = pyqtSignal(str)
-                
-                def __init__(self, computer_id):
-                    super().__init__()
-                    self.computer_id = computer_id
-                    self.is_running = True
-                    self.command_queue = asyncio.Queue()
-                
-                def run(self):
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        loop.run_until_complete(self.client_loop())
-                    finally:
-                        loop.close()
-                
-                async def client_loop(self):
-                    while self.is_running:
-                        try:
-                            async with websockets.connect("ws://130.49.149.152:9001") as websocket:
-                                from core.api_client import APIClient
-                                await websocket.send(json.dumps({
-                                    "type": "register_client",
-                                    "computer_id": self.computer_id,
-                                    "client_id": f"ADMIN_{int(time.time())}",
-                                    "user_id": APIClient.auth_token
-                                }))
-                                await websocket.send(json.dumps({"type": "start_stream", "computer_id": self.computer_id}))
-                                self.connection_status.emit("Подключено")
-                                
-                                send_task = asyncio.create_task(self.process_commands(websocket))
-                                
-                                async for msg in websocket:
-                                    if not self.is_running:
-                                        break
-                                    try:
-                                        data = json.loads(msg)
-                                        if data.get("type") == "screenshot":
-                                            img_data = base64.b64decode(data["data"])
-                                            img = Image.open(BytesIO(img_data))
-                                            screen_w = data.get("screen_width", img.width)
-                                            screen_h = data.get("screen_height", img.height)
-                                            self.image_received.emit(img, screen_w, screen_h)
-                                    except:
-                                        pass
-                        except Exception as e:
-                            self.connection_status.emit(f"Ошибка: {str(e)}")
-                        if self.is_running:
-                            await asyncio.sleep(2)
-                
-                async def process_commands(self, websocket):
-                    while self.is_running:
-                        try:
-                            cmd = await asyncio.wait_for(self.command_queue.get(), timeout=0.1)
-                            await websocket.send(json.dumps(cmd))
-                        except asyncio.TimeoutError:
-                            pass
-                
-                def send_command(self, cmd):
-                    if self.is_running:
-                        asyncio.run_coroutine_threadsafe(self.command_queue.put(cmd), self.loop)
-                
-                def stop(self):
-                    self.is_running = False
-            
-            class RemoteScreenWindow(QMainWindow):
-                closed = pyqtSignal()
-                
-                def __init__(self, computer_id, computer_name):
-                    super().__init__()
-                    self.computer_id = computer_id
-                    self.client_thread = RemoteClientThread(computer_id)
-                    self.init_ui(computer_name)
-                    
-                    self.screen_widget.mouse_moved.connect(lambda ix,iy,hx,hy: 
-                        self.client_thread.send_command({
-                            "type": "mouse_move", "computer_id": computer_id, "data": {"x": hx, "y": hy}
-                        }))
-                    self.screen_widget.mouse_clicked.connect(lambda btn,hx,hy:
-                        self.client_thread.send_command({
-                            "type": "mouse_click", "computer_id": computer_id, "data": {"button": btn, "x": hx, "y": hy}
-                        }))
-                    self.screen_widget.mouse_wheeled.connect(lambda delta:
-                        self.client_thread.send_command({
-                            "type": "mouse_wheel", "computer_id": computer_id, "data": {"delta": delta}
-                        }))
-                    self.screen_widget.key_pressed.connect(lambda text:
-                        self.client_thread.send_command({
-                            "type": "keyboard_input", "computer_id": computer_id, "data": {"text": text}
-                        }))
-                    
-                    self.client_thread.image_received.connect(self.update_image)
-                    self.client_thread.connection_status.connect(self.status_label.setText)
-                    self.client_thread.start()
-                
-                def init_ui(self, computer_name):
-                    self.setWindowTitle(f"Удаленный экран | {computer_name}")
-                    self.setGeometry(200, 200, 1280, 720)
-                    
-                    central = QWidget()
-                    self.setCentralWidget(central)
-                    layout = QVBoxLayout(central)
-                    layout.setContentsMargins(0, 0, 0, 0)
-                    
-                    status_bar = QFrame()
-                    status_bar.setStyleSheet("background-color: #2c3e50;")
-                    status_bar.setFixedHeight(25)
-                    status_layout = QHBoxLayout(status_bar)
-                    status_layout.setContentsMargins(5, 0, 5, 0)
-                    
-                    self.status_label = QLabel("Подключение...")
-                    self.status_label.setStyleSheet("color: white; font-size: 11px;")
-                    status_layout.addWidget(self.status_label)
-                    layout.addWidget(status_bar)
-                    
-                    self.screen_widget = RemoteScreenWidget()
-                    self.screen_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-                    layout.addWidget(self.screen_widget, 1)
-                    
-                    QTimer.singleShot(100, self.screen_widget.setFocus)
-                
-                def update_image(self, img, screen_w, screen_h):
-                    widget_size = self.screen_widget.size()
-                    if widget_size.width() <= 1 or widget_size.height() <= 1:
-                        return
-                    
-                    self.screen_widget.set_screen_size(screen_w, screen_h)
-                    img_ratio = img.width / img.height
-                    widget_ratio = widget_size.width() / widget_size.height()
-                    
-                    if img_ratio > widget_ratio:
-                        new_width = widget_size.width()
-                        new_height = int(widget_size.width() / img_ratio)
-                    else:
-                        new_height = widget_size.height()
-                        new_width = int(widget_size.height() * img_ratio)
-                    
-                    if new_width > 0 and new_height > 0:
-                        img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                        img_byte_array = BytesIO()
-                        img_resized.save(img_byte_array, format='PNG')
-                        qimage = QImage.fromData(img_byte_array.getvalue())
-                        self.screen_widget.setPixmap(QPixmap.fromImage(qimage))
-                
-                def closeEvent(self, event):
-                    self.client_thread.stop()
-                    self.closed.emit()
-                    event.accept()
-            
-            self.remote_window = RemoteScreenWindow(self.computer_id, self.hostname)
-            self.remote_window.show()
-            
-        except Exception as e:
-            QMessageBox.warning(self, "Ошибка", f"Не удалось запустить удаленный экран: {str(e)}")
+        elif msg_type == "error":
+            self.remote_btn.setText("🖥 Удаленный экран")
+            self.remote_btn.setEnabled(True)
+            QMessageBox.warning(self, "Ошибка", f"Ошибка подключения: {message}")
+    
+    def _create_remote_window(self):
+        """Создает окно удаленного экрана"""
+        if not self.remote_client_thread or not self.remote_client_thread.is_connected:
+            return
+        
+        # Запускаем стрим
+        self.remote_client_thread.start_stream()
+        
+        # Создаем окно
+        computer_name = self.hostname
+        self.remote_window = RemoteScreenWindow(self.remote_client_thread, computer_name)
+        self.remote_window.key_pressed.connect(self.on_remote_key_press)
+        self.remote_window.closed.connect(self.on_remote_window_closed)
+        self.remote_window.show()
+        
+        # Запускаем таймер FPS
+        self.frame_count = 0
+        self.fps_timer.start(1000)
+    
+    def on_remote_image_received(self, img):
+        """Обработчик получения изображения"""
+        if self.remote_window and self.remote_window.isVisible():
+            self.remote_window.update_image(img)
+            self.frame_count += 1
+    
+    def on_remote_connection_lost(self):
+        """Обработчик потери соединения"""
+        if self.remote_window:
+            self.remote_window.clear_screen()
+        
+        self.remote_btn.setText("🖥 Удаленный экран")
+        self.remote_btn.setEnabled(True)
+        
+        if self.fps_timer:
+            self.fps_timer.stop()
+    
+    def on_remote_window_closed(self):
+        """Обработчик закрытия окна удаленного экрана"""
+        if self.remote_client_thread and self.remote_client_thread.is_connected:
+            self.remote_client_thread.stop_stream()
+        
+        self.remote_window = None
+        
+        if self.fps_timer:
+            self.fps_timer.stop()
+            self.fps_timer = None
+        
+        self.remote_btn.setText("🖥 Удаленный экран")
+        self.remote_btn.setEnabled(True)
+    
+    def on_remote_key_press(self, text):
+        """Обработчик нажатия клавиш в окне удаленного экрана"""
+        if self.remote_client_thread and self.remote_client_thread.is_connected:
+            self.remote_client_thread.queue_command({
+                "type": "keyboard_input",
+                "data": {"text": text}
+            })
+    
+    def update_remote_fps(self):
+        """Обновляет FPS в окне удаленного экрана"""
+        if self.remote_window and self.remote_window.isVisible():
+            self.remote_window.update_fps(self.frame_count)
+        self.frame_count = 0
+    
+    def disconnect_remote(self):
+        """Отключает удаленное подключение"""
+        if self.remote_client_thread:
+            if self.remote_client_thread.is_connected:
+                self.remote_client_thread.stop_stream()
+            self.remote_client_thread.stop()
+            self.remote_client_thread = None
+        
+        if self.remote_window:
+            self.remote_window.close()
+            self.remote_window = None
+        
+        if self.fps_timer:
+            self.fps_timer.stop()
+            self.fps_timer = None
+        
+        self.remote_btn.setText("🖥 Удаленный экран")
+        self.remote_btn.setEnabled(True)
+    
+    # ==================== Конец методов удаленного доступа ====================
+    
+    def go_back(self):
+        from ..admin_panel import AdminPanelWindow
+        self.admin_panel = AdminPanelWindow({'login': self.user_login})
+        self.admin_panel.show()
+        self.close()
     
     def closeEvent(self, event):
-        """Обработка закрытия окна - НЕ закрываем сессию, просто показываем админ-панель"""
+        # Отключаем удаленный доступ при закрытии
+        self.disconnect_remote()
+        
         from ..admin_panel import AdminPanelWindow
-        user_data = {
-            'login': self.computer_data.get('user_login', 'Admin'),
-            'computer_id': None,
-            'session_id': None,
-            'role_id': 2
-        }
-        self.admin_panel = AdminPanelWindow(user_data)
+        self.admin_panel = AdminPanelWindow({'login': self.user_login})
         self.admin_panel.show()
         event.accept()

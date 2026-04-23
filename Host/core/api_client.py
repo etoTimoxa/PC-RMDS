@@ -439,19 +439,9 @@ class APIClient:
             return None
 
     @classmethod
-    def close_session(self):
+    def close_session(cls) -> bool:
         """Закрывает текущую сессию (статус = 2)"""
-        if self.session_id:
-            self.log_message.emit(f"🔒 Закрытие сессии {self.session_id}...")
-            try:
-                # Вызываем метод без аргументов, он сам возьмет session_id
-                success = APIClient.close_session_by_id(self.session_id)
-                if success:
-                    self.log_message.emit(f"✅ Сессия {self.session_id} закрыта")
-                else:
-                    self.log_message.emit(f"⚠️ Не удалось закрыть сессию {self.session_id}")
-            except Exception as e:
-                self.log_message.emit(f"⚠️ Ошибка закрытия сессии: {e}")
+        return cls.close_session_by_id()
     
     # ==============================================
     # ГРУППЫ КОМПЬЮТЕРОВ
@@ -592,6 +582,11 @@ class APIClient:
     def create_session(cls, computer_id: int, user_id: int = None, session_token: str = None) -> Optional[int]:
         """Создать новую сессию"""
         try:
+            # ✅ Защита от двойного создания сессии
+            if cls.current_session_id is not None:
+                print(f"⚠️ Сессия уже существует (ID={cls.current_session_id}), пропускаем создание новой")
+                return cls.current_session_id
+                
             if session_token is None:
                 session_token = f"{socket.gethostname()}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
             
@@ -648,7 +643,7 @@ class APIClient:
                 f"{API_BASE_URL}/api/sessions/{session_id}",
                 json={
                     "status_id": 2,
-                    "end_time": datetime.now().isoformat()
+                "end_time": datetime.now().astimezone().isoformat()
                 },
                 headers=cls._headers(),
                 timeout=10
@@ -676,7 +671,7 @@ class APIClient:
         try:
             response = requests.put(
                 f"{API_BASE_URL}/api/sessions/{session_id}",
-                json={"last_activity": datetime.now().isoformat()},
+                json={"last_activity": datetime.now().astimezone().isoformat()},
                 headers=cls._headers(),
                 timeout=10
             )

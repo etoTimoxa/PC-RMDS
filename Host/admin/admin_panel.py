@@ -396,6 +396,8 @@ class AdminPanelWindow(QMainWindow):
                 print(f"[ADMIN] ✅ Сессия {session_id} закрыта")
             except Exception as e:
                 print(f"[ADMIN] ❌ Ошибка закрытия сессии: {e}")
+        else:
+            print(f"[ADMIN] ⚠️ Нет активной сессии для закрытия")
     
     def logout(self):
         """Выход из системы"""

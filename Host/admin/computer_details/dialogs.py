@@ -182,13 +182,13 @@ class EditSessionDialog(QDialog):
         
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                result = APIClient.post(f'/api/computers/{computer_id}/sessions/{session_id}/close')
-                if result and result.get('success'):
+                # Используем правильный метод close_session_by_id
+                result = APIClient.close_session_by_id(session_id)
+                if result:
                     QMessageBox.information(self, "Успех", f"Сессия #{session_id} успешно завершена")
                     self.accept()
                 else:
-                    error_msg = result.get('error', 'Неизвестная ошибка') if result else 'Нет ответа от сервера'
-                    QMessageBox.warning(self, "Ошибка", f"Не удалось завершить сессию: {error_msg}")
+                    QMessageBox.warning(self, "Ошибка", "Не удалось завершить сессию")
             except Exception as e:
                 QMessageBox.warning(self, "Ошибка", f"Ошибка: {str(e)}")
 

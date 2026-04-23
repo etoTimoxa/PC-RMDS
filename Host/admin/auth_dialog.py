@@ -17,14 +17,6 @@ from core.api_client import APIClient as DatabaseManager
 from utils.platform_utils import get_config_dir
 
 
-class CustomEvent(QEvent):
-    """Кастомное событие для передачи данных между потоками"""
-    def __init__(self, event_type: str, data: dict = None):
-        super().__init__(QEvent.Type.User + 1)
-        self.event_type = event_type
-        self.data = data or {}
-
-
 def get_app_icon() -> QIcon:
     """Возвращает иконку приложения (кроссплатформенно)"""
     icon_path = Path(__file__).parent.parent / "app_icon.png"
@@ -224,18 +216,6 @@ class AuthDialog(QDialog):
                 padding: 10px;
             }
             #backBtn:hover { background-color: #7f8c8d; }
-            QMessageBox QPushButton {
-                color: #333333;
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                padding: 6px 20px;
-                font-weight: bold;
-                min-width: 80px;
-            }
-            QMessageBox QPushButton:hover {
-                background-color: #e0e0e0;
-            }
         """)
         
         self.main_layout = QVBoxLayout(self)
@@ -340,7 +320,6 @@ class AuthDialog(QDialog):
         self.register_link_btn.clicked.connect(self.show_register_form)
         self.main_layout.addWidget(self.register_link_btn)
         
-        # Скрываем кнопку регистрации если уже есть учётные данные
         self.check_credentials_and_hide_register()
     
     def check_credentials_and_hide_register(self):
@@ -364,9 +343,7 @@ class AuthDialog(QDialog):
         """Переключает на форму регистрации"""
         computer_name = socket.gethostname()
         self.reg_login_edit.setText(computer_name.lower().replace('-', '_').replace(' ', '_')[:20])
-        # Генерируем новый пароль при каждом открытии формы регистрации
         self.reg_password_edit.setText(HardwareIDGenerator.generate_unique_id()[:12])
-        # Сохраняем пароль для регистрации, но не показываем его повторно
         self._temp_password = self.reg_password_edit.text()
         
         self.title_frame.setStyleSheet("background-color: #27ae60; border-radius: 8px;")
@@ -397,7 +374,6 @@ class AuthDialog(QDialog):
         self.reg_password_edit.setVisible(False)
         self.reg_btn.setVisible(False)
         
-        # Очищаем данные регистрации при переходе на форму входа
         self.reg_login_edit.clear()
         self.reg_password_edit.clear()
         if hasattr(self, '_temp_password'):
@@ -416,7 +392,6 @@ class AuthDialog(QDialog):
         try:
             user_data = DatabaseManager.get_user(user_id)
             if user_data and user_data.get('reset_password_token'):
-                # Показываем диалог сброса пароля
                 dialog = ResetPasswordDialog(user_data['reset_password_token'], self)
                 if dialog.exec() == QDialog.DialogCode.Accepted:
                     return True
@@ -425,51 +400,49 @@ class AuthDialog(QDialog):
             print(f"Ошибка проверки флага сброса пароля: {e}")
             return False
     
+    def create_session_for_user(self, computer_id, user_id):
+        """Создает сессию для пользователя"""
+        try:
+            session_id = DatabaseManager.create_session(computer_id, user_id)
+            if session_id:
+                print(f"✅ Сессия создана: {session_id}")
+                return session_id
+            else:
+                print(f"❌ Не удалось создать сессию")
+                return None
+        except Exception as e:
+            print(f"❌ Ошибка создания сессии: {e}")
+            return None
+    
     def do_auto_login(self, login: str, password: str):
         """Автоматический вход с сохранёнными данными"""
         try:
             user_data = DatabaseManager.login(login, password)
             
             if not user_data:
+                print("Автоматический вход не удался: неверные данные")
                 return
             
             user_id = user_data['user_id']
             role_id = user_data.get('role_id')
             is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
             
-            # Проверяем флаг сброса пароля
             if self.check_reset_password_flag(user_id):
-                # После сброса пароля нужно заново войти
                 self.do_login()
                 return
             
-            # Подключаем компьютер
             computer_result = DatabaseManager.register_computer_for_user(user_id)
             
             if not computer_result:
+                print("Не удалось зарегистрировать компьютер")
                 return
             
             computer_id = computer_result['computer_id']
             hostname = socket.gethostname()
             mac_address = HardwareIDGenerator.get_mac_address()
             
-            # Если компьютер уже был привязан к другому пользователю - перепривязываем
-            if computer_result.get('already_bound') and computer_result.get('other_user_id'):
-                other_user_id = computer_result.get('other_user_id')
-                print(f"⚠️ Компьютер был привязан к пользователю {other_user_id}")
-                
-                # Перепривязываем компьютер к текущему пользователю
-                rebind_result = DatabaseManager.rebind_computer(
-                    computer_id=computer_id,
-                    user_id=user_id,
-                    computer_type='admin' if is_admin else 'client'
-                )
-                
-                if not rebind_result:
-                    print(f"⚠️ Не удалось перепривязать компьютер, но продолжаем")
-            
-            session_id = None
-            session_token = DatabaseManager.auth_token
+            # Создаем сессию
+            session_id = self.create_session_for_user(computer_id, user_id)
             
             self.computer_data = {
                 'computer_id': computer_id,
@@ -481,7 +454,7 @@ class AuthDialog(QDialog):
                 'role_id': role_id,
                 'computer_type': 'admin' if is_admin else 'client',
                 'session_id': session_id,
-                'session_token': session_token,
+                'session_token': DatabaseManager.auth_token,
                 'is_new': False,
                 'hardware_changed': False
             }
@@ -507,12 +480,9 @@ class AuthDialog(QDialog):
         
         self.status_label.setText("Проверка учетных данных...")
         self.status_label.setVisible(True)
-        self.status_label.setStyleSheet("color: #ff8c42; font-weight: bold; font-size: 11px;")
-        self.error_label.setVisible(False)
         QApplication.processEvents()
         
         try:
-            # Аутентификация через API
             user_data = DatabaseManager.login(login, password)
             
             if not user_data:
@@ -522,7 +492,6 @@ class AuthDialog(QDialog):
             role_id = user_data.get('role_id')
             is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
             
-            # Проверяем флаг сброса пароля
             if self.check_reset_password_flag(user_id):
                 self.login_edit.setEnabled(True)
                 self.password_edit.setEnabled(True)
@@ -542,34 +511,11 @@ class AuthDialog(QDialog):
             hostname = computer_result['hostname']
             mac_address = computer_result.get('mac_address', '')
             
-            # Если компьютер уже был привязан к другому пользователю - перепривязываем
-            if computer_result.get('already_bound') and computer_result.get('other_user_id'):
-                other_user_id = computer_result.get('other_user_id')
-                other_user_login = computer_result.get('other_user_login', 'Unknown')
-                print(f"⚠️ Компьютер был привязан к пользователю {other_user_login} (ID: {other_user_id})")
-                
-                # Перепривязываем компьютер к текущему пользователю
-                self.status_label.setText("Перепривязка компьютера...")
-                QApplication.processEvents()
-                
-                rebind_result = DatabaseManager.rebind_computer(
-                    computer_id=computer_id,
-                    user_id=user_id,
-                    computer_type='admin' if is_admin else 'client'
-                )
-                
-                if not rebind_result:
-                    print(f"⚠️ Не удалось перепривязать компьютер, но продолжаем")
-                else:
-                    print(f"✅ Компьютер успешно перепривязан к {login}")
+            # Создаем сессию
+            self.status_label.setText("Создание сессии...")
+            QApplication.processEvents()
             
-            session_id = computer_result.get('session_id')
-            session_token = DatabaseManager.auth_token
-            
-            # Получаем информацию о группе и инвентарном номере
-            computer_info = DatabaseManager.get_computer(computer_id)
-            group_id = computer_info.get('group_id') if computer_info else None
-            inventory_number = computer_info.get('inventory_number') if computer_info else None
+            session_id = self.create_session_for_user(computer_id, user_id)
             
             self.computer_data = {
                 'computer_id': computer_id,
@@ -581,14 +527,14 @@ class AuthDialog(QDialog):
                 'role_id': role_id,
                 'computer_type': 'admin' if is_admin else 'client',
                 'session_id': session_id,
-                'session_token': session_token,
-                'group_id': group_id,
-                'inventory_number': inventory_number,
+                'session_token': DatabaseManager.auth_token,
                 'is_new': computer_result.get('is_new', False),
                 'hardware_changed': computer_result.get('hardware_changed', False)
             }
             
-            self.save_credentials(self.computer_data)
+            # Сохраняем учетные данные ТОЛЬКО для клиента (не для админа)
+            if not is_admin:
+                self.save_credentials(self.computer_data)
             
             settings = QSettings("RemoteAccess", "Agent")
             settings.setValue("auto_auth", True)
@@ -626,11 +572,9 @@ class AuthDialog(QDialog):
         self.status_label.setVisible(True)
         self.status_label.setStyleSheet("color: #27ae60; font-weight: bold; font-size: 11px;")
         self.error_label.setVisible(False)
-        self.validation_label.setText("")
         QApplication.processEvents()
         
         try:
-            # Проверяем существование пользователя через API
             existing = DatabaseManager.get_users()
             if existing:
                 for user in existing.get('users', []):
@@ -654,8 +598,8 @@ class AuthDialog(QDialog):
             hostname = computer_result['hostname']
             mac_address = computer_result['mac_address']
             
-            session_id = computer_result.get('session_id')
-            session_token = DatabaseManager.auth_token
+            # Создаем сессию
+            session_id = self.create_session_for_user(computer_id, user_id)
             
             self.computer_data = {
                 'computer_id': computer_id,
@@ -667,7 +611,7 @@ class AuthDialog(QDialog):
                 'role_id': 1,
                 'computer_type': 'client',
                 'session_id': session_id,
-                'session_token': session_token,
+                'session_token': DatabaseManager.auth_token,
                 'group_id': None,
                 'inventory_number': None,
                 'is_new': computer_result.get('is_new', False),
@@ -692,15 +636,13 @@ class AuthDialog(QDialog):
     def show_error(self, message: str):
         self.error_label.setText(f"❌ {message}")
         self.error_label.setVisible(True)
-        self.error_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 11px;")
     
     def show_register_error(self, message: str):
         self.error_label.setText(f"❌ {message}")
         self.error_label.setVisible(True)
-        self.error_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 11px;")
     
     def save_credentials(self, computer_data: dict):
-        # Не сохраняем данные для админа - только для клиента
+        """Сохраняет учетные данные для автоматического входа (только для клиента)"""
         computer_type = computer_data.get('computer_type', 'client')
         if computer_type == 'admin':
             print("Администратор вошёл в систему - учётные данные не сохраняются")
@@ -710,7 +652,6 @@ class AuthDialog(QDialog):
             config_dir = get_config_dir()
             cred_file = config_dir / "credentials.txt"
             
-            # Сохраняем только логин и пароль
             with open(cred_file, 'w', encoding='utf-8') as f:
                 f.write(f"Login: {computer_data['login']}\n")
                 f.write(f"Password: {computer_data.get('password', '')}\n")

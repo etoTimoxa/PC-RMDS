@@ -144,12 +144,22 @@ def main():
             except:
                 pass
     
+    # ✅ Защита от двойного вызова завершения
+    quit_called = False
+    
+    def on_application_quit_safe():
+        nonlocal quit_called
+        if quit_called:
+            return
+        quit_called = True
+        on_application_quit()
+    
     # Используем сигнал Qt (гарантированно вызывается всегда)
-    app.aboutToQuit.connect(on_application_quit)
+    app.aboutToQuit.connect(on_application_quit_safe)
     
     # Регистрируем также на случай аварийного завершения
     import atexit
-    atexit.register(on_application_quit)
+    atexit.register(on_application_quit_safe)
     
     auth_dialog = AuthDialog()
     if auth_dialog.exec() == AuthDialog.DialogCode.Accepted:

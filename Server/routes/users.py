@@ -306,3 +306,40 @@ def block_user(user_id):
             'success': False,
             'error': str(e)
         }), 500
+
+
+@users_bp.route('/<int:user_id>/reset-password', methods=['POST'])
+def reset_user_password(user_id):
+    """
+    POST /api/users/{id}/reset-password
+    Сброс пароля пользователя администратором
+    """
+    try:
+        user = mysql.fetch_one(
+            "SELECT user_id, login, is_active FROM user WHERE user_id = %s",
+            (user_id,)
+        )
+        
+        if not user:
+            return jsonify({
+                'success': False,
+                'error': 'Пользователь не найден'
+            }), 404
+
+        # Устанавливаем флаг обязательной смены пароля при следующем входе
+        mysql.execute("""
+            UPDATE user 
+            SET require_password_change = 1 
+            WHERE user_id = %s
+        """, (user_id,))
+
+        return jsonify({
+            'success': True,
+            'message': 'Пароль сброшен. При следующем входе пользователь должен будет сменить пароль'
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

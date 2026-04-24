@@ -344,10 +344,10 @@ def password_reset():
         # Хешируем новый пароль
         new_password_hash = hashlib.sha256(data['new_password'].encode()).hexdigest()
 
-        # Обновляем пароль в базе
+        # Обновляем пароль в базе и сбрасываем флаг обязательной смены пароля
         mysql.execute("""
             UPDATE user 
-            SET password_hash = %s, updated_at = NOW()
+            SET password_hash = %s, require_password_change = 0, updated_at = NOW()
             WHERE user_id = %s
         """, (new_password_hash, user['user_id']))
 

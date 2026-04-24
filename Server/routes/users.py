@@ -295,6 +295,13 @@ def block_user(user_id):
         # Если пользователь заблокирован - закрываем все его активные сессии
         if is_active == 0:
             mysql.close_all_user_sessions(user_id)
+        else:
+            # При разблокировке сбрасываем счетчик неудачных попыток входа
+            mysql.execute("""
+                UPDATE user 
+                SET failed_login_attempts = 0
+                WHERE user_id = %s
+            """, (user_id,))
         
         return jsonify({
             'success': True,

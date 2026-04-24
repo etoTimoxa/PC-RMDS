@@ -598,6 +598,26 @@ class AuthDialog(QDialog):
         except Exception as e:
             error_msg = str(e)
             print(f"Ошибка авторизации: {error_msg}")
+            
+            # Проверяем если есть дополнительная информация об ошибке
+            import json
+            try:
+                if hasattr(e, 'response') and e.response.text:
+                    error_data = json.loads(e.response.text)
+                    if 'remaining_attempts' in error_data:
+                        error_msg = error_data['error']
+                        # Показываем красный текст с оставшимися попытками
+                        self.error_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 13px;")
+                    elif 'is_locked' in error_data:
+                        error_msg = error_data['error']
+                        self.error_label.setStyleSheet("color: #c0392b; font-weight: bold; font-size: 14px;")
+                        # Делаем поля неактивными при блокировке
+                        self.login_edit.setEnabled(False)
+                        self.password_edit.setEnabled(False)
+                        self.login_btn.setEnabled(False)
+            except:
+                pass
+            
             self.show_error(error_msg)
             
             self.login_edit.setEnabled(True)

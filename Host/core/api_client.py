@@ -144,16 +144,24 @@ class APIClient:
                 headers=cls._headers(),
                 timeout=15
             )
-            response.raise_for_status()
+            
             data = response.json()
             
             if data.get('success'):
                 cls.auth_token = data['data'].get('token')
                 return data['data']['user']
-            return None
+            else:
+                # Поднимаем исключение с сообщением от сервера
+                raise Exception(data.get('error', 'Неверный логин или пароль'))
+                
+        except requests.HTTPError as e:
+            try:
+                error_data = response.json()
+                raise Exception(error_data.get('error', str(e)))
+            except:
+                raise Exception(f"Ошибка авторизации: {str(e)}")
         except Exception as e:
-            print(f"Ошибка авторизации: {e}")
-            return None
+            raise e
     
     @classmethod
     def register(cls, login: str, password: str, full_name: str) -> Optional[int]:

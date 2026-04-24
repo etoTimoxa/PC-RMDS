@@ -258,9 +258,9 @@ class UsersTab(QWidget):
         
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                success = DatabaseManager.request_password_reset(login)
-                if success:
-                    QMessageBox.information(self, "Успешно", f"Запрос на сброс пароля для '{login}' отправлен")
+                success = DatabaseManager.post(f"/users/{user_id}/reset-password")
+                if success and success.get('success'):
+                    QMessageBox.information(self, "Успешно", f"Пароль для пользователя '{login}' сброшен. При следующем входе пользователь должен будет сменить пароль.")
                 else:
                     QMessageBox.critical(self, "Ошибка", "Не удалось сбросить пароль")
             except Exception as e:

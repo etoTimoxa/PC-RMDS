@@ -39,6 +39,117 @@ def get_computer_groups():
         }), 500
 
 
+@computers_bp.route('/check-password-flag', methods=['POST'])
+def check_password_reset_flag():
+    """
+    POST /api/computers/check-password-flag
+    Проверка флага сброса пароля по MAC адресу компьютера
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'mac_address' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'MAC адрес не указан'
+            }), 400
+
+        mac_address = data['mac_address']
+
+        # Ищем компьютер по MAC адресу
+        computer = mysql.fetch_one("""
+            SELECT c.computer_id, c.user_id, u.require_password_change, u.login
+            FROM computer c 
+            LEFT JOIN user u ON c.user_id = u.user_id
+            WHERE c.mac_address = %s
+            LIMIT 1
+        """, (mac_address,))
+
+        if not computer:
+            return jsonify({
+                'success': True,
+                'require_password_change': False
+            })
+
+        return jsonify({
+            'success': True,
+            'require_password_change': computer.get('require_password_change', 0) == 1,
+            'user_id': computer.get('user_id'),
+            'login': computer.get('login'),
+            'computer_id': computer.get('computer_id')
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@computers_bp.route('/reset-password-by-mac', methods=['POST'])
+def reset_password_by_mac():
+    """
+    POST /api/computers/reset-password-by-mac
+    Сброс пароля по MAC адресу компьютера (без авторизации)
+    """
+    try:
+        data = request.get_json()
+        
+        required_fields = ['mac_address', 'new_password']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    'success': False,
+                    'error': f'Отсутствует обязательное поле: {field}'
+                }), 400
+
+        mac_address = data['mac_address']
+        new_password = data['new_password']
+
+        if len(new_password) < 4:
+            return jsonify({
+                'success': False,
+                'error': 'Пароль должен быть не менее 4 символов'
+            }), 400
+
+        # Ищем компьютер и пользователя
+        computer = mysql.fetch_one("""
+            SELECT c.user_id 
+            FROM computer c 
+            WHERE c.mac_address = %s
+            LIMIT 1
+        """, (mac_address,))
+
+        if not computer or not computer['user_id']:
+            return jsonify({
+                'success': False,
+                'error': 'Компьютер не найден или не привязан к пользователю'
+            }), 404
+
+        user_id = computer['user_id']
+
+        # Хешируем новый пароль
+        password_hash = hashlib.sha256(new_password.encode()).hexdigest()
+
+        # Обновляем пароль и сбрасываем флаг
+        mysql.execute("""
+            UPDATE user 
+            SET password_hash = %s, require_password_change = 0, updated_at = NOW()
+            WHERE user_id = %s
+        """, (password_hash, user_id))
+
+        return jsonify({
+            'success': True,
+            'message': 'Пароль успешно изменен'
+        })
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @computers_bp.route('/groups', methods=['POST'])
 def create_computer_group():
     """Создать новую группу компьютеров"""

@@ -123,7 +123,17 @@ class ResetPasswordDialog(QDialog):
             return
         
         try:
-            result = DatabaseManager.reset_password(self.reset_token, new_password)
+            if self.reset_token:
+                # Стандартный сброс по токену
+                result = DatabaseManager.reset_password(self.reset_token, new_password)
+            else:
+                # Принудительная смена пароля администратором по MAC адресу
+                mac_address = HardwareIDGenerator.get_mac_address()
+                result = DatabaseManager.post("/computers/reset-password-by-mac", json={
+                    "mac_address": mac_address,
+                    "new_password": new_password
+                })
+            
             if result and result.get('success'):
                 QMessageBox.information(self, "Успех", "Пароль успешно изменен")
                 self.accept()
@@ -147,6 +157,9 @@ class AuthDialog(QDialog):
     
     def load_saved_credentials(self):
         """Загружает сохранённые учётные данные и пытается автоматически войти"""
+        # Сначала проверяем флаг сброса пароля по MAC адресу
+        self.check_password_reset_flag_on_startup()
+        
         settings = QSettings("RemoteAccess", "Agent")
         auto_auth = settings.value("auto_auth", False, type=bool)
         
@@ -173,6 +186,35 @@ class AuthDialog(QDialog):
         else:
             self.login_edit.setEnabled(True)
             self.password_edit.setEnabled(True)
+    
+    def check_password_reset_flag_on_startup(self):
+        """Проверяет флаг сброса пароля по MAC адресу при запуске"""
+        try:
+            mac_address = HardwareIDGenerator.get_mac_address()
+            
+            # Отправляем запрос на сервер
+            result = DatabaseManager.post("/computers/check-password-flag", json={"mac_address": mac_address})
+            
+            if result and result.get('require_password_change', False):
+                login = result.get('login', 'пользователь')
+                
+                # Создаем диалог сброса пароля
+                dialog = ResetPasswordDialog(None, self)
+                dialog.setWindowTitle("Обязательная смена пароля")
+                
+                # Обновляем заголовки
+                for child in dialog.findChildren(QLabel):
+                    if child.text() == "Сброс пароля":
+                        child.setText("Необходимо сменить пароль")
+                    if child.text() == "Введите новый пароль":
+                        child.setText(f"Администратор запросил смену пароля для '{login}'.\nВведите новый пароль:")
+                
+                if dialog.exec() == QDialog.DialogCode.Accepted:
+                    # Успешно сменили пароль - флаг автоматически сброшен
+                    QMessageBox.information(self, "Успех", "Пароль успешно изменен. Теперь вы можете войти в систему.")
+            
+        except Exception as e:
+            print(f"Ошибка проверки флага сброса пароля при запуске: {e}")
     
     def init_ui(self):
         self.setWindowIcon(get_app_icon())
@@ -391,9 +433,19 @@ class AuthDialog(QDialog):
         """Проверяет, есть ли флаг сброса пароля для пользователя"""
         try:
             user_data = DatabaseManager.get_user(user_id)
-            if user_data and user_data.get('reset_password_token'):
-                dialog = ResetPasswordDialog(user_data['reset_password_token'], self)
+            if user_data and user_data.get('require_password_change', 0) == 1:
+                dialog = ResetPasswordDialog(None, self)
+                dialog.setWindowTitle("Обязательная смена пароля")
+                # Обновляем заголовок диалога
+                for child in dialog.findChildren(QLabel):
+                    if child.text() == "Сброс пароля":
+                        child.setText("Необходимо сменить пароль")
+                    if child.text() == "Введите новый пароль":
+                        child.setText("Администратор запросил смену пароля. Введите новый пароль:")
+                
                 if dialog.exec() == QDialog.DialogCode.Accepted:
+                    # После успешной смены пароля сбрасываем флаг
+                    DatabaseManager.put(f"/users/{user_id}", json={"require_password_change": 0})
                     return True
             return False
         except Exception as e:

@@ -315,6 +315,27 @@ def block_user(user_id):
         }), 500
 
 
+@users_bp.route('/roles', methods=['GET'])
+def get_roles():
+    """
+    GET /api/users/roles
+    Получить все роли пользователей
+    """
+    try:
+        roles = mysql.get_roles()
+        
+        return jsonify({
+            'success': True,
+            'data': roles
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @users_bp.route('/<int:user_id>/reset-password', methods=['POST'])
 def reset_user_password(user_id):
     """

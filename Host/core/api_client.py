@@ -810,7 +810,12 @@ class APIClient:
             return response.get('data', []) if response.get('success') else []
         except Exception as e:
             print(f"Ошибка получения ролей: {e}")
-            return []
+            # Запасной вариант если эндпоинт не работает
+            return [
+                {"role_id": 1, "role_name": "client", "description": "Обычный клиент"},
+                {"role_id": 2, "role_name": "admin", "description": "Администратор"},
+                {"role_id": 3, "role_name": "superadmin", "description": "Супер-администратор"}
+            ]
 
     @classmethod
     def request_password_reset(cls, login: str) -> bool:

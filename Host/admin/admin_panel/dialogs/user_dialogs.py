@@ -44,8 +44,6 @@ class EditUserDialog(QDialog):
             self.roles_map[role['role_id']] = role['role_name']
         form_layout.addRow("Роль:", self.role_combo)
         
-        self.active_checkbox = QCheckBox("Активен")
-        form_layout.addRow(self.active_checkbox)
         
         layout.addLayout(form_layout)
         
@@ -75,7 +73,6 @@ class EditUserDialog(QDialog):
                 self.role_combo.setCurrentIndex(i)
                 break
         
-        self.active_checkbox.setChecked(self.user_data.get('is_active', 0) == 1)
     
     def save_changes(self):
         """Сохраняет изменения"""
@@ -87,7 +84,6 @@ class EditUserDialog(QDialog):
                 'login': self.login_input.text().strip(),
                 'full_name': self.full_name_input.text().strip(),
                 'role_id': selected_role_id,
-                'is_active': 1 if self.active_checkbox.isChecked() else 0
             }
             
             success = DatabaseManager.update_user(self.user_data['user_id'], data)

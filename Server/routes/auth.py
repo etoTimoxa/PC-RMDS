@@ -152,7 +152,8 @@ def login():
                     'login': login,
                     'full_name': full_name,
                     'role_id': role_id,
-                    'is_admin': role_id in (2, 3)
+                    'is_admin': role_id in (2, 3),
+                    'require_password_change': user.get('require_password_change', 0) == 1
                 }
             }
         })

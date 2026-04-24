@@ -82,8 +82,9 @@ class APIClient:
     def post(cls, url: str, json: dict = None, **kwargs):
         """Общий метод POST запросов для совместимости"""
         try:
+            full_url = API_BASE_URL + (url if url.startswith('/api') else f'/api{url}')
             response = requests.post(
-                f"{API_BASE_URL}{url}",
+                full_url,
                 headers=cls._headers(),
                 json=json,
                 timeout=10,
@@ -99,8 +100,9 @@ class APIClient:
     def put(cls, url: str, json: dict = None, **kwargs):
         """Общий метод PUT запросов для совместимости"""
         try:
+            full_url = API_BASE_URL + (url if url.startswith('/api') else f'/api{url}')
             response = requests.put(
-                f"{API_BASE_URL}{url}",
+                full_url,
                 headers=cls._headers(),
                 json=json,
                 timeout=10,
@@ -116,8 +118,9 @@ class APIClient:
     def delete(cls, url: str, **kwargs):
         """Общий метод DELETE запросов для совместимости"""
         try:
+            full_url = API_BASE_URL + (url if url.startswith('/api') else f'/api{url}')
             response = requests.delete(
-                f"{API_BASE_URL}{url}",
+                full_url,
                 headers=cls._headers(),
                 timeout=10,
                 **kwargs
@@ -739,9 +742,6 @@ class APIClient:
         role_id = 1 if role == 'client' else 2
         
         try:
-            # Хешируем пароль
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
-            
             response = requests.post(
                 f"{API_BASE_URL}/api/users",
                 json={
@@ -760,6 +760,56 @@ class APIClient:
         except Exception as e:
             print(f"Ошибка создания пользователя: {e}")
             return None
+
+    @classmethod
+    def update_user(cls, user_id: int, data: Dict[str, Any]) -> bool:
+        """Обновление данных пользователя"""
+        try:
+            response = requests.put(
+                f"{API_BASE_URL}/api/users/{user_id}",
+                json=data,
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get('success', False)
+        except Exception as e:
+            print(f"Ошибка обновления пользователя: {e}")
+            return False
+
+    @classmethod
+    def delete_user(cls, user_id: int) -> bool:
+        """Удаление пользователя"""
+        try:
+            response = requests.delete(
+                f"{API_BASE_URL}/api/users/{user_id}",
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get('success', False)
+        except Exception as e:
+            print(f"Ошибка удаления пользователя: {e}")
+            return False
+
+    @classmethod
+    def request_password_reset(cls, login: str) -> bool:
+        """Запрос на сброс пароля по логину"""
+        try:
+            response = requests.post(
+                f"{API_BASE_URL}/api/auth/password/reset-request",
+                json={"login": login},
+                headers=cls._headers(),
+                timeout=15
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get('success', False)
+        except Exception as e:
+            print(f"Ошибка запроса сброса пароля: {e}")
+            return False
     
     # ==============================================
     # МЕТРИКИ

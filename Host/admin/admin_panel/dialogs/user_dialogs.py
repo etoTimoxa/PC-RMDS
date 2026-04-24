@@ -36,7 +36,12 @@ class EditUserDialog(QDialog):
         
         
         self.role_combo = QComboBox()
-        self.role_combo.addItems(["user", "admin", "manager"])
+        # Загружаем реальные роли из базы
+        roles = DatabaseManager.get_roles()
+        self.roles_map = {}
+        for role in roles:
+            self.role_combo.addItem(f"{role['role_name']} - {role['description']}")
+            self.roles_map[role['role_id']] = role['role_name']
         form_layout.addRow("Роль:", self.role_combo)
         
         self.active_checkbox = QCheckBox("Активен")
@@ -64,20 +69,24 @@ class EditUserDialog(QDialog):
         self.login_input.setText(self.user_data.get('login', ''))
         self.full_name_input.setText(self.user_data.get('full_name', ''))
         
-        role = self.user_data.get('role_name', 'user')
-        index = self.role_combo.findText(role)
-        if index >= 0:
-            self.role_combo.setCurrentIndex(index)
+        role_id = self.user_data.get('role_id', 1)
+        for i in range(self.role_combo.count()):
+            if self.roles_map.get(i+1) == self.user_data.get('role_name'):
+                self.role_combo.setCurrentIndex(i)
+                break
         
         self.active_checkbox.setChecked(self.user_data.get('is_active', 0) == 1)
     
     def save_changes(self):
         """Сохраняет изменения"""
         try:
+            # Получаем ID роли по выбранному индексу
+            selected_role_id = list(self.roles_map.keys())[self.role_combo.currentIndex()]
+            
             data = {
                 'login': self.login_input.text().strip(),
                 'full_name': self.full_name_input.text().strip(),
-                'role': self.role_combo.currentText(),
+                'role_id': selected_role_id,
                 'is_active': 1 if self.active_checkbox.isChecked() else 0
             }
             
@@ -126,7 +135,12 @@ class AddUserDialog(QDialog):
         form_layout.addRow("Email:", self.email_input)
         
         self.role_combo = QComboBox()
-        self.role_combo.addItems(["user", "admin", "manager"])
+        # Загружаем реальные роли из базы
+        roles = DatabaseManager.get_roles()
+        self.roles_map = {}
+        for role in roles:
+            self.role_combo.addItem(f"{role['role_name']} - {role['description']}")
+            self.roles_map[role['role_id']] = role['role_name']
         form_layout.addRow("Роль:", self.role_combo)
         
         layout.addLayout(form_layout)
@@ -160,12 +174,15 @@ class AddUserDialog(QDialog):
             return
         
         try:
+            # Получаем ID роли по выбранному индексу
+            selected_role_id = list(self.roles_map.keys())[self.role_combo.currentIndex()]
+            
             data = {
                 'login': login,
                 'password': password,
                 'full_name': self.full_name_input.text().strip(),
                 'email': self.email_input.text().strip(),
-                'role': self.role_combo.currentText()
+                'role_id': selected_role_id
             }
             
             success = DatabaseManager.create_user(data)

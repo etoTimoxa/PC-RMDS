@@ -803,6 +803,16 @@ class APIClient:
             return False
 
     @classmethod
+    def get_roles(cls) -> List[Dict[str, Any]]:
+        """Получить все роли пользователей"""
+        try:
+            response = cls.get('/users/roles')
+            return response.get('data', []) if response.get('success') else []
+        except Exception as e:
+            print(f"Ошибка получения ролей: {e}")
+            return []
+
+    @classmethod
     def request_password_reset(cls, login: str) -> bool:
         """Запрос на сброс пароля по логину"""
         try:

@@ -412,6 +412,8 @@ class MySQLService:
         """Удалить пользователя"""
         with self.get_connection() as conn:
             with conn.cursor() as cursor:
+                # Сначала удаляем все сессии пользователя
+                cursor.execute("DELETE FROM session WHERE user_id = %s", (user_id,))
                 # Отвязываем компьютеры
                 cursor.execute("UPDATE computer SET user_id = NULL WHERE user_id = %s", (user_id,))
                 # Удаляем пользователя

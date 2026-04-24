@@ -103,7 +103,7 @@ def login():
             }), 400
 
         user = mysql.fetch_one(
-            "SELECT user_id, login, full_name, password_hash, role_id, is_active FROM user WHERE login = %s",
+            "SELECT user_id, login, full_name, password_hash, role_id, is_active, failed_login_attempts FROM user WHERE login = %s",
             (data['login'],)
         )
 
@@ -116,17 +116,42 @@ def login():
         if not user['is_active']:
             return jsonify({
                 'success': False,
-                'error': 'Пользователь заблокирован'
+                'error': 'Пользователь заблокирован',
+                'is_banned': True
             }), 403
 
         # Проверяем пароль (хеш в базе SHA256)
         password_hash = hashlib.sha256(data['password'].encode()).hexdigest()
         
         if password_hash != user['password_hash']:
-            return jsonify({
-                'success': False,
-                'error': 'Неверный логин или пароль'
-            }), 401
+            new_attempts = user.get('failed_login_attempts', 0) + 1
+            remaining_attempts = 5 - new_attempts
+            
+            if new_attempts >= 5:
+                # Полностью блокируем пользователя
+                mysql.execute("""
+                    UPDATE user 
+                    SET failed_login_attempts = %s, is_active = 0
+                    WHERE user_id = %s
+                """, (new_attempts, user['user_id']))
+                
+                return jsonify({
+                    'success': False,
+                    'error': 'Превышено количество попыток входа. Пользователь заблокирован.',
+                    'is_locked': True
+                }), 403
+            else:
+                mysql.execute("""
+                    UPDATE user 
+                    SET failed_login_attempts = %s
+                    WHERE user_id = %s
+                """, (new_attempts, user['user_id']))
+                
+                return jsonify({
+                    'success': False,
+                    'error': f'Неверный логин или пароль. Осталось попыток: {remaining_attempts}',
+                    'remaining_attempts': remaining_attempts
+                }), 401
 
         # Генерируем JWT токен
         user_id = user['user_id']
@@ -140,6 +165,13 @@ def login():
             'role_id': role_id,
             'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
         }
+
+        # Сбрасываем счетчик неудачных попыток при успешном входе
+        mysql.execute("""
+            UPDATE user 
+            SET failed_login_attempts = 0
+            WHERE user_id = %s
+        """, (user_id,))
 
         token = jwt.encode(payload, JWT_SECRET, algorithm='HS256')
 

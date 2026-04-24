@@ -553,6 +553,12 @@ class RemoteAgentThread(QThread):
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
                         self.log_message.emit(f"Остановка трансляции")
+                        # Сбрасываем регистрацию компьютера на сервере (ставим статус не в трансляции)
+                        try:
+                            APIClient.update_computer_status(self.computer_id, False, self.session_id)
+                            self.log_message.emit(f"✅ Регистрация на сервере сброшена, компьютер помечен как не в трансляции")
+                        except Exception as e:
+                            self.log_message.emit(f"⚠️ Ошибка сброса регистрации на сервере: {e}")
                 
                 elif cmd_type == "unregister_client":
                     if client_id in self.connected_clients_list:
@@ -563,6 +569,12 @@ class RemoteAgentThread(QThread):
                         self.streaming_clients.remove(client_id)
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
+                        # Сбрасываем регистрацию компьютера на сервере при отключении последнего клиента
+                        try:
+                            APIClient.update_computer_status(self.computer_id, False, self.session_id)
+                            self.log_message.emit(f"✅ Регистрация на сервере сброшена, компьютер помечен как не в трансляции")
+                        except Exception as e:
+                            self.log_message.emit(f"⚠️ Ошибка сброса регистрации на сервере: {e}")
                 
                 elif cmd_type == "mouse_move":
                     command_data = data.get("data", {})

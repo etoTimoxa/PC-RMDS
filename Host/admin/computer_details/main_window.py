@@ -534,11 +534,12 @@ class RemoteScreenWindow(QMainWindow):
 class ComputerDetailsWindow(QMainWindow):
     """Окно с детальной информацией по компьютеру"""
     
-    def __init__(self, hostname, computer_data, user_login=None):
+    def __init__(self, hostname, computer_data, user_login=None, parent_window=None):
         super().__init__()
         self.hostname = hostname
         self.computer_data = computer_data
         self.user_login = user_login or computer_data.get('login', 'Admin')
+        self.parent_window = parent_window
         self.current_data = None
         self.computer_id = None
         self.current_disk_info = {'used_gb': None, 'total_gb': None}
@@ -1131,16 +1132,14 @@ class ComputerDetailsWindow(QMainWindow):
     # ==================== Конец методов удаленного доступа ====================
     
     def go_back(self):
-        from ..admin_panel import AdminPanelWindow
-        self.admin_panel = AdminPanelWindow({'login': self.user_login})
-        self.admin_panel.show()
+        if self.parent_window:
+            self.parent_window.show()
         self.close()
     
     def closeEvent(self, event):
         # Отключаем удаленный доступ при закрытии
         self.disconnect_remote()
         
-        from ..admin_panel import AdminPanelWindow
-        self.admin_panel = AdminPanelWindow({'login': self.user_login})
-        self.admin_panel.show()
+        if self.parent_window:
+            self.parent_window.show()
         event.accept()

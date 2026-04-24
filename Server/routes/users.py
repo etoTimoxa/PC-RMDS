@@ -265,3 +265,44 @@ def get_user_sessions(user_id):
             'success': False,
             'error': str(e)
         }), 500
+
+
+@users_bp.route('/<int:user_id>/block', methods=['POST'])
+def block_user(user_id):
+    """
+    POST /api/users/{id}/block
+    Блокировать/разблокировать пользователя.
+    """
+    try:
+        data = request.get_json()
+        
+        if not data or 'is_active' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing is_active parameter'
+            }), 400
+        
+        is_active = int(data.get('is_active', 1))
+        
+        success = mysql.update_user(user_id, {'is_active': is_active})
+        
+        if not success:
+            return jsonify({
+                'success': False,
+                'error': 'User not found'
+            }), 404
+        
+        # Если пользователь заблокирован - закрываем все его активные сессии
+        if is_active == 0:
+            mysql.close_all_user_sessions(user_id)
+        
+        return jsonify({
+            'success': True,
+            'message': 'User status updated successfully'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500

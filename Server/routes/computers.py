@@ -134,7 +134,7 @@ def reset_password_by_mac():
         # Обновляем пароль и сбрасываем флаг
         mysql.execute("""
             UPDATE user 
-            SET password_hash = %s, require_password_change = 0, updated_at = NOW()
+            SET password_hash = %s, require_password_change = 0
             WHERE user_id = %s
         """, (password_hash, user_id))
 

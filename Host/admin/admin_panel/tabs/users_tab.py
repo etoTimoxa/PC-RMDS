@@ -50,21 +50,17 @@ class UsersTab(QWidget):
         add_btn.clicked.connect(self.add_user)
         filter_layout.addWidget(add_btn)
         
-        edit_btn = QPushButton("✏️ Редактировать")
-        edit_btn.setMinimumHeight(35)
-        edit_btn.clicked.connect(self.edit_selected_user)
-        filter_layout.addWidget(edit_btn)
         
         reset_pass_btn = QPushButton("🔑 Сброс пароля")
         reset_pass_btn.setMinimumHeight(35)
         reset_pass_btn.clicked.connect(self.reset_user_password)
         filter_layout.addWidget(reset_pass_btn)
         
-        block_btn = QPushButton("🔒 Блокировать")
-        block_btn.setMinimumHeight(35)
-        block_btn.setStyleSheet("background-color: #f39c12; color: white;")
-        block_btn.clicked.connect(self.toggle_block_user)
-        filter_layout.addWidget(block_btn)
+        self.block_btn = QPushButton("🔒 Блокировать / Разблокировать")
+        self.block_btn.setMinimumHeight(35)
+        self.block_btn.setStyleSheet("background-color: #f39c12; color: white;")
+        self.block_btn.clicked.connect(self.toggle_block_user)
+        filter_layout.addWidget(self.block_btn)
 
         delete_btn = QPushButton("🗑️ Удалить")
         delete_btn.setMinimumHeight(35)
@@ -125,6 +121,12 @@ class UsersTab(QWidget):
         self.users_table.setAlternatingRowColors(True)
         self.users_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.users_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        
+        # Двойной клик для редактирования
+        self.users_table.itemDoubleClicked.connect(self.edit_user_by_double_click)
+        
+        # Обработчик изменения выбора для обновления кнопки блокировки
+        self.users_table.itemSelectionChanged.connect(self.update_block_button_text)
         
         table_layout.addWidget(self.users_table)
         
@@ -208,14 +210,9 @@ class UsersTab(QWidget):
         if dialog.exec():
             self.refresh_data()
     
-    def edit_selected_user(self):
-        """Редактирует выбранного пользователя"""
-        selected_rows = self.users_table.selectedItems()
-        if not selected_rows:
-            QMessageBox.warning(self, "Внимание", "Выберите пользователя для редактирования")
-            return
-        
-        row = selected_rows[0].row()
+    def edit_user_by_double_click(self, item):
+        """Открывает редактирование пользователя по двойному клику"""
+        row = item.row()
         user_id_item = self.users_table.item(row, 0)
         if not user_id_item:
             return
@@ -231,6 +228,21 @@ class UsersTab(QWidget):
         
         except Exception as e:
             print(f"Ошибка редактирования пользователя: {e}")
+    
+    def update_block_button_text(self):
+        """Обновляет текст кнопки блокировки в зависимости от статуса выбранного пользователя"""
+        selected_rows = self.users_table.selectedItems()
+        if not selected_rows:
+            self.block_btn.setText("🔒 Блокировать / Разблокировать")
+            return
+        
+        row = selected_rows[0].row()
+        active_item = self.users_table.item(row, 5)
+        
+        if active_item and active_item.text() == "Да":
+            self.block_btn.setText("🔒 Заблокировать")
+        else:
+            self.block_btn.setText("🔓 Разблокировать")
     
     def reset_user_password(self):
         """Сбрасывает пароль пользователя"""

@@ -127,8 +127,6 @@ class AddUserDialog(QDialog):
         self.full_name_input = QLineEdit()
         form_layout.addRow("Полное имя:", self.full_name_input)
         
-        self.email_input = QLineEdit()
-        form_layout.addRow("Email:", self.email_input)
         
         self.role_combo = QComboBox()
         # Загружаем реальные роли из базы
@@ -173,15 +171,9 @@ class AddUserDialog(QDialog):
             # Получаем ID роли по выбранному индексу
             selected_role_id = list(self.roles_map.keys())[self.role_combo.currentIndex()]
             
-            data = {
-                'login': login,
-                'password': password,
-                'full_name': self.full_name_input.text().strip(),
-                'email': self.email_input.text().strip(),
-                'role_id': selected_role_id
-            }
+            full_name = self.full_name_input.text().strip()
             
-            success = DatabaseManager.create_user(data)
+            success = DatabaseManager.create_user(login, password, full_name)
             
             if success:
                 QMessageBox.information(self, "Успешно", "Пользователь успешно добавлен")

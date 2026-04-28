@@ -1,78 +1,122 @@
 @echo off
-REM Build script for creating AppImage using Docker (Windows version)
-REM This script builds a Linux AppImage of the Remote Access Agent
+chcp 65001 >nul
+setlocal enabledelayedexpansion
 
-echo ==========================================
-echo   Remote Access Agent - AppImage Builder
-echo ==========================================
-echo.
+:: Скрипт для сборки Portable EXE Remote Access Agent (аналог AppImage на Windows)
 
-REM Check if Docker is installed
-where docker >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo ❌ Docker is not installed. Please install Docker Desktop first.
+set VERSION=1.0.0
+set APP_NAME=RemoteAccessAgent
+set DIST_DIR=dist
+
+echo === Начало сборки Portable EXE ===
+
+:: Проверка на Windows
+if not "%OS%"=="Windows_NT" (
+    echo Ошибка: Этот скрипт предназначен только для Windows!
     exit /b 1
 )
 
-echo ✅ Docker is installed
-echo.
+:: Очистка старых сборок
+echo Очистка старых сборок...
+if exist dist rmdir /s /q dist
+if exist build rmdir /s /q build
+if exist *.exe del /q *.exe 2>nul
 
-REM Get the directory of this script
-set SCRIPT_DIR=%~dp0
-cd /d "%SCRIPT_DIR%"
-
-echo 📁 Project directory: %SCRIPT_DIR%
-echo.
-
-REM Check if app_icon.png exists
-if not exist "app_icon.png" (
-    echo ❌ app_icon.png not found! Please provide an icon file.
-    echo    The icon should be at least 256x256 pixels.
+:: Проверка Python
+where python >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Ошибка: Python не найден в PATH!
+    echo Установите Python с https://www.python.org/downloads/
     exit /b 1
 )
 
-echo ✅ Icon file found: app_icon.png
-echo.
+:: Проверка PyInstaller
+echo Проверка PyInstaller...
+pip show pyinstaller >nul 2>nul
+if %errorlevel% neq 0 (
+    echo PyInstaller не найден. Устанавливаю...
+    pip install pyinstaller
+    if %errorlevel% neq 0 (
+        echo Ошибка установки PyInstaller!
+        exit /b 1
+    )
+)
 
-REM Build the Docker image
-echo 🔨 Building Docker image...
-docker build -t pc-rmds-appimage-builder .
-if %ERRORLEVEL% NEQ 0 (
-    echo ❌ Docker build failed!
+:: Сборка через PyInstaller
+echo Сборка приложения через PyInstaller...
+if exist app_icon.png (
+    pyinstaller --onefile --windowed --name="%APP_NAME%" --icon=app_icon.png main.py
+) else (
+    pyinstaller --onefile --windowed --name="%APP_NAME%" main.py
+)
+
+if %errorlevel% neq 0 (
+    echo Ошибка сборки PyInstaller!
     exit /b 1
 )
 
-echo ✅ Docker image built successfully
-echo.
+:: Копирование готового EXE
+echo Копирование готового EXE...
+copy "%DIST_DIR%\%APP_NAME%.exe" .\ >nul
 
-REM Create output directory
-if not exist "output" mkdir output
-
-REM Run the container to build AppImage
-echo 📦 Building AppImage inside container...
-docker run --rm ^
-    -v "%CD%\output:/output" ^
-    pc-rmds-appimage-builder
-if %ERRORLEVEL% NEQ 0 (
-    echo ❌ AppImage build failed!
-    echo    Check the Docker output for details.
+if %errorlevel% neq 0 (
+    echo Ошибка копирования EXE!
     exit /b 1
 )
 
-echo.
-echo ==========================================
-echo   ✅ AppImage build completed!
-echo ==========================================
-echo.
-echo 📁 Output directory: %CD%\output
-echo.
-echo 📋 Next steps:
-echo    1. Copy the AppImage to a Linux system
-echo    2. Make it executable: chmod +x RemoteAccessAgent-*.AppImage
-echo    3. Run: ./RemoteAccessAgent-*.AppImage
-echo.
-echo ⚠️  Note: AppImage is a Linux format and cannot be run on Windows.
-echo    You need to transfer the file to a Linux machine to use it.
-echo.
+:: Создание ZIP-архива с дополнительными файлами (опционально)
+echo Создание портативной упаковки...
+if exist "%APP_NAME%_portable" rmdir /s /q "%APP_NAME%_portable"
+mkdir "%APP_NAME%_portable" 2>nul
+copy "%APP_NAME%.exe" "%APP_NAME%_portable\" >nul
 
+:: Копирование readme если есть
+if exist README.md copy README.md "%APP_NAME%_portable\" >nul
+
+:: Создание bat-файла для запуска в портативной папке
+echo @echo off > "%APP_NAME%_portable\Запустить_агента.bat"
+echo echo === Remote Access Agent === >> "%APP_NAME%_portable\Запустить_агента.bat"
+echo echo. >> "%APP_NAME%_portable\Запустить_агента.bat"
+echo echo Запуск агента... >> "%APP_NAME%_portable\Запустить_агента.bat"
+echo %APP_NAME%.exe >> "%APP_NAME%_portable\Запустить_агента.bat"
+echo if %%errorlevel%% neq 0 ( >> "%APP_NAME%_portable\Запустить_агента.bat"
+echo     echo Ошибка запуска! >> "%APP_NAME%_portable\Запустить_агента.bat"
+echo     pause >> "%APP_NAME%_portable\Запустить_агента.bat"
+echo ) >> "%APP_NAME%_portable\Запустить_агента.bat"
+
+:: Создание ZIP-архива
+echo Архивирование портативной версии...
+if exist "%APP_NAME%_v%VERSION%_portable.zip" del "%APP_NAME%_v%VERSION%_portable.zip"
+
+:: Используем PowerShell для создания ZIP (есть во всех современных Windows)
+powershell -command "Compress-Archive -Path '%APP_NAME%_portable\*' -DestinationPath '%APP_NAME%_v%VERSION%_portable.zip' -Force"
+
+if %errorlevel% equ 0 (
+    echo.
+    echo === Сборка завершена успешно! ===
+    echo Готовый EXE: %APP_NAME%.exe
+    echo Портативная упаковка: %APP_NAME%_v%VERSION%_portable.zip
+    echo Размер: 
+    dir %APP_NAME%.exe 2>nul | find "%APP_NAME%.exe"
+    echo.
+    echo Для запуска выполните:
+    echo   %APP_NAME%.exe
+    echo.
+    echo Для портативного использования:
+    echo   1. Распакуйте ZIP архив
+    echo   2. Запустите Запустить_агента.bat
+    echo.
+) else (
+    echo Ошибка создания ZIP архива!
+    echo Но основной EXE файл создан: %APP_NAME%.exe
+)
+
+:: Очистка временных файлов сборки (опционально)
+echo.
+echo Очистка временных файлов сборки...
+rmdir /s /q build 2>nul
+rmdir /s /q __pycache__ 2>nul
+del /q %APP_NAME%.spec 2>nul
+
+echo Готово!
 pause

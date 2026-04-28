@@ -84,21 +84,24 @@ COPY . .
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Upgrade pip
-RUN pip install --upgrade pip setuptools wheel
+# Upgrade pip ONLY to version compatible with Ubuntu 22.04
+RUN pip install --upgrade pip==22.0.2 setuptools==59.6.0 wheel==0.37.1
 
-# Install Python dependencies (Linux only - exclude Windows-specific packages)
-# Note: pywin32 is excluded as it's Windows-only
+# Install Python dependencies WITH FIXED VERSIONS for Ubuntu 22.04 compatibility
+# THESE VERSIONS ARE SPECIALLY SELECTED TO WORK ON STOCK UBUNTU 22.04 WITHOUT SYSTEM UPGRADES
 RUN pip install --no-cache-dir \
-    PyQt6>=6.4.0 \
-    pymysql>=1.0.2 \
-    psutil>=5.9.0 \
-    pyautogui>=0.9.53 \
-    mss>=6.1.0 \
-    Pillow>=9.0.0 \
-    websockets>=10.0 \
-    pynput>=1.7.6 \
-    boto3>=1.26.0
+    PyQt6==6.4.2 \
+    PyQt6-Qt6==6.4.3 \
+    PyQt6-sip==13.4.1 \
+    pymysql==1.0.2 \
+    psutil==5.9.0 \
+    pyautogui==0.9.53 \
+    mss==6.1.0 \
+    Pillow==9.0.1 \
+    websockets==10.4 \
+    pynput==1.7.6 \
+    boto3==1.26.0 \
+    requests==2.28.2
 
 # ==============================================================================
 # Stage 2: Create AppDir structure
@@ -183,8 +186,10 @@ Categories=Network;RemoteAccess;Utility;
 Keywords=remote;desktop;access;monitoring;
 EOF
 
-# Copy desktop file to applications directory
-RUN cp AppDir/RemoteAccessAgent.desktop AppDir/usr/share/applications/
+# Copy desktop file to applications directory and fix line endings
+RUN cp AppDir/RemoteAccessAgent.desktop AppDir/usr/share/applications/ && \
+    sed -i 's/\r$//' AppDir/RemoteAccessAgent.desktop && \
+    sed -i 's/\r$//' AppDir/usr/share/applications/RemoteAccessAgent.desktop
 
 # Create run script that properly sets up the environment
 RUN cat > AppDir/run.sh << 'EOF'

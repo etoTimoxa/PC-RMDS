@@ -135,9 +135,9 @@ class AdminPanelWindow(QMainWindow):
         self.users_tab = UsersTab(self)
         self.reports_tab = ReportsTab(self)
         
-        self.tab_widget.addTab(self.computers_tab, "💻 Компьютеры")
-        self.tab_widget.addTab(self.users_tab, "👤 Пользователи")
-        self.tab_widget.addTab(self.reports_tab, "📊 Отчеты")
+        self.tab_widget.addTab(self.computers_tab, "Компьютеры")
+        self.tab_widget.addTab(self.users_tab, "Пользователи")
+        self.tab_widget.addTab(self.reports_tab, "Отчеты")
         
         main_layout.addWidget(self.tab_widget)
         

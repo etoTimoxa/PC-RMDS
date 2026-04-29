@@ -15,10 +15,7 @@ class JSONLogger:
     
     def __init__(self, temps_folder: str = None):
         if temps_folder is None:
-            # Используем platform_utils для определения правильной директории
-            # Windows: %APPDATA%/RemoteAccessAgent/temps/
-            # Linux: ~/.local/share/RemoteAccessAgent/temps/
-            ensure_dirs()  # Создаем все необходимые директории
+            ensure_dirs()
             self.temps_folder = get_data_dir() / "temps"
         else:
             self.temps_folder = Path(temps_folder)
@@ -40,9 +37,11 @@ class JSONLogger:
         self.events_info_file = self.markers_folder / "events_collection_info.json"
         self._load_events_info()
         
-        # Флаг для отслеживания, был ли файл отправлен срочно
         self.urgent_sent = False
-        self.last_urgent_upload_time = None  # Время последней срочной отправки
+        self.last_urgent_upload_time = None
+        
+        # Флаг для отслеживания, было ли уже переключение дня
+        self.day_switched = False
     
     def _load_events_info(self):
         self._last_collection_time = None
@@ -79,7 +78,7 @@ class JSONLogger:
     def set_session(self, computer_name: str, session_token: str, cloud_uploader=None):
         self.current_computer_name = computer_name
         self.current_session_token = session_token
-        self._cloud_uploader = cloud_uploader  # Сохраняем для использования в cleanup_old_files
+        self._cloud_uploader = cloud_uploader
         
         old_date = self.current_date
         self.current_date = datetime.now().date()
@@ -93,16 +92,27 @@ class JSONLogger:
         self.mark_all_unsent_files()
         self.cleanup_old_files(self._cloud_uploader)
         
-        # Сбрасываем флаг срочной отправки при смене дня
         self.urgent_sent = False
+        self.day_switched = False
     
     def create_daily_file(self):
+        """Создает файл для текущего дня"""
+        if not self.current_computer_name:
+            return
+        
         clean_name = re.sub(r'[^a-zA-Z0-9_-]', '_', self.current_computer_name)
         file_name = f"{clean_name}_{self.current_date.isoformat()}.json"
-        self.current_file = self.temps_folder / file_name
+        new_file_path = self.temps_folder / file_name
         
-        if not self.current_file.exists():
-            self.save_records([])
+        # Если файл уже существует, загружаем его
+        if new_file_path.exists():
+            self.current_file = new_file_path
+            return
+        
+        # Создаем новый файл
+        self.current_file = new_file_path
+        self.save_records([])
+        print(f"📄 Создан новый файл: {self.current_file.name}")
     
     def save_records(self, records: List[Dict]):
         if not self.current_file:
@@ -129,12 +139,6 @@ class JSONLogger:
             return []
     
     def add_metric(self, metrics: Dict, force_write: bool = False):
-        """Добавляет метрику в файл.
-        
-        Args:
-            metrics: Словарь с метриками
-            force_write: Если True, принудительно записывает в файл (при скачках)
-        """
         records = self.load_records()
         
         record = {
@@ -148,27 +152,21 @@ class JSONLogger:
         records.append(record)
         self.save_records(records)
         
-        # Проверяем аномалии
         anomaly_detected = False
         if self.previous_metrics:
             anomaly_detected = self.check_anomalies(metrics)
         
         self.previous_metrics = metrics.copy()
         
-        # Если обнаружена аномалия, помечаем для срочной отправки
         if anomaly_detected and self.should_mark_urgent():
             self.mark_for_urgent_upload()
             self.urgent_sent = True
         
-        # Если принудительная запись (скачок) - сразу помечаем для отправки
         if force_write and anomaly_detected:
             self.mark_for_urgent_upload()
             self.urgent_sent = True
     
     def force_write_metric(self, metrics: Dict):
-        """Принудительно записывает метрику при обнаружении скачка.
-        Используется для немедленной записи важных событий.
-        """
         self.add_metric(metrics, force_write=True)
     
     def add_windows_events(self, events: List[Dict], is_initial: bool = False):
@@ -228,19 +226,6 @@ class JSONLogger:
                        user_login: str = None, user_role: str = 'client',
                        is_remote: bool = False, details: Dict = None, 
                        force_write: bool = False):
-        """Добавляет действие пользователя в файл.
-        
-        Args:
-            action_type: Тип действия (например, 'restart', 'shutdown', 'registry_change', 
-                        'update_install', 'config_change')
-            description: Описание действия
-            user_id: ID пользователя (клиент или админ)
-            user_login: Логин пользователя
-            user_role: Роль пользователя ('client', 'admin', 'superadmin', 'system')
-            is_remote: Выполнено ли действие удаленно (True) или локально (False)
-            details: Дополнительные детали действия (словарь)
-            force_write: Если True, принудительно записывает в файл
-        """
         records = self.load_records()
         
         record = {
@@ -263,7 +248,6 @@ class JSONLogger:
         records.append(record)
         self.save_records(records)
         
-        # Если принудительная запись - помечаем для срочной отправки
         if force_write:
             self.mark_for_urgent_upload()
             self.urgent_sent = True
@@ -313,9 +297,7 @@ class JSONLogger:
         return self.temps_folder / f"{clean_name}_{target_date.isoformat()}.json"
     
     def mark_for_urgent_upload(self):
-        """Помечает текущий файл для срочной отправки (не создавая копию)"""
         if self.current_file:
-            # Сбрасываем флаг, чтобы следующий скачок мог снова триггерить отправку
             self.urgent_sent = False
             marker_file = self.markers_folder / f"urgent_{self.current_file.name}"
             try:
@@ -325,16 +307,12 @@ class JSONLogger:
                 pass
     
     def reset_urgent_flag(self):
-        """Сбрасывает флаг срочной отправки после успешной загрузки"""
         self.urgent_sent = False
         self.last_urgent_upload_time = datetime.now()
     
     def should_mark_urgent(self) -> bool:
-        """Проверяет, нужно ли помечать файл для срочной отправки"""
-        # Если флаг уже установлен, не помечаем снова
         if self.urgent_sent:
             return False
-        # Если последняя отправка была менее 30 секунд назад, не помечаем
         if self.last_urgent_upload_time:
             time_since_last = (datetime.now() - self.last_urgent_upload_time).total_seconds()
             if time_since_last < 30:
@@ -342,7 +320,6 @@ class JSONLogger:
         return True
     
     def mark_for_end_of_day_upload(self, file_name: str = None):
-        """Помечает файл для отправки в конце дня"""
         if file_name is None and self.current_file:
             file_name = self.current_file.name
         
@@ -355,11 +332,9 @@ class JSONLogger:
                 pass
     
     def mark_all_unsent_files(self):
-        """Помечает все файлы за предыдущие дни, которых нет в облаке"""
         current_date = self.current_date
         files_marked = 0
         
-        # Получаем список уже отправленных файлов
         sent_files = set()
         for sent_marker in self.markers_folder.glob("sent_*.json"):
             sent_files.add(sent_marker.name.replace("sent_", ""))
@@ -368,7 +343,6 @@ class JSONLogger:
             if file_path.name.startswith('.'):
                 continue
             
-            # Если файл уже отправлен, пропускаем
             if file_path.name in sent_files:
                 continue
             
@@ -380,7 +354,6 @@ class JSONLogger:
                 file_date_str = date_match.group(1)
                 file_date = datetime.fromisoformat(file_date_str).date()
                 
-                # Все файлы за предыдущие дни помечаем для отправки
                 if file_date < current_date:
                     self.mark_for_end_of_day_upload(file_path.name)
                     files_marked += 1
@@ -388,15 +361,12 @@ class JSONLogger:
                 pass
     
     def check_and_mark_yesterday_file(self) -> bool:
-        """Проверяет файл за вчерашний день и помечает его для отправки"""
         yesterday = datetime.now().date() - timedelta(days=1)
         yesterday_file = self.get_file_path_for_date(yesterday)
         
         if yesterday_file.exists():
             sent_marker = self.markers_folder / f"sent_{yesterday_file.name}"
-            # Если не отправлен и не помечен как отправленный
             if not sent_marker.exists():
-                # Проверяем, не помечен ли уже
                 endofday_marker = self.markers_folder / f"endofday_{yesterday_file.name}"
                 if not endofday_marker.exists():
                     self.mark_for_end_of_day_upload(yesterday_file.name)
@@ -404,7 +374,6 @@ class JSONLogger:
         return False
     
     def mark_as_sent(self, file_name: str):
-        """Помечает файл как отправленный"""
         sent_marker = self.markers_folder / f"sent_{file_name}"
         try:
             sent_marker.touch()
@@ -416,15 +385,7 @@ class JSONLogger:
             self.mark_as_sent(self.current_file.name)
     
     def cleanup_old_files(self, cloud_uploader=None):
-        """Очищает старые файлы, оставляя только текущий и вчерашний.
-        
-        Логика:
-        - Текущий день и вчера - всегда оставляем
-        - Файлы старше 2 дней:
-          - Если есть маркер sent_ (уже отправлен) -> удаляем локальный
-          - Если есть в облаке -> удаляем локальный
-          - Если нет в облаке -> сначала загружаем, затем удаляем
-        """
+        """Очищает старые файлы (старше 2 дней)"""
         try:
             current_date = self.current_date
             files_to_keep = set()
@@ -437,7 +398,6 @@ class JSONLogger:
             if yesterday_file.exists():
                 files_to_keep.add(yesterday_file.name)
             
-            # Файлы старше 2 дней - проверяем и обрабатываем
             two_days_ago = current_date - timedelta(days=2)
             
             for file_path in self.temps_folder.glob("*.json"):
@@ -447,10 +407,8 @@ class JSONLogger:
                 if file_path.name in files_to_keep:
                     continue
                 
-                # Проверяем возраст файла
                 date_match = re.search(r'(\d{4}-\d{2}-\d{2})\.json$', file_path.name)
                 if not date_match:
-                    # Нет даты в имени - удаляем
                     try:
                         file_path.unlink()
                     except:
@@ -467,55 +425,47 @@ class JSONLogger:
                         pass
                     continue
                 
-                # Если файл младше 2 дней - пропускаем
                 if file_date > two_days_ago:
                     continue
                 
-                # Файл старше 2 дней - обрабатываем
                 sent_marker = self.markers_folder / f"sent_{file_path.name}"
                 
-                # Если уже помечен как отправленный - удаляем локальный файл
                 if sent_marker.exists():
                     try:
                         file_path.unlink()
-                        print(f"Удален локальный файл {file_path.name} (уже отправлен в облако)")
+                        print(f"🗑️ Удален локальный файл {file_path.name} (уже отправлен)")
                     except:
                         pass
                     continue
                 
-                # Проверяем облако
                 if cloud_uploader:
                     if cloud_uploader.file_exists_in_cloud(file_path.name):
-                        # Файл есть в облаке - удаляем локальный и создаём маркер
                         try:
                             file_path.unlink()
-                            sent_marker.touch()  # Создаём маркер что отправлен
-                            print(f"Удален старый файл {file_path.name} (есть в облаке)")
+                            sent_marker.touch()
+                            print(f"🗑️ Удален файл {file_path.name} (есть в облаке)")
                         except:
                             pass
                     else:
-                        # Файла нет в облаке - загружаем и затем удаляем
-                        print(f"Файл {file_path.name} старше 2 дней, нет в облаке - загружаем...")
+                        print(f"📤 Файл {file_path.name} старше 2 дней, нет в облаке - загружаем...")
                         success, message = cloud_uploader.upload_file(file_path)
                         if success:
                             try:
                                 file_path.unlink()
                                 sent_marker.touch()
-                                print(f"Загружен и удален: {file_path.name}")
+                                print(f"✅ Загружен и удален: {file_path.name}")
                             except:
                                 pass
                         else:
-                            print(f"Не удалось загрузить {file_path.name}: {message}")
+                            print(f"❌ Не удалось загрузить {file_path.name}: {message}")
                             self.mark_for_end_of_day_upload(file_path.name)
                 else:
-                    # Нет cloud_uploader - просто удаляем
                     try:
                         file_path.unlink()
                     except:
                         pass
         except Exception as e:
             print(f"Ошибка cleanup_old_files: {e}")
-            pass
     
     def should_collect_events(self) -> bool:
         if self._last_collection_time is None:
@@ -527,23 +477,35 @@ class JSONLogger:
         return self._last_collection_time
     
     def switch_to_new_day(self):
-        """Переключение на новый день"""
+        """Переключение на новый день - СОЗДАЕТ НОВЫЙ ФАЙЛ"""
+        print(f"🔄 Переключение на новый день...")
+        
         old_file_name = self.current_file.name if self.current_file else None
         old_file_path = self.current_file if self.current_file else None
         
+        # Помечаем старый файл для отправки, если в нем есть данные
         if old_file_path and old_file_path.exists():
             records = self.load_records()
             if records:
-                # Если есть записи, помечаем для отправки
                 self.mark_for_end_of_day_upload(old_file_name)
+                print(f"📤 Файл {old_file_name} помечен для отправки (содержит {len(records)} записей)")
             else:
-                # Если файл пустой, удаляем
                 try:
                     old_file_path.unlink()
+                    print(f"🗑️ Удален пустой файл {old_file_name}")
                 except:
                     pass
         
+        # Сбрасываем состояние для нового дня
         self._clear_events_info()
+        self.previous_metrics = None  # Сбрасываем предыдущие метрики
+        self.urgent_sent = False
+        self.day_switched = True
+        
+        # Устанавливаем новую дату
         self.current_date = datetime.now().date()
-        self.urgent_sent = False  # Сбрасываем флаг срочной отправки
+        
+        # СОЗДАЕМ НОВЫЙ ФАЙЛ ДЛЯ ТЕКУЩЕГО ДНЯ
         self.create_daily_file()
+        
+        print(f"✅ Переключение завершено. Новый файл: {self.current_file.name if self.current_file else 'None'}")

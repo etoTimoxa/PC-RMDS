@@ -245,37 +245,69 @@ class RemoteAgentThread(QThread):
                 self.log_message.emit(f"Ошибка обновления активности: {e}")
     
     async def check_and_upload_at_midnight(self):
+        """Проверяет наступление полуночи, переключает файлы и загружает в облако"""
         while self.is_running:
             try:
                 now = datetime.now()
+                # Вычисляем время до следующей полуночи
                 next_midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
                 seconds_until_midnight = (next_midnight - now).total_seconds()
+                
+                self.log_message.emit(f"⏰ Следующая проверка полуночи через {seconds_until_midnight/3600:.1f} часов")
                 await asyncio.sleep(seconds_until_midnight)
                 
                 if not self.is_running:
                     break
                 
-                self.log_message.emit("Полночь, переключение на новый файл...")
-                self.json_logger.switch_to_new_day()
+                self.log_message.emit("=" * 50)
+                self.log_message.emit("🕛 НАСТУПИЛА ПОЛНОЧЬ - ВЫПОЛНЯЮ ПЕРЕКЛЮЧЕНИЕ ДНЯ")
+                self.log_message.emit("=" * 50)
                 
+                # 1. Переключаем JSON логгер на новый день (создает новый файл)
+                self.json_logger.switch_to_new_day()
+                self.log_message.emit(f"📄 Создан новый файл: {self.json_logger.current_file.name if self.json_logger.current_file else 'None'}")
+                
+                # 2. Загружаем все ожидающие файлы в облако
                 uploaded = self.cloud_uploader.check_and_upload()
                 if uploaded > 0:
-                    APIClient.update_json_sent_count(self.session_id, uploaded)
-                    self.log_message.emit(f"Загружено файлов в облако: {uploaded}")
+                    try:
+                        APIClient.update_json_sent_count(self.session_id, uploaded)
+                        self.log_message.emit(f"☁️ Загружено файлов в облако: {uploaded}")
+                    except Exception as e:
+                        self.log_message.emit(f"⚠️ Ошибка обновления счетчика: {e}")
                 
-                events = WindowsEventCollector.get_events_last_30min()
-                if events:
-                    grouped_events = self.event_grouper.group_events(events)
-                    self.json_logger.add_windows_events(grouped_events, is_initial=True)
+                # 3. Очищаем старые файлы (старше 2 дней)
+                cleaned = self.cloud_uploader.verify_and_cleanup()
+                if cleaned > 0:
+                    self.log_message.emit(f"🧹 Очищено локальных файлов: {cleaned}")
                 
-                metrics = SystemInfoCollector.get_performance_metrics()
-                self.json_logger.add_metric(metrics)
+                # 4. Собираем свежие события Windows за последние 30 минут
+                try:
+                    events = WindowsEventCollector.get_events_last_30min()
+                    if events:
+                        grouped_events = self.event_grouper.group_events(events)
+                        self.json_logger.add_windows_events(grouped_events, is_initial=True)
+                        self.log_message.emit(f"📋 Собрано событий после полуночи: {len(events)}")
+                except Exception as e:
+                    self.log_message.emit(f"⚠️ Ошибка сбора событий после полуночи: {e}")
                 
-                if self.json_logger.check_and_mark_yesterday_file():
-                    self.log_message.emit("Вчерашний файл помечен для отправки")
+                # 5. Собираем свежие метрики
+                try:
+                    metrics = SystemInfoCollector.get_performance_metrics()
+                    self.json_logger.add_metric(metrics)
+                    self.log_message.emit(f"📊 Собраны метрики после полуночи")
+                except Exception as e:
+                    self.log_message.emit(f"⚠️ Ошибка сбора метрик после полуночи: {e}")
                 
+                self.log_message.emit("=" * 50)
+                self.log_message.emit("✅ ПЕРЕКЛЮЧЕНИЕ ДНЯ ЗАВЕРШЕНО")
+                self.log_message.emit("=" * 50)
+                
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                self.log_message.emit(f"Ошибка проверки полуночи: {e}")
+                self.log_message.emit(f"❌ Ошибка в midnight handler: {e}")
+                await asyncio.sleep(60)  # При ошибке ждем минуту и продолжаем
     
     async def check_and_upload_on_startup(self):
         """Проверяет и загружает файлы при запуске"""
@@ -302,6 +334,13 @@ class RemoteAgentThread(QThread):
         
         await self.check_and_upload_on_startup()
         await self.collect_initial_metrics_and_events()
+        
+        # Проверяем, не нужно ли создать файл для сегодняшнего дня
+        # (на случай если агент запустился после полуночи)
+        current_date = datetime.now().date()
+        if self.json_logger.current_date != current_date:
+            self.log_message.emit(f"📅 Обнаружено несоответствие дат: логгер={self.json_logger.current_date}, текущая={current_date}")
+            self.json_logger.switch_to_new_day()
         
         tasks = [
             asyncio.create_task(self.collect_metrics_periodically()),

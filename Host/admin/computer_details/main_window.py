@@ -597,7 +597,7 @@ class ComputerDetailsWindow(QMainWindow):
         header_buttons_layout = QHBoxLayout()
         header_buttons_layout.addStretch()
         
-        self.remote_btn = QPushButton("🖥 Удаленный экран")
+        self.remote_btn = QPushButton("Удаленный экран")
         self.remote_btn.setFixedWidth(150)
         self.remote_btn.setStyleSheet("""
             QPushButton {
@@ -616,8 +616,8 @@ class ComputerDetailsWindow(QMainWindow):
         self.remote_btn.clicked.connect(self.open_remote_screen)
         header_buttons_layout.addWidget(self.remote_btn)
         
-        edit_btn = QPushButton("✎ Редактировать")
-        edit_btn.setFixedWidth(120)
+        edit_btn = QPushButton("Редактировать")
+        edit_btn.setFixedWidth(130)
         edit_btn.setStyleSheet("""
             QPushButton {
                 background-color: rgba(255,255,255,0.2);
@@ -1033,19 +1033,19 @@ class ComputerDetailsWindow(QMainWindow):
         
         # Показываем индикатор загрузки
         self.remote_btn.setEnabled(False)
-        self.remote_btn.setText("🖥 Подключение...")
+        self.remote_btn.setText("Подключение...")
     
     def on_remote_status_updated(self, message, msg_type):
         """Обработчик обновления статуса удаленного подключения"""
         if msg_type == "success":
-            self.remote_btn.setText("🖥 Удаленный экран")
+            self.remote_btn.setText("Удаленный экран")
             self.remote_btn.setEnabled(True)
             
             # Запускаем стрим и создаем окно
             QTimer.singleShot(500, self._create_remote_window)
             
         elif msg_type == "error":
-            self.remote_btn.setText("🖥 Удаленный экран")
+            self.remote_btn.setText("Удаленный экран")
             self.remote_btn.setEnabled(True)
             QMessageBox.warning(self, "Ошибка", f"Ошибка подключения: {message}")
     
@@ -1079,7 +1079,7 @@ class ComputerDetailsWindow(QMainWindow):
         if self.remote_window:
             self.remote_window.clear_screen()
         
-        self.remote_btn.setText("🖥 Удаленный экран")
+        self.remote_btn.setText("Удаленный экран")
         self.remote_btn.setEnabled(True)
         
         if self.fps_timer:
@@ -1096,7 +1096,7 @@ class ComputerDetailsWindow(QMainWindow):
             self.fps_timer.stop()
             self.fps_timer = None
         
-        self.remote_btn.setText("🖥 Удаленный экран")
+        self.remote_btn.setText("Удаленный экран")
         self.remote_btn.setEnabled(True)
     
     def on_remote_key_press(self, text):
@@ -1129,7 +1129,7 @@ class ComputerDetailsWindow(QMainWindow):
             self.fps_timer.stop()
             self.fps_timer = None
         
-        self.remote_btn.setText("🖥 Удаленный экран")
+        self.remote_btn.setText("Удаленный экран")
         self.remote_btn.setEnabled(True)
     
     # ==================== Конец методов удаленного доступа ====================

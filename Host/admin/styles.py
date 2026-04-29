@@ -157,8 +157,8 @@ def get_main_window_stylesheet():
         font-weight: bold;
         color: #7f8c8d;
         font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
-        min-width: 134px;
-        width: 134px;
+        min-width: 138px;
+        width: 140px;
     }
     
     QTabBar::tab:selected {

@@ -24,12 +24,13 @@ if sys.platform == 'win32':
     import ctypes
     from ctypes import wintypes
 
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+from qtpy.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QLabel, QPushButton, QTextEdit, QGroupBox, 
                             QMessageBox, QSystemTrayIcon, QMenu, QStatusBar, 
                             QFrame, QCheckBox, QDialog)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
-from PyQt6.QtGui import QFont, QTextCursor, QAction, QIcon, QPixmap, QColor, QScreen, QImage
+from qtpy.QtCore import Qt, QThread, QSettings, QTimer
+from qtpy.QtCore import Signal as Signal
+from qtpy.QtGui import QFont, QTextCursor, QAction, QIcon, QPixmap, QColor, QScreen, QImage
 
 from pynput.mouse import Button, Controller as MouseController
 from pynput.keyboard import Key, Controller as KeyboardController
@@ -48,10 +49,10 @@ from agent.styles import APP_STYLE
 
 class RemoteAgentThread(QThread):
     
-    log_message = pyqtSignal(str)
-    connection_status_changed = pyqtSignal(bool, int)
-    client_connected = pyqtSignal(str)
-    client_disconnected = pyqtSignal(str)
+    log_message = Signal(str)
+    connection_status_changed = Signal(bool, int)
+    client_connected = Signal(str)
+    client_disconnected = Signal(str)
     
     def __init__(self, relay_server: str, computer_data: dict, 
                  screenshot_interval: float, quality: int = 60, max_resolution: tuple = (1280, 720)):
@@ -141,7 +142,7 @@ class RemoteAgentThread(QThread):
     def _shutdown_app(self):
         """Завершает приложение Qt."""
         try:
-            from PyQt6.QtWidgets import QApplication
+            from qtpy.QtWidgets import QApplication
             app = QApplication.instance()
             if app:
                 app.quit()

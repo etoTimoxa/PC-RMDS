@@ -4,11 +4,11 @@ import sys
 import os
 from datetime import datetime
 from pathlib import Path
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+from qtpy.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                             QLabel, QLineEdit, QTextEdit, QComboBox, QPushButton,
                             QDialogButtonBox, QGroupBox, QCalendarWidget, QMessageBox,
                             QFileDialog)
-from PyQt6.QtCore import Qt, QDate
+from qtpy.QtCore import Qt, QDate
 
 from core.api_client import APIClient
 from .widgets import get_app_icon

@@ -1,10 +1,10 @@
 import socket
 from datetime import datetime, timedelta
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+from qtpy.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QFrame, QTabWidget,
                              QSystemTrayIcon, QMenu, QStatusBar, QMessageBox, QApplication)
-from PyQt6.QtCore import Qt, QTimer, QSettings
-from PyQt6.QtGui import QIcon, QAction, QPixmap, QColor
+from qtpy.QtCore import Qt, QTimer, QSettings
+from qtpy.QtGui import QIcon, QAction, QPixmap, QColor
 
 from core.api_client import APIClient as DatabaseManager
 from utils.platform_utils import get_config_dir

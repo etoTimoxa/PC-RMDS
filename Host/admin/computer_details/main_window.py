@@ -9,11 +9,12 @@ from io import BytesIO
 from pathlib import Path
 from PIL import Image
 
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+from qtpy.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                             QLabel, QPushButton, QFrame, QTabWidget, QMessageBox, 
                             QDialog, QSplitter, QApplication)
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QPixmap, QImage
+from qtpy.QtCore import Qt, QTimer, QThread
+from qtpy.QtCore import Signal as Signal
+from qtpy.QtGui import QColor, QPixmap, QImage
 
 import websockets
 
@@ -32,10 +33,10 @@ from ..styles import get_main_window_stylesheet
 
 class RemoteClientThread(QThread):
     """Поток для WebSocket соединения с relay-сервером"""
-    status_updated = pyqtSignal(str, str)
-    image_received = pyqtSignal(object)
-    system_info_received = pyqtSignal(dict)
-    connection_lost = pyqtSignal()
+    status_updated = Signal(str, str)
+    image_received = Signal(object)
+    system_info_received = Signal(dict)
+    connection_lost = Signal()
     
     def __init__(self, relay_server, computer_id, client_id, update_interval=0.033):
         super().__init__()
@@ -189,10 +190,10 @@ class RemoteClientThread(QThread):
 
 class RemoteScreenWidget(QLabel):
     """Виджет для отображения удаленного экрана с обработкой ввода"""
-    mouse_moved = pyqtSignal(int, int, int, int)
-    mouse_clicked = pyqtSignal(str, int, int)
-    mouse_wheeled = pyqtSignal(int)
-    key_pressed = pyqtSignal(str)
+    mouse_moved = Signal(int, int, int, int)
+    mouse_clicked = Signal(str, int, int)
+    mouse_wheeled = Signal(int)
+    key_pressed = Signal(str)
     
     def __init__(self):
         super().__init__()
@@ -355,8 +356,8 @@ class RemoteScreenWidget(QLabel):
 
 class RemoteScreenWindow(QMainWindow):
     """Окно для отображения удаленного экрана"""
-    key_pressed = pyqtSignal(str)
-    closed = pyqtSignal()
+    key_pressed = Signal(str)
+    closed = Signal()
     
     def __init__(self, client_thread, computer_name=""):
         super().__init__()

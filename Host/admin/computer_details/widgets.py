@@ -1,8 +1,9 @@
 """Вспомогательные виджеты"""
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QComboBox, QFrame, QDialog
-from PyQt6.QtCore import Qt, pyqtSignal, QDate
-from PyQt6.QtGui import QColor, QIcon, QPixmap
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QProgressBar, QComboBox, QFrame, QDialog
+from qtpy.QtCore import QDate
+from qtpy.QtCore import Signal as Signal
+from qtpy.QtGui import QColor, QIcon, QPixmap
 from pathlib import Path
 
 
@@ -78,7 +79,7 @@ class DiskSpaceWidget(QWidget):
 class DateRangeWidget(QWidget):
     """Виджет для выбора диапазона дат"""
     
-    periodChanged = pyqtSignal()
+    periodChanged = Signal()
     
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -1,7 +1,7 @@
 """Вкладка "Метрики" - просмотр метрик производительности"""
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
-from PyQt6.QtCore import Qt
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
+from qtpy.QtCore import Qt
 
 
 class MetricsTab(QWidget):

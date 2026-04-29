@@ -2,8 +2,8 @@
 
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
-from PyQt6.QtCore import Qt
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView
+from qtpy.QtCore import Qt
 
 
 class SessionsTab(QWidget):

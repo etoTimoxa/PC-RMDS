@@ -6,11 +6,11 @@ import json
 import traceback
 from pathlib import Path
 from datetime import datetime
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+from qtpy.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                             QFrame, QProgressBar, QMessageBox, QPushButton,
                             QLineEdit, QApplication, QComboBox, QCheckBox, QWidget, QSpacerItem)
-from PyQt6.QtCore import Qt, QTimer, QSettings, QEvent
-from PyQt6.QtGui import QFont, QIcon, QPixmap, QColor
+from qtpy.QtCore import Qt, QTimer, QSettings, QEvent
+from qtpy.QtGui import QFont, QIcon, QPixmap, QColor
 
 from core.hardware_id import HardwareIDGenerator
 from core.api_client import APIClient as DatabaseManager

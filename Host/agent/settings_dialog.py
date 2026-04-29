@@ -1,10 +1,10 @@
 import sys
 import os
 from pathlib import Path
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
+from qtpy.QWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                             QSpinBox, QDoubleSpinBox, QCheckBox, QTabWidget, 
                             QWidget, QDialogButtonBox)
-from PyQt6.QtCore import QSettings
+from qtpy.QtCore import QSettings
 
 # Импортируем winreg только для Windows
 if sys.platform == 'win32':

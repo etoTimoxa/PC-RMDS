@@ -1,8 +1,8 @@
 """Вкладка "Общая информация" о компьютере"""
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, 
+from qtpy.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, 
                             QFrame, QGroupBox, QScrollArea, QHBoxLayout)
-from PyQt6.QtCore import Qt
+from qtpy.QtCore import Qt
 
 from .widgets import DiskSpaceWidget
 

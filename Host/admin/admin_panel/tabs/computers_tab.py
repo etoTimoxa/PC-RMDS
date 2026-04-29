@@ -1,9 +1,9 @@
 from datetime import datetime
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
+from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QFrame, QTableWidget,
                              QTableWidgetItem, QHeaderView, QLineEdit, QComboBox, QMessageBox)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor
+from qtpy.QtCore import Qt
+from qtpy.QtGui import QColor
 
 from core.api_client import APIClient as DatabaseManager
 from ..dialogs.computer_dialogs import EditComputerDialog, AddComputerDialog

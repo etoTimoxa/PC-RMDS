@@ -4,11 +4,11 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
+from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QLabel, QComboBox, QPushButton, QScrollArea,
                              QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
                              QFileDialog, QMessageBox, QDateEdit)
-from PyQt6.QtCore import Qt, QDate
+from qtpy.QtCore import Qt, QDate
 
 from core.api_client import APIClient as DatabaseManager
 from admin.computer_details.widgets import DateRangeWidget

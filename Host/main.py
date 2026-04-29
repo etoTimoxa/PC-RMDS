@@ -4,9 +4,20 @@ from pathlib import Path
 import threading
 import multiprocessing
 
-sys.path.insert(0, str(Path(__file__).parent))
+os.environ['QT_API'] = 'pyqt5'
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+# Указываем путь к плагинам PyQt5
+if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+    # В виртуальном окружении
+    import PyQt5
+    qt_plugin_path = os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins')
+else:
+    # В глобальном окружении
+    qt_plugin_path = os.path.join(sys.prefix, 'Lib', 'site-packages', 'PyQt5', 'Qt5', 'plugins')
+
+os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(qt_plugin_path, 'platforms')
+
+from qtpy.QtWidgets import QApplication, QMessageBox
 
 from admin.auth_dialog import AuthDialog
 from agent.remote_agent import RemoteAgentWindow

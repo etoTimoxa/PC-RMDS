@@ -1,7 +1,7 @@
 import sys
 import os
 from pathlib import Path
-from qtpy.QWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
+from qtpy.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                             QSpinBox, QDoubleSpinBox, QCheckBox, QTabWidget, 
                             QWidget, QDialogButtonBox)
 from qtpy.QtCore import QSettings

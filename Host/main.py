@@ -2,7 +2,9 @@ import sys
 import os
 from pathlib import Path
 import threading
+import asyncio
 import multiprocessing
+from datetime import datetime
 
 os.environ['QT_API'] = 'pyqt5'
 
@@ -18,38 +20,109 @@ else:
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(qt_plugin_path, 'platforms')
 
 from qtpy.QtWidgets import QApplication, QMessageBox
+from qtpy.QtCore import QSettings, QTimer
 
 from admin.auth_dialog import AuthDialog
 from agent.remote_agent import RemoteAgentWindow
 from admin.admin_panel import AdminPanelWindow
 from utils.dependencies import DependencyChecker
 from utils.platform_utils import ensure_dirs, get_platform_name, get_data_dir
+from core.api_client import APIClient
+from core.hardware_id import HardwareIDGenerator
 
 
-def run_background_session(computer_data):
-    """Запускает сессию в фоновом режиме (для админа)"""
-    from core.api_client import APIClient as DatabaseManager
-    import time
+class AgentBackgroundService:
+    """Сервис для запуска агента в фоновом режиме (для администратора)"""
     
-    print(f"[BACKGROUND] Админ {computer_data['login']} запустил фоновую сессию")
+    def __init__(self, computer_data: dict):
+        self.computer_data = computer_data
+        self.agent_thread = None
+        self.running = False
+        self.agent_instance = None
+        
+    def start(self):
+        """Запускает агента в отдельном потоке"""
+        if self.running:
+            print("[BACKGROUND] Агент уже запущен")
+            return
+        
+        self.running = True
+        self.agent_thread = threading.Thread(target=self._run_agent, daemon=True)
+        self.agent_thread.start()
+        print(f"[BACKGROUND] Агент запущен в фоновом режиме для админа {self.computer_data.get('login')}")
     
-    try:
-        while True:
-            # Обновляем активность компьютера
-            if computer_data.get('computer_id'):
-                DatabaseManager.update_computer_status(
-                    computer_data['computer_id'], 
-                    True, 
-                    computer_data.get('session_id')
-                )
-            time.sleep(60)  # Обновляем каждые 60 секунд
-    except Exception as e:
-        print(f"[BACKGROUND] Ошибка фоновой сессии: {e}")
+    def _run_agent(self):
+        """Запускает полноценного агента в этом потоке"""
+        try:
+            # Создаем цикл событий для этого потока
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Получаем настройки
+            settings = QSettings("RemoteAccess", "Agent")
+            relay_server = settings.value("server", "ws://localhost:9001")
+            quality = int(settings.value("quality", 60))
+            fps = float(settings.value("fps", 30))
+            screenshot_interval = 1.0 / fps if fps > 0 else 0.05
+            
+            # Создаем поток агента (без GUI)
+            from agent.remote_agent import RemoteAgentThread
+            
+            self.agent_instance = RemoteAgentThread(
+                relay_server=relay_server,
+                computer_data=self.computer_data,
+                screenshot_interval=screenshot_interval,
+                quality=quality
+            )
+            
+            # Настраиваем колбэки для логирования
+            self.agent_instance.log_message.connect(self._on_agent_log)
+            self.agent_instance.connection_status_changed.connect(self._on_agent_status)
+            
+            # Запускаем агента (блокирующий вызов)
+            self.agent_instance.run()
+            
+        except Exception as e:
+            print(f"[BACKGROUND] Ошибка запуска агента: {e}")
+        finally:
+            if self.agent_instance:
+                self.agent_instance.stop()
+            self.running = False
+    
+    def _on_agent_log(self, message: str):
+        """Обработчик логов агента"""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        print(f"[AGENT][{timestamp}] {message}")
+    
+    def _on_agent_status(self, is_connected: bool, clients_count: int):
+        """Обработчик изменения статуса агента"""
+        status = "подключен" if is_connected else "отключен"
+        print(f"[BACKGROUND] Агент {status}, клиентов: {clients_count}")
+    
+    def stop(self):
+        """Останавливает агента"""
+        print("[BACKGROUND] Остановка агента...")
+        self.running = False
+        if self.agent_instance:
+            self.agent_instance.stop()
+        if self.agent_thread and self.agent_thread.is_alive():
+            self.agent_thread.join(timeout=5)
+        print("[BACKGROUND] Агент остановлен")
+
+
+def run_background_agent(computer_data):
+    """Запускает полноценного агента в фоне (для админа)"""
+    service = AgentBackgroundService(computer_data)
+    service.start()
+    return service
 
 
 def main():
     # Проверка: если приложение уже запущено, показываем сообщение и выходим
     mutex_name = "PC-RMDS-Host-SingleInstance-Mutex"
+    mutex = None
+    lock_file = None
+    
     if sys.platform == 'win32':
         try:
             import ctypes.wintypes
@@ -78,15 +151,14 @@ def main():
             # Продолжаем работу, если не удалось проверить мьютекс
     else:
         # Для Linux/macOS используем file-based lock
-        import fcntl
-        import tempfile
-        
-        lock_file_path = os.path.join(tempfile.gettempdir(), "pc-rmds-host.lock")
         try:
+            import fcntl
+            import tempfile
+            
+            lock_file_path = os.path.join(tempfile.gettempdir(), "pc-rmds-host.lock")
             lock_file = open(lock_file_path, 'w')
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
             # Сохраняем ссылку на файл, чтобы мьютекс не освободился
-            main.lock_file = lock_file
         except IOError:
             print("Приложение уже запущено!")
             QMessageBox.warning(
@@ -97,6 +169,8 @@ def main():
                 "Если вы хотите открыть новое окно, закройте существующее."
             )
             sys.exit(0)
+        except Exception as e:
+            print(f"Ошибка блокировки: {e}")
     
     # Обеспечиваем создание всех необходимых директорий
     try:
@@ -116,13 +190,29 @@ def main():
     app.setStyle('Fusion')
     app.setApplicationName("Remote Access Agent")
     
+    # Глобальные переменные для ресурсов
+    background_agent_service = None
+    admin_window = None
+    
     # Обработчик корректного завершения работы
     def on_application_quit():
+        nonlocal background_agent_service, admin_window
         print("\n[MAIN] Завершение работы, закрываем сессию...")
         
-        # Закрываем активную сессию
-        from core.api_client import APIClient
+        # Останавливаем фонового агента
+        if background_agent_service:
+            print("[MAIN] Остановка фонового агента...")
+            background_agent_service.stop()
         
+        # Закрываем окно админа если открыто
+        if admin_window:
+            try:
+                admin_window.close_session()
+                admin_window.stop_agent()
+            except:
+                pass
+        
+        # Закрываем активную сессию
         if APIClient.current_session_id:
             try:
                 if APIClient.close_session():
@@ -139,7 +229,7 @@ def main():
                 print(f"[MAIN] ❌ Ошибка выхода: {e}")
         
         # Очищаем мьютекс
-        if sys.platform == 'win32':
+        if sys.platform == 'win32' and mutex:
             try:
                 from ctypes import windll
                 windll.kernel32.ReleaseMutex(mutex)
@@ -148,14 +238,14 @@ def main():
                 pass
         else:
             try:
-                import fcntl
-                if hasattr(main, 'lock_file'):
-                    fcntl.flock(main.lock_file, fcntl.LOCK_UN)
-                    main.lock_file.close()
+                if lock_file:
+                    import fcntl
+                    fcntl.flock(lock_file, fcntl.LOCK_UN)
+                    lock_file.close()
             except:
                 pass
     
-    # ✅ Защита от двойного вызова завершения
+    # Защита от двойного вызова завершения
     quit_called = False
     
     def on_application_quit_safe():
@@ -172,40 +262,54 @@ def main():
     import atexit
     atexit.register(on_application_quit_safe)
     
+    # Показываем диалог авторизации
     auth_dialog = AuthDialog()
     if auth_dialog.exec() == AuthDialog.DialogCode.Accepted:
         computer_data = auth_dialog.computer_data
         
         # Создаем сессию при успешном входе
-        from core.api_client import APIClient
         session_id = APIClient.create_session(computer_data['computer_id'], computer_data.get('user_id'))
         if session_id:
             computer_data['session_id'] = session_id
+            computer_data['session_token'] = APIClient.auth_token
             print(f"[MAIN] Сессия создана успешно, ID: {session_id}")
         
         # Проверяем, является ли пользователь админом
-        is_admin = computer_data.get('is_admin') or computer_data.get('role_id') in (2, 3)
+        role_id = computer_data.get('role_id', 1)
+        is_admin = role_id in (2, 3) or str(role_id) in ('2', '3')
         
         if is_admin:
-            # Админ - запускаем фоновую сессию и окно админа
-            print(f"Администратор {computer_data['login']} вошел в систему")
+            # Админ - запускаем полноценного агента в фоне и окно админа
+            print(f"👑 Администратор {computer_data.get('login')} вошел в систему")
+            print("[MAIN] Запуск полноценного агента в фоновом режиме...")
             
-            # Запускаем фоновый поток для сессии
-            bg_thread = threading.Thread(
-                target=run_background_session,
-                args=(computer_data,),
-                daemon=True
-            )
-            bg_thread.start()
+            # Запускаем фонового агента (полный функционал)
+            background_agent_service = run_background_agent(computer_data)
+            
+            # Небольшая задержка для инициализации агента
+            import time
+            time.sleep(1)
             
             # Показываем панель администратора
             try:
-                admin_window = AdminPanelWindow(computer_data)
+                # Импортируем обновленный AdminPanelWindow
+                from admin.admin_panel import AdminPanelWindow
+                
+                # Получаем настройки сервера
+                settings = QSettings("RemoteAccess", "Agent")
+                relay_server = settings.value("server", "ws://localhost:9001")
+                
+                admin_window = AdminPanelWindow(computer_data, relay_server)
                 admin_window.show()
+                
+                # Сохраняем ссылку для остановки
+                admin_window.background_agent = background_agent_service
+                
+                print("[MAIN] Панель администратора запущена, агент работает в фоне")
                 sys.exit(app.exec())
-            except Exception as e:
-                print(f"Ошибка запуска панели администратора: {e}")
-                # Если панель админа не найдена, показываем клиентское окно
+                
+            except ImportError as e:
+                print(f"❌ Ошибка импорта панели администратора: {e}")
                 QMessageBox.warning(
                     None,
                     "Предупреждение",
@@ -213,11 +317,36 @@ def main():
                     f"Будет запущено клиентское окно.\n\n"
                     f"Ошибка: {e}"
                 )
+                # Если панель не найдена, запускаем обычное окно агента
                 window = RemoteAgentWindow(computer_data)
                 window.show()
                 sys.exit(app.exec())
+                
+            except Exception as e:
+                print(f"❌ Ошибка запуска панели администратора: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                QMessageBox.warning(
+                    None,
+                    "Ошибка",
+                    f"Не удалось запустить панель администратора.\n"
+                    f"Ошибка: {e}\n\n"
+                    f"Агент продолжает работать в фоновом режиме,\n"
+                    f"но панель управления не будет доступна."
+                )
+                
+                # Агент продолжает работать, но панель не показана
+                # Ждем завершения
+                try:
+                    while True:
+                        import time
+                        time.sleep(1)
+                except KeyboardInterrupt:
+                    pass
         else:
-            # Клиент - запускаем обычное окно
+            # Клиент - запускаем обычное окно агента
+            print(f"🖥️ Клиент {computer_data.get('login')} вошел в систему")
             window = RemoteAgentWindow(computer_data)
             window.show()
             sys.exit(app.exec())

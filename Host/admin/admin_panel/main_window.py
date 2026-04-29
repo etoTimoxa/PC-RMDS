@@ -1,9 +1,13 @@
 import socket
+import sys
+import threading
+import asyncio
 from datetime import datetime, timedelta
+from pathlib import Path
 from qtpy.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QFrame, QTabWidget,
                              QSystemTrayIcon, QMenu, QStatusBar, QMessageBox, QApplication)
-from qtpy.QtCore import Qt, QTimer, QSettings
+from qtpy.QtCore import Qt, QTimer, QSettings, QThread, Signal
 from qtpy.QtGui import QIcon, QAction, QPixmap, QColor
 
 from core.api_client import APIClient as DatabaseManager
@@ -16,7 +20,6 @@ from .tabs.reports_tab import ReportsTab
 
 def get_app_icon() -> QIcon:
     """Возвращает иконку приложения"""
-    from pathlib import Path
     icon_path = Path(__file__).parent.parent.parent / "app_icon.png"
     if icon_path.exists():
         return QIcon(str(icon_path))
@@ -29,12 +32,18 @@ def get_app_icon() -> QIcon:
 
 
 class AdminPanelWindow(QMainWindow):
-    """Окно панели администратора"""
+    """Окно панели администратора с фоновым агентом"""
     
-    def __init__(self, computer_data, parent=None):
+    def __init__(self, computer_data, relay_server: str = None, parent=None, background_agent=None):
         super().__init__(parent)
         self.computer_data = computer_data
+        self.background_agent = background_agent
         self.tray_icon = None
+        
+        settings = QSettings("RemoteAccess", "Agent")
+        self.relay_server = relay_server or settings.value("server", "ws://localhost:9001")
+        self.quality = int(settings.value("quality", 60))
+        self.fps = float(settings.value("fps", 30))
         
         self.init_ui()
         self.setup_tray()
@@ -44,30 +53,49 @@ class AdminPanelWindow(QMainWindow):
         self.refresh_timer.timeout.connect(self.refresh_all_data)
         self.refresh_timer.start(30000)
         
-        # Таймер для обновления активности сессии (каждые 5 минут)
+        # Таймер для обновления статуса агента в нижней панели (раз в 5 секунд)
+        self.agent_status_timer = QTimer()
+        self.agent_status_timer.timeout.connect(self.update_agent_status_in_panel)
+        self.agent_status_timer.start(5000)
+        
+        # Таймер для активности сессии
         self.activity_timer = QTimer()
         self.activity_timer.timeout.connect(self.update_session_activity)
         self.activity_timer.start(5 * 60 * 1000)
         
-        # Сразу обновляем активность при запуске
         self.update_session_activity()
+        self.update_agent_status_in_panel()
+    
+    def update_agent_status_in_panel(self):
+        """Обновляет статус агента в нижней панели (без счетчика клиентов)"""
+        if self.background_agent and hasattr(self.background_agent, 'agent_instance'):
+            agent = self.background_agent.agent_instance
+            if agent and agent.is_connected:
+                self.agent_status_label.setText("🤖 Агент активен")
+                self.agent_status_label.setStyleSheet("color: #27ae60; font-size: 12px;")
+            elif agent and not agent.is_connected:
+                self.agent_status_label.setText("🤖 Агент отключен")
+                self.agent_status_label.setStyleSheet("color: #e74c3c; font-size: 12px;")
+            else:
+                self.agent_status_label.setText("🤖 Агент запускается...")
+                self.agent_status_label.setStyleSheet("color: #f39c12; font-size: 12px;")
+        else:
+            self.agent_status_label.setText("🤖 Агент не запущен")
+            self.agent_status_label.setStyleSheet("color: #e74c3c; font-size: 12px;")
     
     def update_session_activity(self):
-        """Обновляет активность сессии администратора"""
         session_id = self.computer_data.get('session_id')
         if session_id:
             try:
-                success = DatabaseManager.update_session_activity(session_id)
-                if success:
-                    print(f"[ADMIN] ✅ Активность сессии {session_id} обновлена")
-                else:
-                    print(f"[ADMIN] ⚠️ Не удалось обновить активность сессии {session_id}")
+                DatabaseManager.update_session_activity(session_id)
+                self.session_status_label.setText("● Сессия активна")
+                self.session_status_label.setStyleSheet("color: #27ae60; font-size: 12px;")
             except Exception as e:
-                print(f"[ADMIN] ❌ Ошибка обновления активности: {e}")
+                print(f"[ADMIN] Ошибка обновления активности: {e}")
     
     def init_ui(self):
         self.setWindowIcon(get_app_icon())
-        self.setWindowTitle(f"Remote Access Agent | Администратор")
+        self.setWindowTitle("Remote Access Agent | Панель администратора")
         self.setMinimumSize(1200, 700)
         self.setStyleSheet(get_main_window_stylesheet())
         self.showMaximized()
@@ -79,7 +107,7 @@ class AdminPanelWindow(QMainWindow):
         main_layout.setSpacing(10)
         main_layout.setContentsMargins(15, 15, 15, 15)
         
-        # Заголовок
+        # ========== ЗАГОЛОВОК ==========
         header_frame = QFrame()
         header_frame.setStyleSheet("""
             QFrame {
@@ -103,7 +131,7 @@ class AdminPanelWindow(QMainWindow):
         
         main_layout.addWidget(header_frame)
         
-        # Вкладки панели
+        # ========== ВКЛАДКИ ==========
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
@@ -130,7 +158,6 @@ class AdminPanelWindow(QMainWindow):
             }
         """)
         
-        # Создаем вкладки
         self.computers_tab = ComputersTab(self)
         self.users_tab = UsersTab(self)
         self.reports_tab = ReportsTab(self)
@@ -141,44 +168,102 @@ class AdminPanelWindow(QMainWindow):
         
         main_layout.addWidget(self.tab_widget)
         
-        # Нижняя панель
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
+        # ========== НИЖНЯЯ ПАНЕЛЬ ==========
+        bottom_frame = QFrame()
+        bottom_frame.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border-radius: 10px;
+                border: 1px solid #e0e0e0;
+                padding: 8px 15px;
+            }
+        """)
+        bottom_layout = QHBoxLayout(bottom_frame)
+        bottom_layout.setContentsMargins(10, 5, 10, 5)
         
-        # Индикатор статуса сессии
+        # Левая часть - статус сессии и статус агента
+        left_layout = QHBoxLayout()
+        
         self.session_status_label = QLabel("● Сессия активна")
-        self.session_status_label.setStyleSheet("color: #27ae60; font-size: 12px; padding: 5px;")
-        btn_layout.addWidget(self.session_status_label)
+        self.session_status_label.setStyleSheet("color: #27ae60; font-size: 12px;")
+        left_layout.addWidget(self.session_status_label)
         
-        btn_layout.addStretch()
+        separator = QLabel("|")
+        separator.setStyleSheet("color: #bdc3c7; font-size: 12px;")
+        left_layout.addWidget(separator)
         
-        logout_btn = QPushButton("Выйти")
-        logout_btn.setMinimumHeight(40)
-        logout_btn.setMinimumWidth(140)
+        # Статус агента (вместо admin)
+        self.agent_status_label = QLabel("🤖 Агент активен")
+        self.agent_status_label.setStyleSheet("color: #27ae60; font-size: 12px;")
+        left_layout.addWidget(self.agent_status_label)
+        
+        bottom_layout.addLayout(left_layout)
+        bottom_layout.addStretch()
+        
+        # Правая часть - кнопки
+        right_layout = QHBoxLayout()
+        right_layout.setSpacing(10)
+        
+        settings_btn = QPushButton("⚙ Настройки")
+        settings_btn.setMinimumHeight(32)
+        settings_btn.setMinimumWidth(100)
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover { background-color: #2980b9; }
+        """)
+        settings_btn.clicked.connect(self.open_settings)
+        right_layout.addWidget(settings_btn)
+        
+        logout_btn = QPushButton("🚪 Выйти")
+        logout_btn.setMinimumHeight(32)
+        logout_btn.setMinimumWidth(100)
         logout_btn.setStyleSheet("""
             QPushButton {
                 background-color: #e74c3c;
                 color: white;
                 border: none;
-                border-radius: 8px;
+                border-radius: 6px;
                 font-weight: bold;
+                font-size: 12px;
             }
-            QPushButton:hover {
-                background-color: #c0392b;
-            }
+            QPushButton:hover { background-color: #c0392b; }
         """)
         logout_btn.clicked.connect(self.logout)
-        btn_layout.addWidget(logout_btn)
+        right_layout.addWidget(logout_btn)
         
-        main_layout.addLayout(btn_layout)
+        bottom_layout.addLayout(right_layout)
+        main_layout.addWidget(bottom_frame)
         
-        self.statusBar().showMessage(f"Администратор: {self.computer_data.get('login', 'Unknown')} | PC-RMDS | Сессия ID: {self.computer_data.get('session_id', 'N/A')}")
-        
-        # Загружаем данные
         self.refresh_all_data()
     
+    def open_settings(self):
+        try:
+            from agent.settings_dialog import SettingsDialog
+            dialog = SettingsDialog(self)
+            if dialog.exec():
+                dialog.save_settings()
+                settings = QSettings("RemoteAccess", "Agent")
+                self.relay_server = settings.value("server", "ws://localhost:9001")
+                self.quality = int(settings.value("quality", 60))
+                self.fps = float(settings.value("fps", 30))
+                # применить настройки к агенту
+                if self.background_agent and hasattr(self.background_agent, 'agent_instance'):
+                    agent = self.background_agent.agent_instance
+                    if agent:
+                        interval = 1.0 / self.fps if self.fps > 0 else 0.05
+                        agent.update_settings(interval, self.quality)
+                QMessageBox.information(self, "Настройки", "Настройки сохранены и применены к агенту")
+        except Exception as e:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось открыть настройки: {e}")
+    
     def refresh_all_data(self):
-        """Обновляет данные во всех вкладках"""
         try:
             self.computers_tab.refresh_data()
             self.users_tab.refresh_data()
@@ -186,20 +271,23 @@ class AdminPanelWindow(QMainWindow):
             print(f"Ошибка обновления данных: {e}")
     
     def setup_tray(self):
-        """Настраивает системный трей"""
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(get_app_icon())
-        self.tray_icon.setToolTip("PC-RMDS | Администратор")
+        self.tray_icon.setToolTip("PC-RMDS | Администратор | Агент активен")
         
         tray_menu = QMenu()
-        
-        show_action = QAction("Показать", self)
+        show_action = QAction("👁 Показать панель", self)
         show_action.triggered.connect(self.show)
         tray_menu.addAction(show_action)
-        
         tray_menu.addSeparator()
-        
-        quit_action = QAction("Выйти", self)
+        settings_action = QAction("⚙ Настройки", self)
+        settings_action.triggered.connect(self.open_settings)
+        tray_menu.addAction(settings_action)
+        agent_status_action = QAction("🤖 Статус агента", self)
+        agent_status_action.triggered.connect(self.show_agent_status)
+        tray_menu.addAction(agent_status_action)
+        tray_menu.addSeparator()
+        quit_action = QAction("✖ Выйти", self)
         quit_action.triggered.connect(self.logout)
         tray_menu.addAction(quit_action)
         
@@ -207,66 +295,74 @@ class AdminPanelWindow(QMainWindow):
         self.tray_icon.activated.connect(self.on_tray_activated)
         self.tray_icon.show()
     
+    def show_agent_status(self):
+        if self.background_agent and hasattr(self.background_agent, 'agent_instance'):
+            agent = self.background_agent.agent_instance
+            if agent:
+                status_text = (
+                    f"🤖 СТАТУС ФОНОВОГО АГЕНТА\n\n"
+                    f"Состояние: {'✅ Активен' if agent.is_running else '❌ Остановлен'}\n"
+                    f"Подключен к серверу: {'✅ Да' if agent.is_connected else '❌ Нет'}\n"
+                    f"Клиентов: {agent.connected_clients}\n"
+                    f"Трансляция: {'🟢 Активна' if agent.sending_screenshots else '⚫ Не активна'}\n"
+                    f"Качество: {agent.adaptive_quality}%\n"
+                    f"Сбор метрик: {'✅' if agent.is_running else '❌'}\n"
+                    f"Сбор событий: {'✅' if agent.is_running else '❌'}\n"
+                    f"Облачная синхронизация: {'✅' if agent.is_running else '❌'}"
+                )
+            else:
+                status_text = "🤖 Агент запускается..."
+        else:
+            status_text = "🤖 Агент не запущен"
+        QMessageBox.information(self, "Статус агента", status_text)
+    
     def on_tray_activated(self, reason):
-        """Обработка клика по трею"""
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show()
     
     def close_session(self):
-        """Закрывает сессию администратора"""
         session_id = self.computer_data.get('session_id')
         if session_id:
-            print(f"[ADMIN] Закрытие сессии {session_id}...")
             try:
                 DatabaseManager.close_session_by_id(session_id)
-                print(f"[ADMIN] ✅ Сессия {session_id} закрыта")
             except Exception as e:
-                print(f"[ADMIN] ❌ Ошибка закрытия сессии: {e}")
-        else:
-            print(f"[ADMIN] ⚠️ Нет активной сессии для закрытия")
+                print(f"[ADMIN] Ошибка закрытия сессии: {e}")
+    
+    def stop_agent(self):
+        if self.background_agent:
+            self.background_agent.stop()
     
     def logout(self):
-        """Выход из системы"""
         reply = QMessageBox.question(
-            self,
-            "Подтверждение",
-            "Вы уверены, что хотите выйти?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            self, 
+            "Подтверждение", 
+            "Вы уверены, что хотите выйти?\n\nАгент будет остановлен.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
-        
         if reply == QMessageBox.StandardButton.Yes:
-            # Останавливаем таймеры
             self.refresh_timer.stop()
+            self.agent_status_timer.stop()
             self.activity_timer.stop()
-            
-            # Закрываем сессию перед выходом
             self.close_session()
-            
+            self.stop_agent()
             settings = QSettings("RemoteAccess", "Agent")
             settings.setValue("auto_auth", False)
             settings.sync()
-            
             self.close()
             if self.tray_icon:
                 self.tray_icon.hide()
             QApplication.quit()
     
     def closeEvent(self, event):
-        """Обработка закрытия окна"""
-        # Останавливаем таймеры
         self.refresh_timer.stop()
+        self.agent_status_timer.stop()
         self.activity_timer.stop()
-        
-        # Закрываем сессию при закрытии окна
-        self.close_session()
-        
         event.ignore()
         self.hide()
         if self.tray_icon:
             self.tray_icon.showMessage(
-                "PC-RMDS",
-                "Приложение свернуто в трей",
-                QSystemTrayIcon.MessageIcon.Information,
+                "PC-RMDS", 
+                "Панель администратора свернута в трей\nАгент продолжает работать в фоне",
+                QSystemTrayIcon.MessageIcon.Information, 
                 3000
             )

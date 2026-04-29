@@ -649,11 +649,13 @@ class ComputerDetailsWindow(QMainWindow):
             }
             QTabBar::tab {
                 background-color: #f0f0f0;
-                padding: 10px 20px;
+                padding: 10px 8px;
                 margin-right: 2px;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
                 font-weight: bold;
+                min-width: 134px;
+                width: 134px;
             }
             QTabBar::tab:selected {
                 background-color: #ff8c42;

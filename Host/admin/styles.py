@@ -150,13 +150,15 @@ def get_main_window_stylesheet():
     
     QTabBar::tab {
         background-color: #f0f0f0;
-        padding: 10px 24px;
+        padding: 10px 8px;
         margin-right: 2px;
         border-top-left-radius: 6px;
         border-top-right-radius: 6px;
         font-weight: bold;
         color: #7f8c8d;
         font-family: 'Microsoft YaHei', 'Segoe UI', 'Roboto', 'Arial', sans-serif;
+        min-width: 134px;
+        width: 134px;
     }
     
     QTabBar::tab:selected {

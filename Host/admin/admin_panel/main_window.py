@@ -67,7 +67,7 @@ class AdminPanelWindow(QMainWindow):
     
     def init_ui(self):
         self.setWindowIcon(get_app_icon())
-        self.setWindowTitle(f"PC-RMDS | Администратор: {self.computer_data.get('login', 'Unknown')}")
+        self.setWindowTitle(f"Remote Access Agent | Администратор")
         self.setMinimumSize(1200, 700)
         self.setStyleSheet(get_main_window_stylesheet())
         self.showMaximized()
@@ -91,7 +91,7 @@ class AdminPanelWindow(QMainWindow):
         """)
         header_layout = QVBoxLayout(header_frame)
         
-        title_label = QLabel("PC-RMDS • ПАНЕЛЬ АДМИНИСТРАТОРА")
+        title_label = QLabel("⚡ REMOTE ACCESS AGENT • ПАНЕЛЬ АДМИНИСТРАТОРА")
         title_label.setStyleSheet("""
             color: white;
             font-size: 22px;

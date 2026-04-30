@@ -6,9 +6,15 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-venv \
+    python3-tk \
+    tk-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
     wget \
     ca-certificates \
     file \
+    fuse \
+    libfuse2 \
     libxcb-xinerama0 \
     libxcb-icccm4 \
     libxcb-image0 \
@@ -44,6 +50,18 @@ RUN . venv/bin/activate && \
         --hidden-import=qtpy.QtGui \
         --hidden-import=psutil \
         --hidden-import=pynput \
+        --hidden-import=pynput.keyboard \
+        --hidden-import=pynput.mouse \
+        --hidden-import=pynput.keyboard._base \
+        --hidden-import=pynput.mouse._base \
+        --hidden-import=pynput.keyboard._xorg \
+        --hidden-import=pynput.mouse._xorg \
+        --hidden-import=tkinter \
+        --hidden-import=_tkinter \
+        --collect-all pynput \
+        --copy-metadata pynput \
+        --add-binary="/usr/lib/x86_64-linux-gnu/libtk8.6.so:." \
+        --add-binary="/usr/lib/x86_64-linux-gnu/libtcl8.6.so:." \
         --add-data="app_icon.png:." \
         main.py
 
@@ -70,10 +88,25 @@ RUN echo '[Desktop Entry]' > AppDir/RemoteAccessAgent.desktop && \
     echo 'Terminal=false' >> AppDir/RemoteAccessAgent.desktop && \
     echo 'Categories=Utility;' >> AppDir/RemoteAccessAgent.desktop
 
-# Создание архива
-RUN tar -czf RemoteAccessAgent-qt5-AppDir.tar.gz AppDir
+# Скачиваем и распаковываем appimagetool для работы внутри Docker
+RUN wget --tries=5 --timeout=30 --no-check-certificate "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O /tmp/appimagetool && \
+    chmod +x /tmp/appimagetool && \
+    cd /opt && \
+    /tmp/appimagetool --appimage-extract > /dev/null && \
+    mv squashfs-root appimagetool.AppDir && \
+    ln -s /opt/appimagetool.AppDir/AppRun /usr/local/bin/appimagetool && \
+    rm /tmp/appimagetool
+
+# Убедитесь, что в PATH есть appimagetool
+ENV PATH="/opt/appimagetool.AppDir:${PATH}"
+
+# Создаем AppImage (теперь appimagetool доступен в PATH)
+RUN ARCH=$(uname -m) && \
+    appimagetool --no-appstream AppDir && \
+    mv "Remote_Access_Agent-${ARCH}.AppImage" RemoteAccessAgent.AppImage && \
+    chmod +x RemoteAccessAgent.AppImage
 
 # Копирование результата в output
-RUN mkdir -p /output && cp /app/*.tar.gz /output/ 2>/dev/null || echo "No archive"
+RUN mkdir -p /output && cp /app/*.AppImage /output/ && ls -la /output/
 
 CMD ["bash"]

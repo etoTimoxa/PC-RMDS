@@ -1,14 +1,15 @@
 #!/bin/bash
-# Упрощенная сборка - создает архив AppDir вместо AppImage
+# Полноценная сборка AppImage
 
 echo "=========================================="
-echo "  Упрощенная сборка (AppDir archive)"
+echo "  Сборка полноценного AppImage"
 echo "=========================================="
 
 APP_NAME="RemoteAccessAgent"
 APP_DIR="AppDir"
+ARCH=$(uname -m)
 
-rm -rf dist build $APP_DIR *.tar.gz 2>/dev/null || true
+rm -rf dist build $APP_DIR *.AppImage *.tar.gz 2>/dev/null || true
 
 # Сборка через PyInstaller
 pyinstaller --onefile --windowed \
@@ -58,12 +59,33 @@ exec "${HERE}/usr/bin/RemoteAccessAgent" "$@"
 EOF
 chmod +x $APP_DIR/AppRun
 
-# Создаем архив с AppDir
-tar -czf RemoteAccessAgent-qt5-AppDir.tar.gz $APP_DIR
-echo "✅ Создан архив: RemoteAccessAgent-qt5-AppDir.tar.gz"
-ls -lh *.tar.gz
+# Скачиваем appimagetool
+echo "📥 Скачиваем appimagetool..."
+wget -q -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${ARCH}.AppImage"
+chmod +x appimagetool
 
-# Копируем в output
-if [ -d "/output" ]; then
-    cp *.tar.gz /output/
+# Создаем AppImage
+echo "🔨 Создаем AppImage..."
+./appimagetool --no-appstream $APP_DIR
+
+if [ -f "${APP_NAME}-${ARCH}.AppImage" ]; then
+    mv "${APP_NAME}-${ARCH}.AppImage" RemoteAccessAgent.AppImage
+    chmod +x RemoteAccessAgent.AppImage
+    echo "✅ AppImage успешно создан: RemoteAccessAgent.AppImage"
+    ls -lh *.AppImage
+    
+    # Копируем в output
+    if [ -d "/output" ]; then
+        cp *.AppImage /output/
+    fi
+else
+    echo "❌ Ошибка при создании AppImage"
+    # Создаем резервный архив на случай неудачи
+    tar -czf RemoteAccessAgent-qt5-AppDir.tar.gz $APP_DIR
+    if [ -d "/output" ]; then
+        cp *.tar.gz /output/
+    fi
+    exit 1
 fi
+
+rm -f appimagetool

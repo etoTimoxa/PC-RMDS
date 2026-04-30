@@ -1,7 +1,7 @@
 @echo off
 echo ==========================================
 echo   Remote Access Agent - AppImage Builder
-echo   (Упрощенная версия)
+echo   (Полноценная версия)
 echo ==========================================
 echo.
 
@@ -37,9 +37,9 @@ echo.
 echo 📁 Output: %CD%\output-qt5
 echo.
 echo 📋 На целевой машине (Linux):
-echo    1. Скопируйте RemoteAccessAgent-qt5-AppDir.tar.gz
-echo    2. Распакуйте: tar -xzf RemoteAccessAgent-qt5-AppDir.tar.gz
-echo    3. Запустите: cd AppDir ^&^& ./AppRun
+echo    1. Скопируйте RemoteAccessAgent.AppImage
+echo    2. Сделайте исполняемым: chmod +x RemoteAccessAgent.AppImage
+echo    3. Запустите: ./RemoteAccessAgent.AppImage
 echo.
 
 pause

@@ -315,7 +315,7 @@ async def handler(websocket):
                         log(f"❌ computer_id не указан в команде")
                 
                 # Данные от хоста к клиенту
-                elif msg_type in ["screenshot", "command_result", "system_info"]:
+                elif msg_type in ["screenshot", "audio_chunk", "command_result", "system_info"]:
                     computer_id = data.get("computer_id") or data.get("agent_id")
                     
                     if computer_id is not None:

@@ -15,6 +15,8 @@ import os
 import re
 import threading
 import boto3
+import wave
+import audioop
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from core.api_client import APIClient as DatabaseManager
@@ -83,7 +85,11 @@ class RemoteAgentThread(QThread):
         self.silent_mode_enabled = False
         self.server_control_enabled = False
         
-        self.json_logger = JSONLogger
+        self.json_logger = JSONLogger()
+        self.cloud_uploader = CloudUploader(self.json_logger)
+        self.json_logger.set_session(self.hostname, self.session_token, self.cloud_uploader)
+        self.event_grouper = EventGrouper()
+        self.initial_events_collected = False
         
         self._setup_user_action_callback()
         

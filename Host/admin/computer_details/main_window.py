@@ -37,6 +37,7 @@ class RemoteClientThread(QThread):
     image_received = Signal(object)
     system_info_received = Signal(dict)
     connection_lost = Signal()
+    audio_received = Signal(bytes, int, int)
     
     def __init__(self, relay_server, computer_id, client_id, update_interval=0.033):
         super().__init__()
@@ -53,6 +54,7 @@ class RemoteClientThread(QThread):
         self.frame_count = 0
         self.send_task = None
         self.loop = None
+        self.audio_buffer = asyncio.Queue()
     
     def run(self):
         self.loop = asyncio.new_event_loop()
@@ -108,6 +110,13 @@ class RemoteClientThread(QThread):
                             elif msg_type == "session_info":
                                 # Получили информацию о сессии от сервера
                                 pass
+                            
+                            elif msg_type == "audio_chunk":
+                                # Пришел аудио блок с удаленного компьютера
+                                audio_data = base64.b64decode(data["data"])
+                                sample_rate = data.get("sample_rate", 48000)
+                                channels = data.get("channels", 2)
+                                self.audio_received.emit(audio_data, sample_rate, channels)
                             
                         except Exception as e:
                             pass
@@ -378,6 +387,11 @@ class RemoteScreenWindow(QMainWindow):
         self.screen_widget.mouse_clicked.connect(self.on_mouse_click)
         self.screen_widget.mouse_wheeled.connect(self.on_mouse_wheel)
         self.screen_widget.key_pressed.connect(self.on_key_press)
+        
+        # Аудио плеер
+        self.audio_player = None
+        self.audio_stream = None
+        self.client_thread.audio_received.connect(self.on_audio_received)
     
     def init_ui(self):
         self.setWindowTitle(f"Удаленный экран - {self.computer_name}")
@@ -528,10 +542,46 @@ class RemoteScreenWindow(QMainWindow):
     
     def on_key_press(self, text):
         self.key_pressed.emit(text)
+        
+    def on_audio_received(self, audio_data, sample_rate, channels):
+        """Воспроизводит полученный аудио поток"""
+        try:
+            import pyaudio
+            
+            if self.audio_player is None:
+                self.audio_player = pyaudio.PyAudio()
+                self.audio_stream = self.audio_player.open(
+                    format=pyaudio.paInt16,
+                    channels=channels,
+                    rate=sample_rate,
+                    output=True,
+                    frames_per_buffer=2048
+                )
+            
+            # Воспроизводим аудио
+            self.audio_stream.write(audio_data)
+            
+        except Exception as e:
+            print(f"Audio playback error: {e}")
     
     def closeEvent(self, event):
         if self.client_thread and self.client_thread.is_connected:
             self.client_thread.stop_stream()
+        
+        # Закрываем аудио плеер
+        if self.audio_stream:
+            try:
+                self.audio_stream.stop_stream()
+                self.audio_stream.close()
+            except:
+                pass
+        
+        if self.audio_player:
+            try:
+                self.audio_player.terminate()
+            except:
+                pass
+        
         self.closed.emit()
         event.accept()
 

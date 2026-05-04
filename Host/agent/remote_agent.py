@@ -340,6 +340,13 @@ class RemoteAgentThread(QThread):
     async def agent_main(self):
         reconnect_delay = 5
         
+        # Инициализация аудио устройства тихо без логов
+        try:
+            import sounddevice as sd
+            default_output_idx = sd.default.device[1]
+        except:
+            pass
+        
         await self.check_and_upload_on_startup()
         await self.collect_initial_metrics_and_events()
         
@@ -363,6 +370,7 @@ class RemoteAgentThread(QThread):
                 async with websockets.connect(self.relay_server) as ws:
                     self.ws = ws
                     self.is_connected = True
+                    self.loop = asyncio.get_running_loop()
                     
                     register_msg = {
                         "type": "register_agent",
@@ -514,6 +522,75 @@ class RemoteAgentThread(QThread):
                 self.log_message.emit("Не удалось создать скриншот")
                 return None
     
+    async def audio_capture_loop(self, ws):
+        self.sending_audio = True
+        try:
+            import sounddevice as sd
+            
+            self.log_message.emit("=" * 50)
+            self.log_message.emit("📢 ДОСТУПНЫЕ АУДИО УСТРОЙСТВА:")
+            self.log_message.emit("=" * 50)
+            
+            devices = sd.query_devices()
+            default_output_idx = sd.default.device[1]
+            
+            for idx, dev in enumerate(devices):
+                dev_type = "ВЫВОД" if dev['max_output_channels'] > 0 else "ВВОД "
+                default_mark = "✅ ПО УМОЛЧАНИЮ" if idx == default_output_idx else ""
+                self.log_message.emit(f"#{idx} | {dev_type} | {dev['name'][:45]} | каналов={dev['max_output_channels']} | sr={dev['default_samplerate']} {default_mark}")
+            
+            self.log_message.emit("=" * 50)
+            
+            # ✅ ЗАХВАТ УСТРОЙСТВА ВОСПРОИЗВЕДЕНИЯ ПО УМОЛЧАНИЮ
+            target_device = default_output_idx
+            
+            self.log_message.emit(f"🎧 ИСПОЛЬЗУЕМ УСТРОЙСТВО #{target_device}: {devices[target_device]['name']}")
+            self.log_message.emit("✅ Запуск захвата звука")
+            
+            sample_rate = 48000
+            channels = 2
+            blocksize = 2048
+            
+            def audio_callback(indata, frames, time, status):
+                if self.sending_audio and self.is_connected:
+                    try:
+                        # Нормализуем громкость
+                        audio_data = audioop.mul(indata.tobytes(), 2, 3.0)
+                        audio_b64 = base64.b64encode(audio_data).decode()
+                        asyncio.run_coroutine_threadsafe(
+                            ws.send(json.dumps({
+                                "type": "audio_chunk",
+                                "data": audio_b64,
+                                "computer_id": self.computer_id,
+                                "agent_id": self.hostname,
+                                "sample_rate": sample_rate,
+                                "channels": channels,
+                                "format": "int16"
+                            })),
+                            self.loop
+                        )
+                    except:
+                        pass
+
+            # Открываем поток на устройстве вывода
+            with sd.InputStream(
+                device=target_device,
+                samplerate=sample_rate,
+                channels=channels,
+                blocksize=blocksize,
+                callback=audio_callback,
+                dtype='int16'
+            ):
+                self.log_message.emit(f"✅ Захват системного звука запущен: {sd.query_devices(target_device)['name']}")
+                
+                while self.sending_audio and len(self.streaming_clients) > 0:
+                    await asyncio.sleep(0.1)
+
+        except Exception as e:
+            self.log_message.emit(f"Ошибка аудио захвата: {e}")
+        finally:
+            self.sending_audio = False
+
     async def screenshot_loop(self, ws):
         self.sending_screenshots = True
         error_count = 0

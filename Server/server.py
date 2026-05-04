@@ -322,7 +322,11 @@ async def handler(websocket):
                         computer_id_str = str(computer_id)
                         
                         # ✅ ПЕРЕХВАТ ДАННЫХ ОТ АГЕНТА
-                        modified_msg = await intercept_host_message(data, msg)
+                        if msg_type == "audio_chunk":
+                            # Для аудио не модифицируем сообщение, передаем как есть
+                            modified_msg = msg
+                        else:
+                            modified_msg = await intercept_host_message(data, msg)
                         
                         # Отправляем всем клиентам
                         sent_count = 0

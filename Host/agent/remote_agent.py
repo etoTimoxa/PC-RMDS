@@ -77,11 +77,13 @@ class RemoteAgentThread(QThread):
         self.network_speed_test_counter = 0
         self.fast_network = True
         
-        self.json_logger = JSONLogger()
-        self.cloud_uploader = CloudUploader(self.json_logger)
-        self.json_logger.set_session(self.hostname, self.session_token, self.cloud_uploader)
-        self.event_grouper = EventGrouper()
-        self.initial_events_collected = False
+        # Поддержка множественных клиентов
+        self.clients = {}  # client_id -> {"permissions": list, "streaming": bool}
+        self.server_connected = False
+        self.silent_mode_enabled = False
+        self.server_control_enabled = False
+        
+        self.json_logger = JSONLogger
         
         self._setup_user_action_callback()
         
@@ -973,39 +975,45 @@ class RemoteAgentWindow(QMainWindow):
             import winreg
             import os
             
-            app_path = sys.executable if getattr(sys, 'frozen', False) else sys.executable
-            app_dir = os.path.dirname(app_path) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+            app_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
             
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
-                                r"Software\Microsoft\Windows\CurrentVersion\Run", 
-                                0, winreg.KEY_SET_VALUE)
+            # Используем только реестр - самый надежный метод без лишних файлов
+            key = None
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                                    r"Software\Microsoft\Windows\CurrentVersion\Run", 
+                                    0, winreg.KEY_ALL_ACCESS)
+                
+                winreg.SetValueEx(key, "RemoteAccessAgent", 0, winreg.REG_SZ, 
+                                f'"{app_path}"')
+                
+                self.log("✅ Добавлено в автозагрузку Windows (реестр)")
+            except Exception as reg_err:
+                self.log(f"⚠️ Не удалось добавить в реестр: {reg_err}")
+            finally:
+                if key:
+                    winreg.CloseKey(key)
             
-            winreg.SetValueEx(key, "RemoteAccessAgent", 0, winreg.REG_SZ, 
-                            f'"{app_path}"')
-            
-            winreg.CloseKey(key)
-            
-            startup_script = os.path.join(os.environ.get("APPDATA", ""), 
-                                          r"Microsoft\Windows\Start Menu\Programs\Startup",
-                                          "remote_access_agent_start.bat")
-            
-            os.makedirs(os.path.dirname(startup_script), exist_ok=True)
-            
-            with open(startup_script, 'w') as f:
-                f.write(f'@echo off\n')
-                f.write(f'cd /d "{app_dir}"\n')
-                f.write(f'start "" "{app_path}"\n')
+            # Удаляем старый батник чтобы не было двойного запуска
+            try:
+                startup_script = os.path.join(os.environ.get("APPDATA", ""), 
+                                            r"Microsoft\Windows\Start Menu\Programs\Startup",
+                                            "remote_access_agent_start.bat")
+                if os.path.exists(startup_script):
+                    os.remove(startup_script)
+                    self.log("🗑️ Удален старый файл автозагрузки")
+            except:
+                pass
                 
         except Exception as e:
-            print(f"Ошибка добавления в автозагрузку Windows: {e}")
+            self.log(f"❌ Ошибка добавления в автозагрузку Windows: {e}")
     
     def _add_to_startup_linux(self):
         """Добавляет в автозагрузку Linux через .desktop файл"""
         try:
             import os
             
-            app_path = sys.executable if getattr(sys, 'frozen', False) else sys.executable
-            app_dir = os.path.dirname(app_path) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+            app_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
             
             desktop_content = f"""[Desktop Entry]
 Type=Application
@@ -1013,20 +1021,24 @@ Name=Remote Access Agent
 Comment=Remote Access Agent
 Exec={app_path}
 Terminal=false
+Hidden=false
 X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel
+StartupNotify=false
 """
             
             autostart_dir = os.path.expanduser("~/.config/autostart")
-            os.makedirs(autostart_dir, exist_ok=True)
+            os.makedirs(autostart_dir, exist_ok=True, mode=0o700)
             
             desktop_file = os.path.join(autostart_dir, "remote-access-agent.desktop")
             with open(desktop_file, 'w') as f:
                 f.write(desktop_content)
             
-            os.chmod(desktop_file, 0o755)
+            os.chmod(desktop_file, 0o644)
+            self.log("✅ Добавлено в автозагрузку Linux (.desktop файл)")
             
         except Exception as e:
-            print(f"Ошибка добавления в автозагрузку Linux: {e}")
+            self.log(f"❌ Ошибка добавления в автозагрузку Linux: {e}")
     
     def _remove_from_startup_windows(self):
         """Удаляет из автозагрузки Windows"""

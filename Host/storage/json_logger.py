@@ -373,6 +373,30 @@ class JSONLogger:
                     return True
         return False
     
+    def add_application_event(self, event_type: str, application: Dict, force_write: bool = True):
+        """
+        Добавляет событие связанное с приложениями
+        event_type: 'application_installed', 'application_removed', 'application_started', 'application_closed'
+        """
+        records = self.load_records()
+        
+        record = {
+            'timestamp': datetime.now().isoformat(),
+            'computer_name': self.current_computer_name,
+            'session_token': self.current_session_token,
+            'type': 'application_event',
+            'data': {
+                'event_type': event_type,
+                'application': application
+            }
+        }
+        
+        records.append(record)
+        self.save_records(records)
+        
+        if force_write:
+            self.mark_for_urgent_upload()
+    
     def mark_as_sent(self, file_name: str):
         sent_marker = self.markers_folder / f"sent_{file_name}"
         try:

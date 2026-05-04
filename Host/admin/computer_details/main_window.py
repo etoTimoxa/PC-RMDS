@@ -74,16 +74,12 @@ class RemoteClientThread(QThread):
                         "data": {
                             "client_id": self.client_id, 
                             "computer_id": self.computer_id
-                        },
-                        "computer_id": self.computer_id,
-                        "client_id": self.client_id
+                        }
                     }
                     await self.ws.send(json.dumps(register_msg))
                     
                     self.is_connected = True
                     self.status_updated.emit("Подключен к серверу", "success")
-                    
-                    await self.send_command({"type": "request_system_info", "data": {}})
                     
                     self.send_task = asyncio.create_task(self.process_command_queue())
                     
@@ -92,7 +88,11 @@ class RemoteClientThread(QThread):
                             data = json.loads(msg)
                             msg_type = data.get("type")
                             
-                            if msg_type == "screenshot":
+                            if msg_type == "registration_success":
+                                self.status_updated.emit("Регистрация прошла успешно", "success")
+                                await self.send_command({"type": "request_system_info", "data": {}})
+                            
+                            elif msg_type == "screenshot":
                                 img_data = base64.b64decode(data["data"])
                                 img = Image.open(BytesIO(img_data))
                                 
@@ -104,6 +104,10 @@ class RemoteClientThread(QThread):
                             elif msg_type == "system_info":
                                 system_data = data.get("data", {})
                                 self.system_info_received.emit(system_data)
+                            
+                            elif msg_type == "session_info":
+                                # Получили информацию о сессии от сервера
+                                pass
                             
                         except Exception as e:
                             pass

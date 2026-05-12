@@ -544,12 +544,21 @@ class RemoteScreenWindow(QMainWindow):
         self.key_pressed.emit(text)
         
     def on_audio_received(self, audio_data, sample_rate, channels):
-        """Воспроизводит полученный аудио поток"""
         try:
             import pyaudio
-            
-            if self.audio_player is None:
-                self.audio_player = pyaudio.PyAudio()
+
+            # 🔥 если поток не создан или параметры изменились
+            if (self.audio_stream is None or
+                self.audio_stream._rate != sample_rate or
+                self.audio_stream._channels != channels):
+
+                if self.audio_stream:
+                    self.audio_stream.stop_stream()
+                    self.audio_stream.close()
+
+                if self.audio_player is None:
+                    self.audio_player = pyaudio.PyAudio()
+
                 self.audio_stream = self.audio_player.open(
                     format=pyaudio.paInt16,
                     channels=channels,
@@ -557,10 +566,9 @@ class RemoteScreenWindow(QMainWindow):
                     output=True,
                     frames_per_buffer=2048
                 )
-            
-            # Воспроизводим аудио
+
             self.audio_stream.write(audio_data)
-            
+
         except Exception as e:
             print(f"Audio playback error: {e}")
     

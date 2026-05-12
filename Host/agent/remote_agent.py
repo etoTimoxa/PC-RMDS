@@ -75,6 +75,7 @@ class RemoteAgentThread(QThread):
         self.streaming_clients = set()
         self.ws = None
         self.sending_screenshots = False
+        self.sending_audio = False  # Флаг для аудио
         self.adaptive_quality = quality
         self.network_speed_test_counter = 0
         self.fast_network = True
@@ -144,7 +145,7 @@ class RemoteAgentThread(QThread):
             force_write=True
         )
         
-        self.stop()
+        self.stop(close_session=True)
         self._shutdown_app()
     
     def _shutdown_app(self):
@@ -351,7 +352,6 @@ class RemoteAgentThread(QThread):
         await self.collect_initial_metrics_and_events()
         
         # Проверяем, не нужно ли создать файл для сегодняшнего дня
-        # (на случай если агент запустился после полуночи)
         current_date = datetime.now().date()
         if self.json_logger.current_date != current_date:
             self.log_message.emit(f"📅 Обнаружено несоответствие дат: логгер={self.json_logger.current_date}, текущая={current_date}")
@@ -523,75 +523,93 @@ class RemoteAgentThread(QThread):
                 return None
     
     async def audio_capture_loop(self, ws):
-        self.sending_audio = True
-        try:
-            import sounddevice as sd
-            
-            self.log_message.emit("=" * 50)
-            self.log_message.emit("📢 ДОСТУПНЫЕ АУДИО УСТРОЙСТВА:")
-            self.log_message.emit("=" * 50)
-            
-            devices = sd.query_devices()
-            default_output_idx = sd.default.device[1]
-            
-            for idx, dev in enumerate(devices):
-                dev_type = "ВЫВОД" if dev['max_output_channels'] > 0 else "ВВОД "
-                default_mark = "✅ ПО УМОЛЧАНИЮ" if idx == default_output_idx else ""
-                self.log_message.emit(f"#{idx} | {dev_type} | {dev['name'][:45]} | каналов={dev['max_output_channels']} | sr={dev['default_samplerate']} {default_mark}")
-            
-            self.log_message.emit("=" * 50)
-            
-            # ✅ ЗАХВАТ УСТРОЙСТВА ВОСПРОИЗВЕДЕНИЯ ПО УМОЛЧАНИЮ
-            target_device = default_output_idx
-            
-            self.log_message.emit(f"🎧 ИСПОЛЬЗУЕМ УСТРОЙСТВО #{target_device}: {devices[target_device]['name']}")
-            self.log_message.emit("✅ Запуск захвата звука")
-            
-            sample_rate = 48000
-            channels = 2
-            blocksize = 2048
-            
-            def audio_callback(indata, frames, time, status):
-                if self.sending_audio and self.is_connected:
-                    try:
-                        # Нормализуем громкость
-                        audio_data = audioop.mul(indata.tobytes(), 2, 3.0)
-                        audio_b64 = base64.b64encode(audio_data).decode()
-                        asyncio.run_coroutine_threadsafe(
-                            ws.send(json.dumps({
-                                "type": "audio_chunk",
-                                "data": audio_b64,
-                                "computer_id": self.computer_id,
-                                "agent_id": self.hostname,
-                                "sample_rate": sample_rate,
-                                "channels": channels,
-                                "format": "int16"
-                            })),
-                            self.loop
-                        )
-                    except:
-                        pass
+        import sounddevice as sd
 
-            # Открываем поток на устройстве вывода
+        self.sending_audio = True
+
+        try:
+            hostapis = sd.query_hostapis()
+            devices = sd.query_devices()
+
+            wasapi_index = None
+
+            # 🔍 ищем WASAPI
+            for i, api in enumerate(hostapis):
+                if "wasapi" in api['name'].lower():
+                    wasapi_index = i
+                    break
+
+            if wasapi_index is None:
+                self.log_message.emit("❌ WASAPI не найден")
+                return
+
+            self.log_message.emit("✅ Используем WASAPI")
+
+            # 🔥 ищем output device с WASAPI
+            target_device = None
+
+            for i, dev in enumerate(devices):
+                if dev['hostapi'] == wasapi_index and dev['max_output_channels'] > 0:
+                    target_device = i
+                    break
+
+            if target_device is None:
+                self.log_message.emit("❌ WASAPI устройство не найдено")
+                return
+
+            self.log_message.emit(f"🎧 DEVICE: {devices[target_device]['name']}")
+
+            sample_rate = int(devices[target_device]['default_samplerate'])
+            channels = 2
+
+            loop = asyncio.get_running_loop()
+
+            def callback(indata, frames, time, status):
+                if not self.sending_audio:
+                    return
+
+                try:
+                    audio_bytes = indata.tobytes()
+
+                    audio_b64 = base64.b64encode(audio_bytes).decode()
+
+                    asyncio.run_coroutine_threadsafe(
+                        ws.send(json.dumps({
+                            "type": "audio_chunk",
+                            "data": audio_b64,
+                            "computer_id": self.computer_id,
+                            "agent_id": self.hostname,
+                            "sample_rate": sample_rate,
+                            "channels": channels
+                        })),
+                        loop
+                    )
+                except:
+                    pass
+
+            # 🔥 ВАЖНО: loopback через extra_settings
+            wasapi_settings = sd.WasapiSettings()
+
             with sd.InputStream(
-                device=target_device,
                 samplerate=sample_rate,
+                device=target_device,
                 channels=channels,
-                blocksize=blocksize,
-                callback=audio_callback,
-                dtype='int16'
+                callback=callback,
+                dtype='int16',
+                extra_settings=wasapi_settings
             ):
-                self.log_message.emit(f"✅ Захват системного звука запущен: {sd.query_devices(target_device)['name']}")
-                
+                self.log_message.emit("✅ AUDIO LOOPBACK STARTED")
+
                 while self.sending_audio and len(self.streaming_clients) > 0:
                     await asyncio.sleep(0.1)
 
         except Exception as e:
-            self.log_message.emit(f"Ошибка аудио захвата: {e}")
-        finally:
-            self.sending_audio = False
+            self.log_message.emit(f"❌ AUDIO ERROR: {e}")
 
+        self.sending_audio = False
+    
     async def screenshot_loop(self, ws):
+        """Захват и трансляция скриншотов экрана"""
         self.sending_screenshots = True
         error_count = 0
         max_errors = 5
@@ -651,7 +669,10 @@ class RemoteAgentThread(QThread):
         self.sending_screenshots = False
     
     async def receive_commands(self, ws):
+        """Получение и обработка команд от сервера"""
         screenshot_task = None
+        audio_task = None
+        
         try:
             async for msg in ws:
                 data = json.loads(msg)
@@ -664,42 +685,91 @@ class RemoteAgentThread(QThread):
                         self.connected_clients_list.append(client_id)
                         self.connection_status_changed.emit(True, self.connected_clients)
                         self.client_connected.emit(client_id)
-                        self.log_message.emit(f"Клиент {client_id} подключен")
+                        self.log_message.emit(f"👤 Клиент {client_id} подключен (всего: {self.connected_clients})")
                 
                 elif cmd_type == "start_stream":
                     self.streaming_clients.add(client_id)
+                    self.log_message.emit(f"🎬 Клиент {client_id} начал трансляцию (активных: {len(self.streaming_clients)})")
+                    
+                    # Запускаем видео трансляцию
                     if not self.sending_screenshots and len(self.streaming_clients) > 0:
-                        screenshot_task = asyncio.create_task(self.screenshot_loop(ws))
-                        self.log_message.emit(f"Запуск трансляции для клиента {client_id}")
+                        if screenshot_task is None or screenshot_task.done():
+                            screenshot_task = asyncio.create_task(self.screenshot_loop(ws))
+                            self.log_message.emit(f"✅ Запуск видео трансляции")
+                    
+                    # Запускаем аудио трансляцию
+                    if (audio_task is None or audio_task.done()) and len(self.streaming_clients) > 0:
+                        audio_task = asyncio.create_task(self.audio_capture_loop(ws))
+                        self.log_message.emit(f"🎧 Запуск аудио трансляции")
                 
                 elif cmd_type == "stop_stream":
                     if client_id in self.streaming_clients:
                         self.streaming_clients.remove(client_id)
+                        self.log_message.emit(f"⏹️ Клиент {client_id} остановил трансляцию (активных: {len(self.streaming_clients)})")
+                    
+                    # Останавливаем всё, если нет клиентов
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
-                        self.log_message.emit(f"Остановка трансляции")
-                        # Сбрасываем регистрацию компьютера на сервере (ставим статус не в трансляции)
+                        self.sending_audio = False
+                        
+                        # Останавливаем задачи
+                        if screenshot_task and not screenshot_task.done():
+                            screenshot_task.cancel()
+                            self.log_message.emit(f"⏹️ Остановка видео трансляции")
+                        
+                        if audio_task and not audio_task.done():
+                            audio_task.cancel()
+                            self.log_message.emit(f"🔇 Остановка аудио трансляции")
+                        
+                        # Сбрасываем регистрацию компьютера на сервере
                         try:
                             APIClient.update_computer_status(self.computer_id, False, self.session_id)
                             self.log_message.emit(f"✅ Регистрация на сервере сброшена, компьютер помечен как не в трансляции")
                         except Exception as e:
                             self.log_message.emit(f"⚠️ Ошибка сброса регистрации на сервере: {e}")
                 
+                elif cmd_type == "start_audio":  # Отдельная команда для аудио
+                    self.log_message.emit(f"🎧 Запрос на запуск аудио от клиента {client_id}")
+                    if (audio_task is None or audio_task.done()):
+                        audio_task = asyncio.create_task(self.audio_capture_loop(ws))
+                        self.log_message.emit(f"✅ Аудио запущено по запросу")
+                    else:
+                        self.log_message.emit(f"ℹ️ Аудио уже запущено")
+                
+                elif cmd_type == "stop_audio":  # Отдельная команда для остановки аудио
+                    self.log_message.emit(f"🔇 Запрос на остановку аудио от клиента {client_id}")
+                    self.sending_audio = False
+                    if audio_task and not audio_task.done():
+                        audio_task.cancel()
+                        self.log_message.emit(f"✅ Аудио остановлено по запросу")
+                
                 elif cmd_type == "unregister_client":
                     if client_id in self.connected_clients_list:
                         self.connected_clients_list.remove(client_id)
-                        self.connected_clients -= 1
+                        self.connected_clients = max(0, self.connected_clients - 1)
                         self.connection_status_changed.emit(True, self.connected_clients)
+                        self.client_disconnected.emit(client_id)
+                        self.log_message.emit(f"👋 Клиент {client_id} отключен (осталось: {self.connected_clients})")
+                    
                     if client_id in self.streaming_clients:
                         self.streaming_clients.remove(client_id)
+                        self.log_message.emit(f"⏹️ Клиент {client_id} удален из стриминга")
+                    
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
-                        # Сбрасываем регистрацию компьютера на сервере при отключении последнего клиента
+                        self.sending_audio = False
+                        
+                        if screenshot_task and not screenshot_task.done():
+                            screenshot_task.cancel()
+                        if audio_task and not audio_task.done():
+                            audio_task.cancel()
+                        
+                        # Сбрасываем регистрацию компьютера на сервере
                         try:
                             APIClient.update_computer_status(self.computer_id, False, self.session_id)
-                            self.log_message.emit(f"✅ Регистрация на сервере сброшена, компьютер помечен как не в трансляции")
+                            self.log_message.emit(f"✅ Регистрация на сервере сброшена")
                         except Exception as e:
-                            self.log_message.emit(f"⚠️ Ошибка сброса регистрации на сервере: {e}")
+                            self.log_message.emit(f"⚠️ Ошибка сброса регистрации: {e}")
                 
                 elif cmd_type == "mouse_move":
                     command_data = data.get("data", {})
@@ -737,10 +807,15 @@ class RemoteAgentThread(QThread):
                 
         except Exception as e:
             self.log_message.emit(f"Ошибка в receive_commands: {e}")
+            import traceback
+            self.log_message.emit(traceback.format_exc())
         finally:
             if screenshot_task and not screenshot_task.done():
                 screenshot_task.cancel()
-                self.sending_screenshots = False
+            if audio_task and not audio_task.done():
+                audio_task.cancel()
+            self.sending_screenshots = False
+            self.sending_audio = False
     
     async def handle_mouse_move(self, command_data):
         try:
@@ -783,6 +858,12 @@ class RemoteAgentThread(QThread):
                 elif text == '\r' or text == '\n':
                     self.keyboard.press(Key.enter)
                     self.keyboard.release(Key.enter)
+                elif text == '\t':
+                    self.keyboard.press(Key.tab)
+                    self.keyboard.release(Key.tab)
+                elif text == '\x1b':  # ESC
+                    self.keyboard.press(Key.esc)
+                    self.keyboard.release(Key.esc)
                 else:
                     self.keyboard.type(text)
         except:
@@ -801,20 +882,28 @@ class RemoteAgentThread(QThread):
             except Exception as e:
                 self.log_message.emit(f"⚠️ Ошибка закрытия сессии: {e}")
     
-    def stop(self):
+    def stop(self, close_session: bool = False):
+        """Останавливает работу агента
+        
+        Args:
+            close_session: Закрывать ли сессию (True - при выходе, False - при переподключении)
+        """
         self.log_message.emit("🛑 Остановка агента...")
         self.is_running = False
         self.is_connected = False
+        self.sending_screenshots = False
+        self.sending_audio = False
         self.streaming_clients.clear()
         self.connected_clients_list.clear()
-        self.sending_screenshots = False
         
-        # Закрываем сессию при остановке
-        self.close_session()
+        # Закрываем сессию только если явно указано
+        if close_session:
+            self.close_session()
         
         # Обновляем статус компьютера на офлайн
         try:
             APIClient.update_computer_status(self.computer_id, False, self.session_id)
+            self.log_message.emit(f"✅ Статус компьютера обновлен на офлайн")
         except Exception as e:
             self.log_message.emit(f"⚠️ Ошибка обновления статуса: {e}")
         
@@ -947,9 +1036,16 @@ class RemoteAgentWindow(QMainWindow):
         log_group.setLayout(log_layout)
         main_layout.addWidget(log_group)
         
-        exit_frame = QFrame()
-        exit_layout = QHBoxLayout(exit_frame)
-        exit_layout.addStretch()
+        # Кнопки управления
+        control_frame = QFrame()
+        control_layout = QHBoxLayout(control_frame)
+        
+        self.reconnect_btn = QPushButton("🔄 Переподключиться")
+        self.reconnect_btn.setFixedWidth(150)
+        self.reconnect_btn.clicked.connect(self.reconnect)
+        control_layout.addWidget(self.reconnect_btn)
+        
+        control_layout.addStretch()
         
         self.exit_btn = QPushButton("✖ ВЫХОД")
         self.exit_btn.setFixedWidth(120)
@@ -961,8 +1057,9 @@ class RemoteAgentWindow(QMainWindow):
             QPushButton:hover { background-color: #c0392b; }
         """)
         self.exit_btn.clicked.connect(self.quit_application)
-        exit_layout.addWidget(self.exit_btn)
-        main_layout.addWidget(exit_frame)
+        control_layout.addWidget(self.exit_btn)
+        
+        main_layout.addWidget(control_frame)
         
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -986,6 +1083,12 @@ class RemoteAgentWindow(QMainWindow):
         settings_action = QAction("⚙ Настройки", self)
         settings_action.triggered.connect(self.open_settings)
         tray_menu.addAction(settings_action)
+        
+        tray_menu.addSeparator()
+        
+        reconnect_action = QAction("🔄 Переподключиться", self)
+        reconnect_action.triggered.connect(self.reconnect)
+        tray_menu.addAction(reconnect_action)
         
         tray_menu.addSeparator()
         
@@ -1027,6 +1130,7 @@ class RemoteAgentWindow(QMainWindow):
             self.minimize_to_tray = True
             self.auto_auth = True
             self.auto_start = True
+            self.add_to_startup_on_first_run()
         
         if self.auto_start:
             self.add_to_startup()
@@ -1060,7 +1164,6 @@ class RemoteAgentWindow(QMainWindow):
             
             app_path = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(sys.argv[0])
             
-            # Используем только реестр - самый надежный метод без лишних файлов
             key = None
             try:
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
@@ -1143,6 +1246,7 @@ StartupNotify=false
                                           "remote_access_agent_start.bat")
             if os.path.exists(startup_script):
                 os.remove(startup_script)
+            self.log("✅ Удалено из автозагрузки Windows")
         except Exception as e:
             print(f"Ошибка удаления из автозагрузки Windows: {e}")
     
@@ -1154,6 +1258,7 @@ StartupNotify=false
             desktop_file = os.path.join(autostart_dir, "remote-access-agent.desktop")
             if os.path.exists(desktop_file):
                 os.remove(desktop_file)
+                self.log("✅ Удалено из автозагрузки Linux")
         except Exception as e:
             print(f"Ошибка удаления из автозагрузки Linux: {e}")
     
@@ -1175,6 +1280,40 @@ StartupNotify=false
         cursor = self.log_text.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         self.log_text.setTextCursor(cursor)
+    
+    def reconnect(self):
+        """Переподключение к серверу без закрытия сессии"""
+        if self.agent_thread:
+            if self.agent_thread.is_connected:
+                self.log("🔄 Переподключение к серверу...")
+                # Останавливаем текущее подключение без закрытия сессии
+                self.agent_thread.is_running = False
+                self.agent_thread.is_connected = False
+                if self.agent_thread.ws:
+                    asyncio.run_coroutine_threadsafe(
+                        self.agent_thread.ws.close(),
+                        self.agent_thread.loop
+                    )
+                self.agent_thread.wait(2000)
+            else:
+                self.log("🔄 Подключение к серверу...")
+        
+        # Создаем новый поток
+        interval = 1.0 / self.fps if self.fps > 0 else 0.05
+        
+        self.agent_thread = RemoteAgentThread(
+            relay_server=self.server,
+            computer_data=self.computer_data,
+            screenshot_interval=interval,
+            quality=self.quality
+        )
+        
+        self.agent_thread.log_message.connect(self.log)
+        self.agent_thread.connection_status_changed.connect(self.on_connection_status_changed)
+        self.agent_thread.client_connected.connect(self.on_client_connected)
+        self.agent_thread.client_disconnected.connect(self.on_client_disconnected)
+        
+        self.agent_thread.start()
     
     def connect_to_server(self):
         if not self.server.startswith('ws://'):
@@ -1203,11 +1342,17 @@ StartupNotify=false
         if is_connected:
             self.status_label.setText("● Подключен к серверу")
             self.status_label.setStyleSheet("font-size: 13px; color: #27ae60; font-weight: bold;")
-            self.log("Подключен к серверу")
+            self.log("✅ Подключен к серверу")
             self.status_bar.showMessage("Подключен к серверу")
             
             if self.tray_icon:
                 self.tray_icon.setToolTip("Remote Access Agent - Подключен")
+                self.tray_icon.showMessage(
+                    "Remote Access Agent",
+                    "Подключен к серверу",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    2000
+                )
         else:
             self.status_label.setText("● Не подключен")
             self.status_label.setStyleSheet("font-size: 13px; color: #e74c3c; font-weight: bold;")
@@ -1217,6 +1362,7 @@ StartupNotify=false
                 self.tray_icon.setToolTip("Remote Access Agent - Отключен")
     
     def on_client_connected(self, client_id):
+        self.log(f"👤 Клиент {client_id} подключился")
         if self.tray_icon:
             self.tray_icon.showMessage(
                 "Новое подключение",
@@ -1226,7 +1372,7 @@ StartupNotify=false
             )
     
     def on_client_disconnected(self, client_id):
-        pass
+        self.log(f"👋 Клиент {client_id} отключился")
     
     def quit_application(self):
         reply = QMessageBox.question(
@@ -1234,7 +1380,7 @@ StartupNotify=false
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            # Закрываем сессию перед выходом
+            # Закрываем сессию только при выходе из приложения
             session_id = self.computer_data.get('session_id')
             if session_id:
                 print(f"[MAIN] Завершение работы, закрываем сессию {session_id}...")
@@ -1245,7 +1391,7 @@ StartupNotify=false
                     print(f"[MAIN] ❌ Ошибка закрытия сессии: {e}")
             
             if self.agent_thread:
-                self.agent_thread.stop()
+                self.agent_thread.stop(close_session=False)
                 self.agent_thread.wait(3000)
             
             if self.computer_data.get('computer_id'):
@@ -1253,14 +1399,24 @@ StartupNotify=false
                     self.computer_data['computer_id'], False,
                     self.computer_data.get('session_id')
                 )
+            
+            if self.tray_icon:
+                self.tray_icon.hide()
+            
             QApplication.quit()
     
     def closeEvent(self, event):
-        if self.minimize_to_tray and self.tray_icon:
+        if self.minimize_to_tray and self.tray_icon and self.tray_icon.isVisible():
             event.ignore()
             self.hide()
+            self.tray_icon.showMessage(
+                "Remote Access Agent",
+                "Приложение свернуто в трей",
+                QSystemTrayIcon.MessageIcon.Information,
+                1000
+            )
         else:
-            # Закрываем сессию при закрытии окна
+            # Закрываем сессию только при реальном закрытии окна
             session_id = self.computer_data.get('session_id')
             if session_id:
                 print(f"[MAIN] Закрытие окна, закрываем сессию {session_id}...")
@@ -1270,7 +1426,7 @@ StartupNotify=false
                     print(f"[MAIN] Ошибка закрытия сессии: {e}")
             
             if self.agent_thread:
-                self.agent_thread.stop()
+                self.agent_thread.stop(close_session=False)
                 self.agent_thread.wait(3000)
             
             if self.computer_data.get('computer_id'):
@@ -1278,4 +1434,8 @@ StartupNotify=false
                     self.computer_data['computer_id'], False,
                     self.computer_data.get('session_id')
                 )
+            
+            if self.tray_icon:
+                self.tray_icon.hide()
+            
             event.accept()

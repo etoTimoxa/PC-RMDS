@@ -24,6 +24,7 @@ from routes import (
     auth_bp,
     sessions_bp  
 )
+from diagnostics.diag_routes import diagnostics_bp
 
 # Импортируем функцию из sessions.py
 from routes.sessions import auto_close_inactive_sessions
@@ -69,6 +70,9 @@ def create_app():
     app.register_blueprint(metrics_bp, url_prefix='/api/metrics')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(sessions_bp, url_prefix='/api/sessions')
+    
+    # Регистрация blueprints диагностики (без url_prefix — роуты сами содержат /api/...)
+    app.register_blueprint(diagnostics_bp)
 
     # Health check
     @app.route('/health')

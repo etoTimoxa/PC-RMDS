@@ -18,7 +18,8 @@ import boto3
 import wave
 import audioop
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any, Callable
+
 from core.api_client import APIClient as DatabaseManager
 
 # Импортируем Windows-специфичные модули только на Windows
@@ -48,6 +49,29 @@ from storage.cloud_uploader import CloudUploader
 from utils.constants import METRICS_INTERVAL, WINDOWS_EVENTS_INTERVAL, ACTIVITY_UPDATE_INTERVAL
 from agent.styles import APP_STYLE
 
+# ─── Diagnostics subsystem ──────────────────────────────────────────────
+from agent.diagnostics import (
+    AgentFSM,
+    AgentState,
+    DiagnosticEvent,
+    Severity,
+    DiagnosticEventStore,
+    RecoveryManager,
+    RecoveryResult,
+    RecoveryAction,
+    StructuredLogger,
+    HeartbeatSender,
+    ACKSender,
+    ScreenshotWatchdog,
+)
+
+HEARTBEAT_INTERVAL = 5
+WATCHDOG_CHECK_INTERVAL = 2.0
+SCREENSHOT_STALL_TIMEOUT = 5.0
+DIAGNOSTIC_SEND_INTERVAL = 30.0
+RECONNECT_BASE_DELAY = 5.0
+MAX_CONSECUTIVE_ERRORS = 10
+
 
 class RemoteAgentThread(QThread):
     
@@ -75,13 +99,13 @@ class RemoteAgentThread(QThread):
         self.streaming_clients = set()
         self.ws = None
         self.sending_screenshots = False
-        self.sending_audio = False  # Флаг для аудио
+        self.sending_audio = False
         self.adaptive_quality = quality
         self.network_speed_test_counter = 0
         self.fast_network = True
         
         # Поддержка множественных клиентов
-        self.clients = {}  # client_id -> {"permissions": list, "streaming": bool}
+        self.clients = {}
         self.server_connected = False
         self.silent_mode_enabled = False
         self.server_control_enabled = False
@@ -99,9 +123,264 @@ class RemoteAgentThread(QThread):
         
         try:
             self.screen_width, self.screen_height = pyautogui.size()
-        except:
+        except Exception:
             self.screen_width, self.screen_height = 1920, 1080
-    
+
+        # ─── Diagnostics subsystem initialization ───────────────────
+        self._init_diagnostics()
+
+    def _init_diagnostics(self) -> None:
+        """Initialize all diagnostics subsystem components."""
+        agent_id = self.hostname
+
+        # 1. FSM
+        self.fsm = AgentFSM(
+            initial_state=AgentState.DISCONNECTED,
+            on_transition=self._on_fsm_transition,
+        )
+
+        # 2. Diagnostic events store
+        self.event_store = DiagnosticEventStore(max_events=1000)
+
+        # 3. Structured logger per component
+        self.diag_logger = StructuredLogger("agent", agent_id=agent_id)
+
+        # 4. Heartbeat sender
+        self.heartbeat = HeartbeatSender(agent_id=agent_id, interval=HEARTBEAT_INTERVAL)
+
+        # 5. ACK sender
+        self.ack_sender = ACKSender()
+        self.ack_sender.set_agent_id(agent_id)
+
+        # 6. Screenshot watchdog
+        self.watchdog = ScreenshotWatchdog(
+            agent_id=agent_id,
+            stall_timeout=SCREENSHOT_STALL_TIMEOUT,
+            check_interval=WATCHDOG_CHECK_INTERVAL,
+        )
+        self.watchdog.set_on_stall(self._on_screenshot_stall)
+
+        # 7. Recovery manager
+        self.recovery_mgr = RecoveryManager(
+            global_cooldown=10.0,
+            max_attempts=5,
+        )
+        self._register_recovery_handlers()
+
+        # 8. Diagnostics tasks container
+        self.diagnostics_tasks: List[asyncio.Task] = []
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
+
+        # 9. Consecutive error counter for backoff
+        self._consecutive_errors: int = 0
+
+    def _on_fsm_transition(self, old: AgentState, new: AgentState) -> None:
+        """Callback for FSM state transitions."""
+        self.diag_logger.info(
+            "state_transition",
+            f"Agent state: {old.value} -> {new.value}",
+            {"from": old.value, "to": new.value},
+        )
+
+    def _register_recovery_handlers(self) -> None:
+        """Register all recovery action handlers with validators."""
+        self.recovery_mgr.register_handler(
+            RecoveryAction.RECONNECT_WEBSOCKET,
+            self._reconnect_websocket_handler,
+            self._validate_websocket,
+        )
+        self.recovery_mgr.register_handler(
+            RecoveryAction.RESTART_STREAM,
+            self._restart_stream_handler,
+            self._validate_stream,
+        )
+        self.recovery_mgr.register_handler(
+            RecoveryAction.RESTORE_SESSION,
+            self._restore_session_handler,
+            self._validate_session,
+        )
+        self.recovery_mgr.register_handler(
+            RecoveryAction.RESTART_TASKS,
+            self._restart_tasks_handler,
+            self._validate_tasks,
+        )
+
+    # ─── Recovery handlers ──────────────────────────────────────────
+
+    async def _reconnect_websocket_handler(self) -> bool:
+        """Reconnect WebSocket and restore session."""
+        self.diag_logger.info("reconnect_started", "Starting WebSocket reconnection")
+        close_code = 1000
+        if self.ws and hasattr(self.ws, 'open') and self.ws.open:
+            try:
+                await self.ws.close(code=close_code, reason="reconnecting")
+            except Exception:
+                pass
+        self.ws = None
+        self.is_connected = False
+        await asyncio.sleep(RECONNECT_BASE_DELAY)
+        return True
+
+    async def _validate_websocket(self) -> bool:
+        """Validate that WebSocket is properly connected."""
+        return self.ws is not None and hasattr(self.ws, 'open') and self.ws.open
+
+    async def _restart_stream_handler(self) -> bool:
+        """Restart screenshot stream."""
+        self.diag_logger.info("restart_stream", "Restarting screenshot stream")
+        self.sending_screenshots = False
+        await asyncio.sleep(1.0)
+        if len(self.streaming_clients) > 0:
+            self.sending_screenshots = True
+            self.watchdog.report_restart()
+            return True
+        return True  # No clients = no stream needed = success
+
+    async def _validate_stream(self) -> bool:
+        """Validate that stream is healthy."""
+        if len(self.streaming_clients) == 0:
+            return True  # No clients = nothing to validate
+        return self.watchdog.is_healthy
+
+    async def _restore_session_handler(self) -> bool:
+        """Re-register agent on server after reconnect."""
+        if not self.ws or not hasattr(self.ws, 'open') or not self.ws.open:
+            return False
+        try:
+            register_msg = {
+                "type": "register_agent",
+                "data": {
+                    "computer_id": self.computer_id,
+                    "session_id": self.session_id,
+                    "session_token": self.session_token,
+                    "agent_id": self.hostname,
+                    "hostname": self.hostname,
+                },
+            }
+            await self.ws.send(json.dumps(register_msg))
+            self.diag_logger.info("session_restored", "Agent re-registered on server")
+            return True
+        except Exception as exc:
+            self.diag_logger.error("session_restore_failed", f"Failed to restore session: {exc}")
+            return False
+
+    async def _validate_session(self) -> bool:
+        """Check if agent is considered registered by the server."""
+        return self.is_connected
+
+    async def _restart_tasks_handler(self) -> bool:
+        """Restart all background tasks."""
+        self.diag_logger.info("restart_tasks", "Restarting background tasks")
+        self._cancel_diagnostics_tasks()
+        await asyncio.sleep(0.5)
+        self._start_diagnostics_tasks()
+        return True
+
+    async def _validate_tasks(self) -> bool:
+        """Validate that all tasks are running."""
+        return self.heartbeat.is_running
+
+    # ─── Stall handler ───────────────────────────────────────────────
+
+    async def _on_screenshot_stall(self) -> None:
+        """Called by watchdog when screenshot stall is detected."""
+        self.event_store.add_event(
+            component="screenshot_watchdog",
+            event="screenshot_stall",
+            severity=Severity.WARNING,
+            details=self.watchdog.get_stats(),
+            agent_id=self.hostname,
+        )
+
+        # Try recovery: restart stream
+        if len(self.streaming_clients) > 0:
+            result = await self.recovery_mgr.execute_recovery(RecoveryAction.RESTART_STREAM)
+            if not result.fully_successful:
+                self.diag_logger.error(
+                    "stream_recovery_failed",
+                    f"Screenshot stream recovery failed: {result.details}",
+                )
+                # Escalate: try full reconnect
+                self.fsm.transition(AgentState.DEGRADED)
+            else:
+                self.diag_logger.info(
+                    "stream_recovered",
+                    "Screenshot stream recovered after stall",
+                )
+
+    # ─── Task management ─────────────────────────────────────────────
+
+    def _start_diagnostics_tasks(self) -> None:
+        """Start all diagnostics background tasks."""
+        if not self.loop:
+            return
+
+        # Heartbeat
+        self.heartbeat.set_sender(self._ws_safe_send)
+        hb_task = asyncio.run_coroutine_threadsafe(
+            self.heartbeat.start(), self.loop
+        )
+        self.diagnostics_tasks.append(asyncio.ensure_future(hb_task, loop=self.loop))
+
+        # Watchdog
+        wd_task = asyncio.run_coroutine_threadsafe(
+            self.watchdog.run(), self.loop
+        )
+        self.diagnostics_tasks.append(asyncio.ensure_future(wd_task, loop=self.loop))
+
+        # Send diagnostics events periodically
+        diag_send_task = asyncio.run_coroutine_threadsafe(
+            self._send_diagnostics_periodically(), self.loop
+        )
+        self.diagnostics_tasks.append(asyncio.ensure_future(diag_send_task, loop=self.loop))
+
+        self.diag_logger.info("diagnostics_started", "All diagnostics tasks started")
+
+    def _cancel_diagnostics_tasks(self) -> None:
+        """Cancel all diagnostics tasks."""
+        for task in self.diagnostics_tasks:
+            if task and not task.done():
+                task.cancel()
+        self.diagnostics_tasks.clear()
+
+    async def _stop_diagnostics_tasks(self) -> None:
+        """Gracefully stop all diagnostics subsystems."""
+        await self.heartbeat.stop()
+        await self.watchdog.stop()
+        self._cancel_diagnostics_tasks()
+
+    async def _ws_safe_send(self, payload: str) -> None:
+        """Thread-safe ws.send wrapper."""
+        if self.ws and hasattr(self.ws, 'open') and self.ws.open:
+            try:
+                await self.ws.send(payload)
+            except Exception as exc:
+                self.diag_logger.error("ws_send_failed", f"WS send failed: {exc}")
+
+    # ─── Diagnostics event sending ───────────────────────────────────
+
+    async def _send_diagnostics_periodically(self) -> None:
+        """Periodically send cached diagnostic events to server."""
+        last_sent = 0.0
+        while self.is_running:
+            try:
+                await asyncio.sleep(DIAGNOSTIC_SEND_INTERVAL)
+                if not self.is_running:
+                    break
+                events = self.event_store.get_pending(since=last_sent)
+                if events and self.ws and hasattr(self.ws, 'open') and self.ws.open:
+                    for ev in events:
+                        msg = ev.to_ws_message()
+                        await self._ws_safe_send(json.dumps(msg))
+                    last_sent = time.time()
+                # Trim stale events
+                self.event_store.get_pending(since=time.time() - 3600)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self.diag_logger.error("diag_send_error", f"Failed to send diagnostic events: {exc}")
+                await asyncio.sleep(10)
+
     def _setup_user_action_callback(self):
         """Настраивает callback для логирования действий пользователя."""
         def on_user_action(action_type: str, description: str, details: dict):
@@ -219,7 +498,7 @@ class RemoteAgentThread(QThread):
                     restart_shutdown_events = WindowsEventCollector.detect_restart_shutdown_events(events)
                     if restart_shutdown_events:
                         for action_info in restart_shutdown_events:
-                            action_type = action_info.get('action_type', 'shutdown')
+                            action_type = action_info.get('action_type', 'restart')
                             if WindowsEventCollector._user_action_callback:
                                 description = 'Перезагрузка компьютера' if action_type == 'restart' else 'Выключение компьютера'
                                 WindowsEventCollector._user_action_callback(action_type, description, action_info)
@@ -239,7 +518,13 @@ class RemoteAgentThread(QThread):
             await asyncio.sleep(2)
             self._handle_system_shutdown()
         except Exception as e:
-            print(f"Ошибка обработки выключения системы: {e}")
+            self.event_store.add_event(
+                component="system",
+                event="shutdown_handler_error",
+                severity=Severity.ERROR,
+                details={"error": str(e)},
+                agent_id=self.hostname,
+            )
     
     async def update_activity_periodically(self):
         """Обновляет активность сессии каждые 5 минут"""
@@ -272,7 +557,7 @@ class RemoteAgentThread(QThread):
                 self.log_message.emit("🕛 НАСТУПИЛА ПОЛНОЧЬ - ВЫПОЛНЯЮ ПЕРЕКЛЮЧЕНИЕ ДНЯ")
                 self.log_message.emit("=" * 50)
                 
-                # 1. Переключаем JSON логгер на новый день (создает новый файл)
+                # 1. Переключаем JSON логгер на новый день
                 self.json_logger.switch_to_new_day()
                 self.log_message.emit(f"📄 Создан новый файл: {self.json_logger.current_file.name if self.json_logger.current_file else 'None'}")
                 
@@ -316,7 +601,7 @@ class RemoteAgentThread(QThread):
                 break
             except Exception as e:
                 self.log_message.emit(f"❌ Ошибка в midnight handler: {e}")
-                await asyncio.sleep(60)  # При ошибке ждем минуту и продолжаем
+                await asyncio.sleep(60)
     
     async def check_and_upload_on_startup(self):
         """Проверяет и загружает файлы при запуске"""
@@ -335,43 +620,116 @@ class RemoteAgentThread(QThread):
                 uploaded = self.cloud_uploader.check_and_upload()
                 if uploaded > 0:
                     DatabaseManager.update_json_sent_count(self.session_id, uploaded)
-            except:
-                pass
-    
+            except Exception:
+                self.diag_logger.error("urgent_upload_error", "Failed to upload urgent files")
+                await asyncio.sleep(60)
+
+    # ─── Recovery pipeline (self-healing) ────────────────────────────
+
+    async def _recovery_pipeline(self) -> bool:
+        """Full recovery pipeline after disconnect.
+
+        Recovery flow:
+            RECOVERING -> reconnect websocket -> restore session
+            -> restart stream -> restart tasks -> STREAMING/REGISTERED
+        """
+        self.fsm.transition(AgentState.RECOVERING)
+        self.diag_logger.info("recovery_pipeline_started", "Starting full recovery pipeline")
+
+        pipeline_actions = [
+            RecoveryAction.RECONNECT_WEBSOCKET,
+            RecoveryAction.RESTORE_SESSION,
+            RecoveryAction.RESTART_TASKS,
+        ]
+
+        # If there were clients streaming, add stream restart
+        if len(self.streaming_clients) > 0:
+            pipeline_actions.insert(2, RecoveryAction.RESTART_STREAM)
+
+        results = await self.recovery_mgr.execute_recovery_pipeline(pipeline_actions)
+
+        # Check final result
+        all_ok = all(
+            r.success for r in results.values()
+        )
+
+        if all_ok:
+            self.fsm.transition(AgentState.REGISTERED)
+            self._consecutive_errors = 0
+            self.diag_logger.info("recovery_complete", "Full recovery pipeline completed successfully")
+            return True
+        else:
+            failed_actions = [
+                k for k, v in results.items() if not v.success
+            ]
+            self.event_store.add_event(
+                component="recovery",
+                event="recovery_failed",
+                severity=Severity.ERROR,
+                details={"failed_actions": failed_actions, "results": {k: v.to_dict() for k, v in results.items()}},
+                agent_id=self.hostname,
+            )
+            self.fsm.transition(AgentState.ERROR)
+            self._consecutive_errors += 1
+            self.diag_logger.error(
+                "recovery_failed",
+                f"Recovery pipeline failed on: {', '.join(failed_actions)}",
+            )
+            return False
+
+    # ─── Agent main loop with self-healing ───────────────────────────
+
     async def agent_main(self):
-        reconnect_delay = 5
-        
-        # Инициализация аудио устройства тихо без логов
+        """Main agent loop with WebSocket self-healing recovery."""
+        reconnect_delay = RECONNECT_BASE_DELAY
+
+        # Инициализация аудио устройства
         try:
             import sounddevice as sd
-            default_output_idx = sd.default.device[1]
-        except:
+            sd.default.device[1]
+        except ImportError:
             pass
-        
+
         await self.check_and_upload_on_startup()
         await self.collect_initial_metrics_and_events()
-        
+
         # Проверяем, не нужно ли создать файл для сегодняшнего дня
         current_date = datetime.now().date()
         if self.json_logger.current_date != current_date:
             self.log_message.emit(f"📅 Обнаружено несоответствие дат: логгер={self.json_logger.current_date}, текущая={current_date}")
             self.json_logger.switch_to_new_day()
-        
+
         tasks = [
             asyncio.create_task(self.collect_metrics_periodically()),
             asyncio.create_task(self.collect_new_windows_events_periodically()),
             asyncio.create_task(self.update_activity_periodically()),
             asyncio.create_task(self.check_and_upload_at_midnight()),
-            asyncio.create_task(self.check_urgent_upload())
+            asyncio.create_task(self.check_urgent_upload()),
         ]
-        
+
+        self.loop = asyncio.get_running_loop()
+
+        # Start diagnostics tasks
+        self._start_diagnostics_tasks()
+
         while self.is_running:
             try:
-                async with websockets.connect(self.relay_server) as ws:
+                # ── CONNECTING state ──
+                self.fsm.transition(AgentState.CONNECTING)
+                self.log_message.emit(f"🔄 Подключение к серверу: {self.relay_server}")
+                self.diag_logger.info("connecting", f"Connecting to {self.relay_server}")
+
+                async with websockets.connect(
+                    self.relay_server,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=5,
+                ) as ws:
                     self.ws = ws
                     self.is_connected = True
-                    self.loop = asyncio.get_running_loop()
-                    
+                    self.fsm.transition(AgentState.REGISTERED)
+
+                    # Register on server
                     register_msg = {
                         "type": "register_agent",
                         "data": {
@@ -379,27 +737,101 @@ class RemoteAgentThread(QThread):
                             "session_id": self.session_id,
                             "session_token": self.session_token,
                             "agent_id": self.hostname,
-                            "hostname": self.hostname
-                        }
+                            "hostname": self.hostname,
+                        },
                     }
                     await ws.send(json.dumps(register_msg))
                     self.log_message.emit(f"✅ Зарегистрирован на сервере")
-                    
+
+                    # Set sender for ACK and heartbeat
+                    self.ack_sender.set_sender(self._ws_safe_send)
+                    self.heartbeat.set_sender(self._ws_safe_send)
+
                     self.connection_status_changed.emit(True, self.connected_clients)
-                    
+                    self._consecutive_errors = 0
+
+                    # Start heartbeat task
+                    hb_task = asyncio.create_task(self.heartbeat.start())
+
+                    # Receive and process commands (blocking)
                     await self.receive_commands(ws)
-                    
+
+                    # If we get here, connection was closed normally
+                    hb_task.cancel()
+                    try:
+                        await hb_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+            except websockets.ConnectionClosedError as e:
+                self.event_store.add_event(
+                    component="ws",
+                    event="connection_closed",
+                    severity=Severity.WARNING,
+                    details={"code": getattr(e, 'code', 'unknown'), "reason": getattr(e, 'reason', 'unknown')},
+                    agent_id=self.hostname,
+                )
+                self.log_message.emit(f"⚠️ Соединение закрыто: {e}")
+            except websockets.ConnectionClosedOK:
+                self.log_message.emit("ℹ️ Соединение закрыто штатно")
+            except OSError as e:
+                self.event_store.add_event(
+                    component="ws",
+                    event="connection_os_error",
+                    severity=Severity.ERROR,
+                    details={"error": str(e)},
+                    agent_id=self.hostname,
+                )
+                self.log_message.emit(f"❌ Ошибка сети: {e}")
+            except asyncio.CancelledError:
+                self.log_message.emit("ℹ️ Задача отменена")
+                break
             except Exception as e:
-                self.log_message.emit(f"Ошибка подключения: {e}")
-            
+                self.event_store.add_event(
+                    component="ws",
+                    event="connection_error",
+                    severity=Severity.ERROR,
+                    details={"error": str(e)},
+                    agent_id=self.hostname,
+                )
+                self.log_message.emit(f"❌ Ошибка подключения: {e}")
+                import traceback
+                self.log_message.emit(traceback.format_exc())
+
+            # ── Disconnected state ──
             self.is_connected = False
+            self.ws = None
             self.connection_status_changed.emit(False, 0)
-            
-            if self.is_running:
-                await asyncio.sleep(reconnect_delay)
-        
+
+            if not self.is_running:
+                break
+
+            # ── Run recovery pipeline ──
+            self.fsm.force_transition(AgentState.DISCONNECTED)
+            recovered = await self._recovery_pipeline()
+
+            if not recovered:
+                # Apply exponential backoff
+                backoff = min(
+                    reconnect_delay * (2 ** min(self._consecutive_errors, 5)),
+                    120.0,
+                )
+                self.log_message.emit(
+                    f"⏳ Ожидание {backoff:.0f}с перед повторным подключением "
+                    f"(попытка {self._consecutive_errors})"
+                )
+                await asyncio.sleep(backoff)
+            else:
+                # Short delay before re-entering the loop to reconnect
+                await asyncio.sleep(1)
+
+        # ── Cleanup ──
+        self.diag_logger.info("agent_stopping", "Agent main loop exiting, cleaning up tasks")
+        await self._stop_diagnostics_tasks()
         for task in tasks:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.diag_logger.info("agent_stopped", "Agent main loop exited")
     
     def _optimize_screenshot(self, img):
         """Оптимизирует скриншот: уменьшает разрешение и подбирает качество"""
@@ -584,8 +1016,14 @@ class RemoteAgentThread(QThread):
                         })),
                         loop
                     )
-                except:
-                    pass
+                except Exception as exc:
+                    self.event_store.add_event(
+                        component="audio",
+                        event="audio_callback_error",
+                        severity=Severity.ERROR,
+                        details={"error": str(exc)},
+                        agent_id=self.hostname,
+                    )
 
             # 🔥 ВАЖНО: loopback через extra_settings
             wasapi_settings = sd.WasapiSettings()
@@ -614,6 +1052,9 @@ class RemoteAgentThread(QThread):
         error_count = 0
         max_errors = 5
         
+        # Notify watchdog that streaming has started
+        self.watchdog.start_streaming()
+        
         while self.sending_screenshots and self.is_connected and self.is_running and len(self.streaming_clients) > 0:
             try:
                 start_time = time.time()
@@ -624,10 +1065,19 @@ class RemoteAgentThread(QThread):
                     error_count += 1
                     if error_count >= max_errors:
                         self.log_message.emit(f"Слишком много ошибок скриншота ({max_errors}), остановка")
+                        self.event_store.add_event(
+                            component="screenshot",
+                            event="screenshot_loop_stopped",
+                            severity=Severity.ERROR,
+                            details={"error_count": error_count, "reason": "max_errors_exceeded"},
+                            agent_id=self.hostname,
+                        )
                         break
                     await asyncio.sleep(1)
                     continue
                 
+                # Report frame to watchdog
+                self.watchdog.report_frame()
                 error_count = 0
                 
                 img = self._optimize_screenshot(img)
@@ -659,14 +1109,32 @@ class RemoteAgentThread(QThread):
                 if sleep_time > 0:
                     await asyncio.sleep(sleep_time)
                     
+            except websockets.ConnectionClosedError:
+                self.log_message.emit("⚠️ Соединение закрыто во время трансляции")
+                break
+            except websockets.ConnectionClosedOK:
+                break
             except Exception as e:
                 self.log_message.emit(f"Ошибка в screenshot_loop: {e}")
+                self.event_store.add_event(
+                    component="screenshot",
+                    event="screenshot_loop_error",
+                    severity=Severity.ERROR,
+                    details={"error": str(e)},
+                    agent_id=self.hostname,
+                )
                 error_count += 1
                 if error_count >= max_errors:
                     break
                 await asyncio.sleep(1)
         
         self.sending_screenshots = False
+        self.watchdog.stop_streaming()
+        self.diag_logger.info(
+            "screenshot_loop_ended",
+            "Screenshot loop ended",
+            {"frames": self.watchdog.frames_received, "stalls": self.watchdog.stall_count},
+        )
     
     async def receive_commands(self, ws):
         """Получение и обработка команд от сервера"""
@@ -678,6 +1146,11 @@ class RemoteAgentThread(QThread):
                 data = json.loads(msg)
                 cmd_type = data.get("type")
                 client_id = data.get("client_id") or data.get("data", {}).get("client_id", "unknown")
+                
+                # ── ACK protocol: if command has command_id, send ACK ──
+                command_id = data.get("command_id")
+                if command_id:
+                    asyncio.create_task(self.ack_sender.send_ack(command_id))
                 
                 if cmd_type == "register_client":
                     if client_id not in self.connected_clients_list:
@@ -728,7 +1201,7 @@ class RemoteAgentThread(QThread):
                         except Exception as e:
                             self.log_message.emit(f"⚠️ Ошибка сброса регистрации на сервере: {e}")
                 
-                elif cmd_type == "start_audio":  # Отдельная команда для аудио
+                elif cmd_type == "start_audio":
                     self.log_message.emit(f"🎧 Запрос на запуск аудио от клиента {client_id}")
                     if (audio_task is None or audio_task.done()):
                         audio_task = asyncio.create_task(self.audio_capture_loop(ws))
@@ -736,7 +1209,7 @@ class RemoteAgentThread(QThread):
                     else:
                         self.log_message.emit(f"ℹ️ Аудио уже запущено")
                 
-                elif cmd_type == "stop_audio":  # Отдельная команда для остановки аудио
+                elif cmd_type == "stop_audio":
                     self.log_message.emit(f"🔇 Запрос на остановку аудио от клиента {client_id}")
                     self.sending_audio = False
                     if audio_task and not audio_task.done():
@@ -764,7 +1237,6 @@ class RemoteAgentThread(QThread):
                         if audio_task and not audio_task.done():
                             audio_task.cancel()
                         
-                        # Сбрасываем регистрацию компьютера на сервере
                         try:
                             APIClient.update_computer_status(self.computer_id, False, self.session_id)
                             self.log_message.emit(f"✅ Регистрация на сервере сброшена")
@@ -805,10 +1277,29 @@ class RemoteAgentThread(QThread):
                 else:
                     self.log_message.emit(f"Неизвестная команда: {cmd_type}")
                 
+        except json.JSONDecodeError as e:
+            self.log_message.emit(f"⚠️ Ошибка декодирования JSON: {e}")
+            self.event_store.add_event(
+                component="commands",
+                event="json_decode_error",
+                severity=Severity.WARNING,
+                details={"error": str(e)},
+                agent_id=self.hostname,
+            )
+        except websockets.ConnectionClosedError as e:
+            self.log_message.emit(f"⚠️ Соединение закрыто: {e}")
+            raise  # Let agent_main handle reconnection
         except Exception as e:
             self.log_message.emit(f"Ошибка в receive_commands: {e}")
             import traceback
             self.log_message.emit(traceback.format_exc())
+            self.event_store.add_event(
+                component="commands",
+                event="receive_commands_error",
+                severity=Severity.ERROR,
+                details={"error": str(e)},
+                agent_id=self.hostname,
+            )
         finally:
             if screenshot_task and not screenshot_task.done():
                 screenshot_task.cancel()
@@ -823,8 +1314,14 @@ class RemoteAgentThread(QThread):
             y = command_data.get("y")
             if x is not None and y is not None:
                 self.mouse.position = (x, y)
-        except:
-            pass
+        except Exception as e:
+            self.event_store.add_event(
+                component="input",
+                event="mouse_move_error",
+                severity=Severity.WARNING,
+                details={"error": str(e)},
+                agent_id=self.hostname,
+            )
     
     async def handle_mouse_click(self, command_data):
         try:
@@ -838,15 +1335,27 @@ class RemoteAgentThread(QThread):
             
             button = Button.left if button_name == "left" else Button.right
             self.mouse.click(button)
-        except:
-            pass
+        except Exception as e:
+            self.event_store.add_event(
+                component="input",
+                event="mouse_click_error",
+                severity=Severity.WARNING,
+                details={"error": str(e)},
+                agent_id=self.hostname,
+            )
     
     async def handle_mouse_wheel(self, command_data):
         try:
             delta = command_data.get("delta", 0)
             self.mouse.scroll(0, delta)
-        except:
-            pass
+        except Exception as e:
+            self.event_store.add_event(
+                component="input",
+                event="mouse_wheel_error",
+                severity=Severity.WARNING,
+                details={"error": str(e)},
+                agent_id=self.hostname,
+            )
     
     async def handle_keyboard_input(self, command_data):
         try:
@@ -861,13 +1370,19 @@ class RemoteAgentThread(QThread):
                 elif text == '\t':
                     self.keyboard.press(Key.tab)
                     self.keyboard.release(Key.tab)
-                elif text == '\x1b':  # ESC
+                elif text == '\x1b':
                     self.keyboard.press(Key.esc)
                     self.keyboard.release(Key.esc)
                 else:
                     self.keyboard.type(text)
-        except:
-            pass
+        except Exception as e:
+            self.event_store.add_event(
+                component="input",
+                event="keyboard_input_error",
+                severity=Severity.WARNING,
+                details={"error": str(e)},
+                agent_id=self.hostname,
+            )
     
     def close_session(self):
         """Закрывает текущую сессию (статус = 2)"""
@@ -895,6 +1410,16 @@ class RemoteAgentThread(QThread):
         self.sending_audio = False
         self.streaming_clients.clear()
         self.connected_clients_list.clear()
+        
+        # Stop diagnostics subsystems
+        if hasattr(self, 'loop') and self.loop and self.loop.is_running():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self._stop_diagnostics_tasks(),
+                    self.loop,
+                )
+            except Exception:
+                self.diag_logger.error("stop_error", "Failed to stop diagnostics tasks during shutdown")
         
         # Закрываем сессию только если явно указано
         if close_session:
@@ -1188,7 +1713,7 @@ class RemoteAgentWindow(QMainWindow):
                 if os.path.exists(startup_script):
                     os.remove(startup_script)
                     self.log("🗑️ Удален старый файл автозагрузки")
-            except:
+            except Exception:
                 pass
                 
         except Exception as e:
@@ -1237,7 +1762,7 @@ StartupNotify=false
                                 0, winreg.KEY_SET_VALUE)
             try:
                 winreg.DeleteValue(key, "RemoteAccessAgent")
-            except:
+            except Exception:
                 pass
             winreg.CloseKey(key)
             
@@ -1286,7 +1811,6 @@ StartupNotify=false
         if self.agent_thread:
             if self.agent_thread.is_connected:
                 self.log("🔄 Переподключение к серверу...")
-                # Останавливаем текущее подключение без закрытия сессии
                 self.agent_thread.is_running = False
                 self.agent_thread.is_connected = False
                 if self.agent_thread.ws:
@@ -1298,7 +1822,6 @@ StartupNotify=false
             else:
                 self.log("🔄 Подключение к серверу...")
         
-        # Создаем новый поток
         interval = 1.0 / self.fps if self.fps > 0 else 0.05
         
         self.agent_thread = RemoteAgentThread(
@@ -1380,7 +1903,6 @@ StartupNotify=false
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            # Закрываем сессию только при выходе из приложения
             session_id = self.computer_data.get('session_id')
             if session_id:
                 print(f"[MAIN] Завершение работы, закрываем сессию {session_id}...")
@@ -1416,7 +1938,6 @@ StartupNotify=false
                 1000
             )
         else:
-            # Закрываем сессию только при реальном закрытии окна
             session_id = self.computer_data.get('session_id')
             if session_id:
                 print(f"[MAIN] Закрытие окна, закрываем сессию {session_id}...")

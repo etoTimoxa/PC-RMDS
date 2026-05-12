@@ -1,0 +1,2 @@
+{"timestamp": "2026-05-12T07:30:37.087523", "component": "test", "event": "test_event", "severity": "info", "agent_id": "test_agent", "message": "Test diagnostic event"}
+{"timestamp": "2026-05-12T07:36:53.131631", "component": "test", "event": "test", "severity": "info", "agent_id": "a1", "message": "test"}

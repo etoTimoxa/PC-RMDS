@@ -13,6 +13,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from api_server import create_app
 from config import API_CONFIG
 
+# Импортируем подсистему диагностики
+from diagnostics import DiagnosticsManager
+from diagnostics.state_machine import AgentState
+from diagnostics.diagnostics_logger import Severity
+
+# Глобальный менеджер диагностики
+diag_manager: Optional[DiagnosticsManager] = None
+
 # -------------------------------
 # Хранилища данных
 # -------------------------------
@@ -230,11 +238,22 @@ async def handler(websocket):
                 msg_type = data.get("type")
                 log(f"Получено сообщение: {msg_type} от {client_info}")
                 
+                # DIAGNOSTICS: track any message for liveness
+                computer_id_msg = data.get("computer_id") or data.get("agent_id")
+                if diag_manager and computer_id_msg is not None:
+                    diag_manager.on_any_message(str(computer_id_msg), msg_type)
+
                 # Регистрация хоста (агента)
                 if msg_type == "register_host":
                     host_id = data["data"]["host_id"]
-                    hosts[str(host_id)] = websocket
+                    host_id_str = str(host_id)
+                    hosts[host_id_str] = websocket
                     log(f"✅ Хост зарегистрирован (старый формат): host_id={host_id}")
+                    # DIAGNOSTICS: register agent
+                    if diag_manager:
+                        diag_manager.register_agent(host_id_str)
+                        diag_manager.on_agent_connected(host_id_str)
+                        diag_manager.on_agent_registered(host_id_str)
                 
                 # Регистрация агента (новый формат)
                 elif msg_type == "register_agent":
@@ -258,6 +277,12 @@ async def handler(websocket):
                         # Инициализируем сессию
                         init_session(computer_id_str, websocket.computer_info)
                         log(f"✅ Агент зарегистрирован: computer_id={computer_id_str}")
+                        
+                        # DIAGNOSTICS: register agent with session_id
+                        if diag_manager:
+                            diag_manager.register_agent(computer_id_str)
+                            diag_manager.on_agent_connected(computer_id_str)
+                            diag_manager.on_agent_registered(computer_id_str, str(session_id) if session_id else None)
                     else:
                         log(f"❌ Ошибка: отсутствует computer_id в данных: {agent_data}")
                 
@@ -320,6 +345,13 @@ async def handler(websocket):
                     
                     if computer_id is not None:
                         computer_id_str = str(computer_id)
+                        
+                        # DIAGNOSTICS: track screenshot/audio pipelines
+                        if diag_manager:
+                            if msg_type == "screenshot":
+                                diag_manager.on_screenshot(computer_id_str)
+                            elif msg_type == "audio_chunk":
+                                diag_manager.on_audio_chunk(computer_id_str)
                         
                         # ✅ ПЕРЕХВАТ ДАННЫХ ОТ АГЕНТА
                         if msg_type == "audio_chunk":
@@ -418,6 +450,45 @@ def run_api_server():
 
 
 async def main():
+    global diag_manager
+    
+    # Инициализируем подсистему диагностики
+    diag_manager = DiagnosticsManager(
+        log_dir='logs',
+        check_db_callback=lambda: True,  # Will be connected to MySQL check
+        check_ws_callback=lambda: True,  # Will be connected to WS server check
+    )
+    
+    # Register send_command callback for ACK protocol
+    async def send_ws_command(agent_id: str, payload: Dict):
+        """Send command via WebSocket for ACK tracking."""
+        ws = hosts.get(agent_id)
+        if ws:
+            try:
+                await ws.send(json.dumps(payload))
+            except Exception as e:
+                log(f"[DIAG] Failed to send command to {agent_id}: {e}")
+    
+    def sync_send_command(agent_id: str, payload: Dict):
+        """Synchronous wrapper for send_command (called from command checker)."""
+        if agent_id in hosts:
+            try:
+                # Use asyncio.run_coroutine_threadsafe to send from any thread
+                coro = hosts[agent_id].send(json.dumps(payload))
+                asyncio.run_coroutine_threadsafe(coro, asyncio.get_event_loop())
+            except Exception as e:
+                log(f"[DIAG] send_command error: {e}")
+    
+    diag_manager.set_send_command_callback(sync_send_command)
+    
+    # Register external handlers that server.py can implement
+    # These are optional — diagnostics manager will handle recovery internally
+    # but server.py can override to add custom logic (e.g., sending reconnect commands)
+    
+    # Start all diagnostic watchers
+    await diag_manager.start()
+    log("[DIAGNOSTICS] Subsystem started")
+    
     # Запускаем API сервер в отдельном потоке демоне
     api_thread = threading.Thread(target=run_api_server, daemon=True)
     api_thread.start()
@@ -428,6 +499,10 @@ async def main():
     
     async with websockets.serve(handler, "0.0.0.0", PORT):
         await asyncio.Future()
+    
+    # Graceful shutdown
+    await diag_manager.stop()
+    log("[DIAGNOSTICS] Subsystem stopped")
 
 if __name__ == "__main__":
     try:

@@ -12,6 +12,7 @@ from .api_checker import APIHealthChecker
 from .stream_checker import StreamChecker
 from .command_checker import CommandDeliveryChecker, PendingCommand, CommandState
 from .recovery_manager import RecoveryManager, RecoveryAction, RecoveryStrategy, RecoveryResult
+from .diagnostics_manager import DiagnosticsManager
 from .diag_routes import DiagnosticsContext, diagnostics_bp, init_routes
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     'RecoveryAction',
     'RecoveryStrategy',
     'RecoveryResult',
+    'DiagnosticsManager',
     'DiagnosticsContext',
     'diagnostics_bp',
     'init_routes',

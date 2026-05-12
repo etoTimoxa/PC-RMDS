@@ -317,22 +317,16 @@ class RemoteAgentThread(QThread):
 
         # Heartbeat
         self.heartbeat.set_sender(self._ws_safe_send)
-        hb_task = asyncio.run_coroutine_threadsafe(
-            self.heartbeat.start(), self.loop
-        )
-        self.diagnostics_tasks.append(asyncio.ensure_future(hb_task, loop=self.loop))
+        hb_task = asyncio.create_task(self.heartbeat.start())
+        self.diagnostics_tasks.append(hb_task)
 
         # Watchdog
-        wd_task = asyncio.run_coroutine_threadsafe(
-            self.watchdog.run(), self.loop
-        )
-        self.diagnostics_tasks.append(asyncio.ensure_future(wd_task, loop=self.loop))
+        wd_task = asyncio.create_task(self.watchdog.run())
+        self.diagnostics_tasks.append(wd_task)
 
         # Send diagnostics events periodically
-        diag_send_task = asyncio.run_coroutine_threadsafe(
-            self._send_diagnostics_periodically(), self.loop
-        )
-        self.diagnostics_tasks.append(asyncio.ensure_future(diag_send_task, loop=self.loop))
+        diag_send_task = asyncio.create_task(self._send_diagnostics_periodically())
+        self.diagnostics_tasks.append(diag_send_task)
 
         self.diag_logger.info("diagnostics_started", "All diagnostics tasks started")
 
@@ -743,25 +737,15 @@ class RemoteAgentThread(QThread):
                     await ws.send(json.dumps(register_msg))
                     self.log_message.emit(f"✅ Зарегистрирован на сервере")
 
-                    # Set sender for ACK and heartbeat
+                    # Update senders for ACK and heartbeat (heartbeat already running from _start_diagnostics_tasks)
                     self.ack_sender.set_sender(self._ws_safe_send)
                     self.heartbeat.set_sender(self._ws_safe_send)
 
                     self.connection_status_changed.emit(True, self.connected_clients)
                     self._consecutive_errors = 0
 
-                    # Start heartbeat task
-                    hb_task = asyncio.create_task(self.heartbeat.start())
-
                     # Receive and process commands (blocking)
                     await self.receive_commands(ws)
-
-                    # If we get here, connection was closed normally
-                    hb_task.cancel()
-                    try:
-                        await hb_task
-                    except (asyncio.CancelledError, Exception):
-                        pass
 
             except websockets.ConnectionClosedError as e:
                 self.event_store.add_event(

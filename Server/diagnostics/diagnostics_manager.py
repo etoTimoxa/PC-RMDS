@@ -166,6 +166,8 @@ class DiagnosticsManager:
             except Exception as e:
                 log.error(f'State transition to CONNECTING failed for {agent_id}: {e}')
             self.heartbeat.receive_heartbeat(agent_id)
+            # Set grace period on connect — heartbeat timeout should not fire immediately
+            self.heartbeat.set_grace_period(agent_id)
 
     def on_agent_disconnected(self, agent_id: str):
         machine = self.state_machines.get(agent_id)
@@ -175,6 +177,7 @@ class DiagnosticsManager:
                 machine.increment_error_count()
             except Exception as e:
                 log.error(f'State transition to DISCONNECTED failed for {agent_id}: {e}')
+        # Grace period not needed for disconnected — agent is offline
 
     def on_agent_registered(self, agent_id: str, session_id: Optional[str] = None):
         machine = self.state_machines.get(agent_id)
@@ -183,6 +186,9 @@ class DiagnosticsManager:
                 machine.transition_to(AgentState.REGISTERED, reason='agent_registered')
             except Exception as e:
                 log.error(f'State transition to REGISTERED failed for {agent_id}: {e}')
+            # Set grace period on registration — prevents false heartbeat timeout
+            # during the window between registration and first heartbeat
+            self.heartbeat.set_grace_period(agent_id)
 
     def on_any_message(self, agent_id: str, msg_type: str):
         self.heartbeat.receive_heartbeat(agent_id)

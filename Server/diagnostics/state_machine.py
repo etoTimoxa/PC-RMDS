@@ -30,6 +30,7 @@ _TRANSITIONS: Dict[tuple[AgentState, AgentState], bool] = {
     (AgentState.DEGRADED, AgentState.DISCONNECTED): True,
     (AgentState.RECOVERING, AgentState.DISCONNECTED): True,
     (AgentState.ERROR, AgentState.DISCONNECTED): True,
+    (AgentState.REGISTERED, AgentState.RECOVERING): True,
     (AgentState.REGISTERED, AgentState.DEGRADED): True,
     (AgentState.STREAMING, AgentState.DEGRADED): True,
     (AgentState.DEGRADED, AgentState.RECOVERING): True,

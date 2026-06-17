@@ -14,10 +14,9 @@ CRITICAL_EVENT_TYPES = {
     'shutdown': 'Выключение системы',
     'restart': 'Перезагрузка системы',
     'windows_restart': 'Перезагрузка Windows',
-    'windows_event': 'Критическое событие Windows',
-    'sleep': 'Спящий режим',
-    'system_boot': 'Загрузка системы',
 }
+
+MOST_CRITICAL_EVENT_TYPES = {'shutdown', 'restart', 'windows_restart'}
 
 
 @notifications_bp.route('/recent', methods=['GET'])
@@ -25,19 +24,21 @@ def get_recent_notifications():
     """
     GET /api/notifications/recent
     Получить последние уведомления о критических событиях и аномалиях
-    по всем компьютерам.
+    по всем компьютерам из облачного хранилища.
 
     Query params:
-        - hours: int (по умолчанию 2) - за сколько часов проверять
+        - hours: int (по умолчанию 24) - за сколько часов проверять
         - cpu_threshold: float (по умолчанию 90.0)
         - ram_threshold: float (по умолчанию 90.0)
         - limit: int (по умолчанию 50)
+        - critical_only: bool (по умолчанию true) - только самые критические
     """
     try:
-        hours = request.args.get('hours', 2, type=int)
+        hours = request.args.get('hours', 24, type=int)
         cpu_threshold = request.args.get('cpu_threshold', 90.0, type=float)
         ram_threshold = request.args.get('ram_threshold', 90.0, type=float)
         limit = request.args.get('limit', 50, type=int)
+        critical_only = request.args.get('critical_only', 'true').lower() in ('true', '1', 'yes')
         
         now = datetime.now()
         from_time = now - timedelta(hours=hours)
@@ -65,7 +66,7 @@ def get_recent_notifications():
             if not hostname:
                 continue
             
-            # 1. Получаем критические события за период
+            # 1. Получаем критические события за период (только самые критичные: shutdown, restart, windows_restart)
             try:
                 events_data = cloud.get_all_events(hostname, from_str, to_str)
                 if events_data and events_data.get('success', True):
@@ -75,7 +76,7 @@ def get_recent_notifications():
                         data = event.get('data', {})
                         timestamp = event.get('timestamp', '')
                         
-                        if event_type in CRITICAL_EVENT_TYPES:
+                        if event_type in MOST_CRITICAL_EVENT_TYPES:
                             # Фильтруем по времени (последние N часов)
                             try:
                                 ev_time = datetime.fromisoformat(timestamp)
@@ -94,12 +95,12 @@ def get_recent_notifications():
                                 'event_label': CRITICAL_EVENT_TYPES.get(event_type, event_type),
                                 'timestamp': timestamp,
                                 'description': _get_event_description(event),
-                                'severity': 'high' if event_type in ('shutdown', 'restart', 'windows_restart') else 'medium'
+                                'severity': 'critical'
                             })
             except Exception as e:
                 print(f"[NOTIFICATIONS] Ошибка получения событий для {hostname}: {e}")
             
-            # 2. Получаем аномалии за период
+            # 2. Получаем аномалии за период (только самые критические: CPU >= 95% или RAM >= 95%)
             try:
                 anomalies_data = cloud.get_anomalies(hostname, from_str, to_str, cpu_threshold, ram_threshold)
                 if anomalies_data and anomalies_data.get('success', True):
@@ -116,6 +117,10 @@ def get_recent_notifications():
                         cpu_val = anomaly.get('cpu_usage', 0)
                         ram_val = anomaly.get('ram_usage', 0)
                         
+                        # Если critical_only — показываем только экстремальные скачки (>= 95%)
+                        if critical_only and not (cpu_val >= 95 or ram_val >= 95):
+                            continue
+                        
                         notifications.append({
                             'computer_id': computer_id,
                             'hostname': hostname,
@@ -128,7 +133,7 @@ def get_recent_notifications():
                             'cpu_usage': cpu_val,
                             'ram_usage': ram_val,
                             'description': f"CPU: {cpu_val}% | RAM: {ram_val}%",
-                            'severity': 'critical' if (cpu_val >= 95 or ram_val >= 95) else 'high'
+                            'severity': 'critical'
                         })
             except Exception as e:
                 print(f"[NOTIFICATIONS] Ошибка получения аномалий для {hostname}: {e}")

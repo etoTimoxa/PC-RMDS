@@ -903,9 +903,10 @@ class APIClient:
     # ==============================================
 
     @classmethod
-    def get_recent_notifications(cls, hours: int = 2, cpu_threshold: float = 90.0,
-                                  ram_threshold: float = 90.0, limit: int = 50) -> Optional[Dict[str, Any]]:
-        """Получить уведомления о критических событиях и аномалиях"""
+    def get_recent_notifications(cls, hours: int = 24, cpu_threshold: float = 90.0,
+                                  ram_threshold: float = 90.0, limit: int = 50,
+                                  critical_only: bool = True) -> Optional[Dict[str, Any]]:
+        """Получить уведомления о критических событиях и аномалиях из облачного хранилища"""
         try:
             response = requests.get(
                 f"{API_BASE_URL}/api/notifications/recent",
@@ -913,7 +914,8 @@ class APIClient:
                     'hours': hours,
                     'cpu_threshold': cpu_threshold,
                     'ram_threshold': ram_threshold,
-                    'limit': limit
+                    'limit': limit,
+                    'critical_only': 'true' if critical_only else 'false'
                 },
                 headers=cls._headers(),
                 timeout=30

@@ -7,8 +7,8 @@ from pathlib import Path
 from qtpy.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QFrame, QTabWidget,
                              QSystemTrayIcon, QMenu, QStatusBar, QMessageBox, QApplication)
-from qtpy.QtCore import Qt, QTimer, QSettings, QThread, Signal
-from qtpy.QtGui import QIcon, QAction, QPixmap, QColor
+from qtpy.QtCore import Qt, QTimer, QSettings, QThread, Signal, QPoint
+from qtpy.QtGui import QIcon, QAction, QPixmap, QColor, QMouseEvent
 
 from core.api_client import APIClient as DatabaseManager
 from utils.platform_utils import get_config_dir
@@ -16,7 +16,7 @@ from ..styles import get_main_window_stylesheet
 from .tabs.computers_tab import ComputersTab
 from .tabs.users_tab import UsersTab
 from .tabs.reports_tab import ReportsTab
-from ..notifications_dialog import NotificationsDialog, NotificationBadge
+from ..notifications_dialog import NotificationsPopover, NotificationBadge
 
 
 def get_app_icon() -> QIcon:
@@ -105,7 +105,7 @@ class AdminPanelWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(10)
+        main_layout.setSpacing(2)
         main_layout.setContentsMargins(15, 15, 15, 15)
         
         # ========== ЗАГОЛОВОК ==========
@@ -115,10 +115,16 @@ class AdminPanelWindow(QMainWindow):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #ff8c42, stop:1 #e67e22);
                 border-radius: 12px;
-                padding: 15px;
+                padding: 10px 15px;
             }
         """)
         header_layout = QVBoxLayout(header_frame)
+        header_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        
+        # Строка заголовка: надпись по центру, колокольчик справа — на одной линии
+        header_top_row = QHBoxLayout()
+        header_top_row.setSpacing(10)
+        header_top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         
         title_label = QLabel("⚡ REMOTE ACCESS AGENT • ПАНЕЛЬ АДМИНИСТРАТОРА")
         title_label.setStyleSheet("""
@@ -128,7 +134,67 @@ class AdminPanelWindow(QMainWindow):
             letter-spacing: 1px;
         """)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_layout.addWidget(title_label)
+        header_top_row.addWidget(title_label, 1)
+        
+        # Колокольчик уведомлений — справа от надписи, на одной линии
+        self.notifications_btn = QPushButton("🔔")
+        self.notifications_btn.setObjectName("notificationsBellButton")
+        self.notifications_btn.setFixedSize(36, 36)
+        self.notifications_btn.setToolTip("Уведомления о событиях и аномалиях")
+        BELL_STYLE = """
+            QPushButton#notificationsBellButton {
+                background-color: rgba(255,255,255,0.2);
+                color: white;
+                font-size: 18px;
+                border-radius: 18px;
+                padding: 0px;
+                margin: 0px;
+                font-weight: normal;
+                border: none;
+            }
+            QPushButton#notificationsBellButton:hover { 
+                background-color: rgba(255,255,255,0.3); 
+            }
+            QPushButton#notificationsBellButton:pressed { 
+                background-color: rgba(255,255,255,0.4); 
+            }
+        """
+        BELL_STYLE_CRITICAL = """
+            QPushButton#notificationsBellButton {
+                background-color: rgba(231,76,60,0.5);
+                color: white;
+                font-size: 18px;
+                border-radius: 18px;
+                padding: 0px;
+                margin: 0px;
+                font-weight: normal;
+                border: none;
+            }
+            QPushButton#notificationsBellButton:hover { 
+                background-color: rgba(231,76,60,0.7); 
+            }
+        """
+        self.BELL_STYLE = BELL_STYLE
+        self.BELL_STYLE_CRITICAL = BELL_STYLE_CRITICAL
+        self.notifications_btn.setStyleSheet(BELL_STYLE)
+        self.notifications_btn.clicked.connect(self.toggle_notifications)
+        
+        # Контейнер для колокольчика с бейджем
+        bell_container = QFrame()
+        bell_container.setFixedSize(50, 50)
+        bell_container.setStyleSheet("background: transparent; border: none;")
+        bell_container_layout = QHBoxLayout(bell_container)
+        bell_container_layout.setContentsMargins(0, 0, 0, 0)
+        bell_container_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        bell_container_layout.addWidget(self.notifications_btn)
+        
+        # Значок с количеством — справа сверху колокольчика
+        self.notif_badge = NotificationBadge(bell_container)
+        self.notif_badge.move(28, -4)
+        
+        header_top_row.addWidget(bell_container)
+        
+        header_layout.addLayout(header_top_row)
         
         main_layout.addWidget(header_frame)
         
@@ -205,37 +271,6 @@ class AdminPanelWindow(QMainWindow):
         right_layout = QHBoxLayout()
         right_layout.setSpacing(10)
         
-        # Кнопка уведомлений (колокольчик)
-        notif_frame = QFrame()
-        notif_frame.setFixedSize(40, 36)
-        notif_layout = QHBoxLayout(notif_frame)
-        notif_layout.setContentsMargins(0, 0, 0, 0)
-        notif_layout.setSpacing(0)
-        
-        self.notifications_btn = QPushButton("🔔")
-        self.notifications_btn.setFixedSize(36, 36)
-        self.notifications_btn.setToolTip("Уведомления о событиях и аномалиях")
-        self.notifications_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                border: none;
-                border-radius: 18px;
-                font-size: 16px;
-            }
-            QPushButton:hover { background-color: #2980b9; }
-            QPushButton:disabled { background-color: #bdc3c7; }
-        """)
-        self.notifications_btn.clicked.connect(self.open_notifications)
-        notif_layout.addWidget(self.notifications_btn)
-        
-        # Значок с количеством уведомлений
-        self.notif_badge = NotificationBadge(notif_frame)
-        # Перемещаем badge в правый верхний угол
-        self.notif_badge.move(20, -4)
-        
-        right_layout.addWidget(notif_frame)
-        
         settings_btn = QPushButton("⚙ Настройки")
         settings_btn.setMinimumHeight(32)
         settings_btn.setMinimumWidth(100)
@@ -277,6 +312,9 @@ class AdminPanelWindow(QMainWindow):
         self.notification_timer = QTimer()
         self.notification_timer.timeout.connect(self.check_notifications)
         self.notification_timer.start(30000)
+        
+        # Создаем экземпляр popover'а (но не показываем)
+        self.notifications_popover = NotificationsPopover(self)
         
         self.refresh_all_data()
         # Первая проверка уведомлений через 2 секунды
@@ -407,10 +445,61 @@ class AdminPanelWindow(QMainWindow):
                 3000
             )
     
-    def open_notifications(self):
-        """Открывает окно уведомлений"""
-        dialog = NotificationsDialog(self, parent_window=self)
-        dialog.exec()
+    def toggle_notifications(self):
+        """Показывает/скрывает всплывающую шторку уведомлений"""
+        if self.notifications_popover and self.notifications_popover.isVisible():
+            self.notifications_popover.hide_popover()
+        else:
+            if self.notifications_popover:
+                # Перезагружаем данные
+                self.notifications_popover.load_notifications()
+                # Показываем под кнопкой через её глобальную позицию
+                btn_global = self.notifications_btn.mapToGlobal(
+                    QPoint(0, self.notifications_btn.height())
+                )
+                self.notifications_popover.show_popover_global(btn_global)
+    
+    def _on_notification_item_clicked(self, computer_id, hostname):
+        """Обработчик клика по уведомлению из popover"""
+        self.notifications_popover.hide_popover()
+        self._open_computer_details(computer_id, hostname)
+    
+    def _open_computer_details(self, computer_id, hostname):
+        """Открывает детали компьютера"""
+        try:
+            from admin.computer_details import ComputerDetailsWindow
+            
+            computer_data = DatabaseManager.get_computer(computer_id)
+            if not computer_data:
+                computer_data = {'hostname': hostname, 'computer_id': computer_id}
+            
+            details_window = ComputerDetailsWindow(
+                hostname, computer_data,
+                parent_window=self
+            )
+            self.hide()
+            details_window.show()
+        except Exception as e:
+            print(f"[NOTIFICATIONS] Ошибка открытия деталей: {e}")
+    
+    def _count_new_notifications(self, notifications, read_until_time):
+        """Считает количество уведомлений новее read_until_time"""
+        if not read_until_time:
+            return len(notifications)
+        count = 0
+        for n in notifications:
+            ts = n.get('timestamp', '')
+            if ts and ts > read_until_time:
+                count += 1
+        return count
+    
+    def _notification_has_critical(self, notifications, read_until_time):
+        """Проверяет, есть ли критические среди новых уведомлений"""
+        for n in notifications:
+            ts = n.get('timestamp', '')
+            if (not read_until_time or ts > read_until_time) and n.get('severity') == 'critical':
+                return True
+        return False
     
     def check_notifications(self):
         """Проверяет наличие новых уведомлений и обновляет бейдж"""
@@ -423,65 +512,31 @@ class AdminPanelWindow(QMainWindow):
             )
             
             if data:
-                total = data.get('total', 0)
-                critical = data.get('critical_count', 0)
-                high = data.get('high_count', 0)
+                notifications = data.get('notifications', [])
+                settings = QSettings("PC-RMDS", "Notifications")
+                read_until_time = settings.value("read_until_time", "")
                 
-                # Показываем количество уведомлений
-                self.notif_badge.update_count(total)
+                new_count = self._count_new_notifications(notifications, read_until_time)
+                has_critical = self._notification_has_critical(notifications, read_until_time)
                 
-                # Обновляем тултип
-                if total > 0:
-                    tooltip_parts = []
-                    if critical > 0:
-                        tooltip_parts.append(f"🔴 {critical} критических")
-                    if high > 0:
-                        tooltip_parts.append(f"🟠 {high} высокой важности")
-                    tooltip_parts.append(f"📊 {total} всего")
-                    
+                self.notif_badge.update_count(new_count)
+                
+                if new_count > 0:
                     self.notifications_btn.setToolTip(
-                        f"🔔 Уведомления: {' | '.join(tooltip_parts)}"
+                        f"🔔 {new_count} новых уведомлений"
                     )
-                    
-                    # Если есть критические, меняем цвет кнопки
-                    if critical > 0:
-                        self.notifications_btn.setStyleSheet("""
-                            QPushButton {
-                                background-color: #e74c3c;
-                                color: white;
-                                border: none;
-                                border-radius: 18px;
-                                font-size: 16px;
-                            }
-                            QPushButton:hover { background-color: #c0392b; }
-                        """)
+                    if has_critical:
+                        self.notifications_btn.setStyleSheet(self.BELL_STYLE_CRITICAL)
                     else:
-                        self.notifications_btn.setStyleSheet("""
-                            QPushButton {
-                                background-color: #3498db;
-                                color: white;
-                                border: none;
-                                border-radius: 18px;
-                                font-size: 16px;
-                            }
-                            QPushButton:hover { background-color: #2980b9; }
-                        """)
+                        self.notifications_btn.setStyleSheet(self.BELL_STYLE)
                 else:
                     self.notif_badge.hide()
                     self.notifications_btn.setToolTip("🔔 Нет новых уведомлений")
-                    self.notifications_btn.setStyleSheet("""
-                        QPushButton {
-                            background-color: #3498db;
-                            color: white;
-                            border: none;
-                            border-radius: 18px;
-                            font-size: 16px;
-                        }
-                        QPushButton:hover { background-color: #2980b9; }
-                    """)
+                    self.notifications_btn.setStyleSheet(self.BELL_STYLE)
             else:
                 self.notif_badge.hide()
                 self.notifications_btn.setToolTip("🔔 Нет новых уведомлений")
+                self.notifications_btn.setStyleSheet(self.BELL_STYLE)
                 
         except Exception as e:
             print(f"[NOTIFICATIONS] Ошибка проверки уведомлений: {e}")

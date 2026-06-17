@@ -60,7 +60,7 @@ class AgentBackgroundService:
             
             # Получаем настройки
             settings = QSettings("RemoteAccess", "Agent")
-            relay_server = settings.value("server", "ws://localhost:9001")
+            relay_server = settings.value("server", "ws://130.49.149.152:9001")
             quality = int(settings.value("quality", 60))
             fps = float(settings.value("fps", 30))
             screenshot_interval = 1.0 / fps if fps > 0 else 0.05

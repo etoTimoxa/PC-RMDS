@@ -27,6 +27,7 @@ from .events_tab import EventsTab
 from .sessions_tab import SessionsTab
 from .anomalies_tab import AnomaliesTab
 from .reports_tab import ReportsTab
+from .ai_analysis_tab import AIAnalysisTab
 from .dialogs import EditComputerDialog
 from ..styles import get_main_window_stylesheet
 
@@ -727,6 +728,9 @@ class ComputerDetailsWindow(QMainWindow):
         
         self.overview_tab = OverviewTab(self)
         self.tabs.addTab(self.overview_tab, "Общая информация")
+
+        self.ai_tab = AIAnalysisTab(self)
+        self.tabs.addTab(self.ai_tab, "AI Анализ")
         
         self.metrics_tab = MetricsTab(self)
         self.tabs.addTab(self.metrics_tab, "Метрики")

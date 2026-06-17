@@ -663,7 +663,8 @@ class RemoteAgentThread(QThread):
                 details={"failed_actions": failed_actions, "results": {k: v.to_dict() for k, v in results.items()}},
                 agent_id=self.hostname,
             )
-            self.fsm.transition(AgentState.ERROR)
+            # Reset to DISCONNECTED so next iteration can attempt CONNECTING
+            self.fsm.force_transition(AgentState.DISCONNECTED)
             self._consecutive_errors += 1
             self.diag_logger.error(
                 "recovery_failed",

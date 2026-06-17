@@ -133,3 +133,19 @@ USER_ACTION_TYPES = {
     }
 }
 
+
+LLM_CONFIG = {
+    'base_url': os.getenv(
+        'LLM_BASE_URL',
+        'https://gpt.mwsapis.ru/projects/project-itimofej23/openai/v1'
+    ),
+    'api_key': os.getenv(
+        'LLM_API_KEY',
+        'v1.uuiGT1sFQvFNu30MIT24Cd2BdILX_CsNyM9XRtbI-csMCv34EiU82xsXI0N8wV6p15fJ4jm_bcbbUFTyddgQRDU3dMA6lKdyCxMlM9wbolelH2n51-i7GOuX-EodgYZK'
+    ),
+    'model': os.getenv(
+        'LLM_MODEL',
+        'qwen3-32b'
+    )
+}
+

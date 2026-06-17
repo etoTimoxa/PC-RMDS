@@ -34,6 +34,7 @@ class AgentState(enum.Enum):
 _TRANSITIONS: Dict[AgentState, Set[AgentState]] = {
     AgentState.DISCONNECTED: {
         AgentState.CONNECTING,
+        AgentState.RECOVERING,
     },
     AgentState.CONNECTING: {
         AgentState.REGISTERED,

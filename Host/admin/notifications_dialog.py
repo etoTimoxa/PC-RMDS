@@ -386,14 +386,13 @@ class NotificationsPopover(QFrame):
         self.display_notifications()
     
     def load_notifications(self):
-        """Загружает уведомления из облачного хранилища за последние 24 часа (только самые критические)"""
+        """Загружает уведомления из облачного хранилища за последние 24 часа"""
         try:
             data = DatabaseManager.get_recent_notifications(
                 hours=24,
-                cpu_threshold=90.0,
-                ram_threshold=90.0,
-                limit=100,
-                critical_only=True
+                cpu_threshold=85.0,
+                ram_threshold=85.0,
+                limit=100
             )
             
             if data:

@@ -35,10 +35,9 @@ def get_recent_notifications():
     """
     try:
         hours = request.args.get('hours', 24, type=int)
-        cpu_threshold = request.args.get('cpu_threshold', 90.0, type=float)
-        ram_threshold = request.args.get('ram_threshold', 90.0, type=float)
+        cpu_threshold = request.args.get('cpu_threshold', 85.0, type=float)
+        ram_threshold = request.args.get('ram_threshold', 85.0, type=float)
         limit = request.args.get('limit', 50, type=int)
-        critical_only = request.args.get('critical_only', 'true').lower() in ('true', '1', 'yes')
         
         now = datetime.now()
         from_time = now - timedelta(hours=hours)
@@ -100,7 +99,7 @@ def get_recent_notifications():
             except Exception as e:
                 print(f"[NOTIFICATIONS] Ошибка получения событий для {hostname}: {e}")
             
-            # 2. Получаем аномалии за период (только самые критические: CPU >= 95% или RAM >= 95%)
+            # 2. Получаем аномалии за период
             try:
                 anomalies_data = cloud.get_anomalies(hostname, from_str, to_str, cpu_threshold, ram_threshold)
                 if anomalies_data and anomalies_data.get('success', True):
@@ -117,9 +116,15 @@ def get_recent_notifications():
                         cpu_val = anomaly.get('cpu_usage', 0)
                         ram_val = anomaly.get('ram_usage', 0)
                         
-                        # Если critical_only — показываем только экстремальные скачки (>= 95%)
-                        if critical_only and not (cpu_val >= 95 or ram_val >= 95):
-                            continue
+                        # Наиболее критические: CPU или RAM >= 95%
+                        # Высокие: CPU или RAM >= 90%
+                        # Средние: остальные выше порога
+                        if cpu_val >= 95 or ram_val >= 95:
+                            severity = 'critical'
+                        elif cpu_val >= 90 or ram_val >= 90:
+                            severity = 'high'
+                        else:
+                            severity = 'medium'
                         
                         notifications.append({
                             'computer_id': computer_id,
@@ -133,7 +138,7 @@ def get_recent_notifications():
                             'cpu_usage': cpu_val,
                             'ram_usage': ram_val,
                             'description': f"CPU: {cpu_val}% | RAM: {ram_val}%",
-                            'severity': 'critical'
+                            'severity': severity
                         })
             except Exception as e:
                 print(f"[NOTIFICATIONS] Ошибка получения аномалий для {hostname}: {e}")

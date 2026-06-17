@@ -8,6 +8,7 @@ from .metrics import metrics_bp
 from .dashboard import dashboard_bp
 from .auth import auth_bp
 from .sessions import sessions_bp
+from .notifications import notifications_bp
 
 __all__ = [
     'computers_bp',
@@ -16,5 +17,6 @@ __all__ = [
     'metrics_bp',
     'dashboard_bp',
     'sessions_bp',
-    'auth_bp'
+    'auth_bp',
+    'notifications_bp'
 ]

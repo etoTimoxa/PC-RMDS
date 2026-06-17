@@ -898,5 +898,32 @@ class APIClient:
             print(f"Ошибка получения статистики: {e}")
             return None
 
+    # ==============================================
+    # УВЕДОМЛЕНИЯ
+    # ==============================================
+
+    @classmethod
+    def get_recent_notifications(cls, hours: int = 2, cpu_threshold: float = 90.0,
+                                  ram_threshold: float = 90.0, limit: int = 50) -> Optional[Dict[str, Any]]:
+        """Получить уведомления о критических событиях и аномалиях"""
+        try:
+            response = requests.get(
+                f"{API_BASE_URL}/api/notifications/recent",
+                params={
+                    'hours': hours,
+                    'cpu_threshold': cpu_threshold,
+                    'ram_threshold': ram_threshold,
+                    'limit': limit
+                },
+                headers=cls._headers(),
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('data') if data.get('success') else None
+        except Exception as e:
+            print(f"Ошибка получения уведомлений: {e}")
+            return None
+
 
 DatabaseManager = APIClient

@@ -22,7 +22,8 @@ from routes import (
     metrics_bp,
     dashboard_bp,
     auth_bp,
-    sessions_bp  
+    sessions_bp,
+    notifications_bp
 )
 from diagnostics.diag_routes import diagnostics_bp
 
@@ -70,6 +71,7 @@ def create_app():
     app.register_blueprint(metrics_bp, url_prefix='/api/metrics')
     app.register_blueprint(dashboard_bp, url_prefix='/api/dashboard')
     app.register_blueprint(sessions_bp, url_prefix='/api/sessions')
+    app.register_blueprint(notifications_bp, url_prefix='/api/notifications')
     
     # Регистрация blueprints диагностики (без url_prefix — роуты сами содержат /api/...)
     app.register_blueprint(diagnostics_bp)
@@ -87,7 +89,8 @@ def create_app():
                 '/api/statuses',
                 '/api/metrics',
                 '/api/dashboard',
-                '/api/sessions'
+                '/api/sessions',
+                '/api/notifications'
             ]
         })
     
@@ -105,6 +108,7 @@ def create_app():
                 'metrics': '/api/metrics',
                 'dashboard': '/api/dashboard',
                 'sessions': '/api/sessions',
+                'notifications': '/api/notifications',
                 'health': '/health'
             }
         })

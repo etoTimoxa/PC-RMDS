@@ -16,6 +16,7 @@ from ..styles import get_main_window_stylesheet
 from .tabs.computers_tab import ComputersTab
 from .tabs.users_tab import UsersTab
 from .tabs.reports_tab import ReportsTab
+from ..notifications_dialog import NotificationsDialog, NotificationBadge
 
 
 def get_app_icon() -> QIcon:
@@ -204,6 +205,37 @@ class AdminPanelWindow(QMainWindow):
         right_layout = QHBoxLayout()
         right_layout.setSpacing(10)
         
+        # Кнопка уведомлений (колокольчик)
+        notif_frame = QFrame()
+        notif_frame.setFixedSize(40, 36)
+        notif_layout = QHBoxLayout(notif_frame)
+        notif_layout.setContentsMargins(0, 0, 0, 0)
+        notif_layout.setSpacing(0)
+        
+        self.notifications_btn = QPushButton("🔔")
+        self.notifications_btn.setFixedSize(36, 36)
+        self.notifications_btn.setToolTip("Уведомления о событиях и аномалиях")
+        self.notifications_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                border-radius: 18px;
+                font-size: 16px;
+            }
+            QPushButton:hover { background-color: #2980b9; }
+            QPushButton:disabled { background-color: #bdc3c7; }
+        """)
+        self.notifications_btn.clicked.connect(self.open_notifications)
+        notif_layout.addWidget(self.notifications_btn)
+        
+        # Значок с количеством уведомлений
+        self.notif_badge = NotificationBadge(notif_frame)
+        # Перемещаем badge в правый верхний угол
+        self.notif_badge.move(20, -4)
+        
+        right_layout.addWidget(notif_frame)
+        
         settings_btn = QPushButton("⚙ Настройки")
         settings_btn.setMinimumHeight(32)
         settings_btn.setMinimumWidth(100)
@@ -241,7 +273,14 @@ class AdminPanelWindow(QMainWindow):
         bottom_layout.addLayout(right_layout)
         main_layout.addWidget(bottom_frame)
         
+        # Таймер для проверки уведомлений (каждые 30 секунд)
+        self.notification_timer = QTimer()
+        self.notification_timer.timeout.connect(self.check_notifications)
+        self.notification_timer.start(30000)
+        
         self.refresh_all_data()
+        # Первая проверка уведомлений через 2 секунды
+        QTimer.singleShot(2000, self.check_notifications)
     
     def open_settings(self):
         try:
@@ -357,6 +396,7 @@ class AdminPanelWindow(QMainWindow):
         self.refresh_timer.stop()
         self.agent_status_timer.stop()
         self.activity_timer.stop()
+        self.notification_timer.stop()
         event.ignore()
         self.hide()
         if self.tray_icon:
@@ -366,3 +406,83 @@ class AdminPanelWindow(QMainWindow):
                 QSystemTrayIcon.MessageIcon.Information, 
                 3000
             )
+    
+    def open_notifications(self):
+        """Открывает окно уведомлений"""
+        dialog = NotificationsDialog(self, parent_window=self)
+        dialog.exec()
+    
+    def check_notifications(self):
+        """Проверяет наличие новых уведомлений и обновляет бейдж"""
+        try:
+            data = DatabaseManager.get_recent_notifications(
+                hours=2,
+                cpu_threshold=85.0,
+                ram_threshold=85.0,
+                limit=10
+            )
+            
+            if data:
+                total = data.get('total', 0)
+                critical = data.get('critical_count', 0)
+                high = data.get('high_count', 0)
+                
+                # Показываем количество уведомлений
+                self.notif_badge.update_count(total)
+                
+                # Обновляем тултип
+                if total > 0:
+                    tooltip_parts = []
+                    if critical > 0:
+                        tooltip_parts.append(f"🔴 {critical} критических")
+                    if high > 0:
+                        tooltip_parts.append(f"🟠 {high} высокой важности")
+                    tooltip_parts.append(f"📊 {total} всего")
+                    
+                    self.notifications_btn.setToolTip(
+                        f"🔔 Уведомления: {' | '.join(tooltip_parts)}"
+                    )
+                    
+                    # Если есть критические, меняем цвет кнопки
+                    if critical > 0:
+                        self.notifications_btn.setStyleSheet("""
+                            QPushButton {
+                                background-color: #e74c3c;
+                                color: white;
+                                border: none;
+                                border-radius: 18px;
+                                font-size: 16px;
+                            }
+                            QPushButton:hover { background-color: #c0392b; }
+                        """)
+                    else:
+                        self.notifications_btn.setStyleSheet("""
+                            QPushButton {
+                                background-color: #3498db;
+                                color: white;
+                                border: none;
+                                border-radius: 18px;
+                                font-size: 16px;
+                            }
+                            QPushButton:hover { background-color: #2980b9; }
+                        """)
+                else:
+                    self.notif_badge.hide()
+                    self.notifications_btn.setToolTip("🔔 Нет новых уведомлений")
+                    self.notifications_btn.setStyleSheet("""
+                        QPushButton {
+                            background-color: #3498db;
+                            color: white;
+                            border: none;
+                            border-radius: 18px;
+                            font-size: 16px;
+                        }
+                        QPushButton:hover { background-color: #2980b9; }
+                    """)
+            else:
+                self.notif_badge.hide()
+                self.notifications_btn.setToolTip("🔔 Нет новых уведомлений")
+                
+        except Exception as e:
+            print(f"[NOTIFICATIONS] Ошибка проверки уведомлений: {e}")
+            self.notif_badge.hide()

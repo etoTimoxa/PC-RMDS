@@ -17,6 +17,10 @@ class ComputersTab(QWidget):
         super().__init__(parent)
         self.parent_window = parent
         self.all_computers = []
+        self._can_delete = True
+        self._can_add = True
+        self.add_btn = None
+        self.delete_btn = None
         self.init_ui()
     
     def init_ui(self):
@@ -59,17 +63,17 @@ class ComputersTab(QWidget):
         filter_layout.addStretch()
         
         # Кнопки действий
-        add_btn = QPushButton("Добавить компьютер")
-        add_btn.setMinimumHeight(35)
-        add_btn.clicked.connect(self.add_computer)
-        filter_layout.addWidget(add_btn)
+        self.add_btn = QPushButton("Добавить компьютер")
+        self.add_btn.setMinimumHeight(35)
+        self.add_btn.clicked.connect(self.add_computer)
+        filter_layout.addWidget(self.add_btn)
         
         
-        delete_btn = QPushButton("Удалить")
-        delete_btn.setMinimumHeight(35)
-        delete_btn.setStyleSheet("background-color: #e74c3c; color: white;")
-        delete_btn.clicked.connect(self.delete_selected_computer)
-        filter_layout.addWidget(delete_btn)
+        self.delete_btn = QPushButton("Удалить")
+        self.delete_btn.setMinimumHeight(35)
+        self.delete_btn.setStyleSheet("background-color: #e74c3c; color: white;")
+        self.delete_btn.clicked.connect(self.delete_selected_computer)
+        filter_layout.addWidget(self.delete_btn)
         
         refresh_btn = QPushButton("Обновить")
         refresh_btn.setMinimumHeight(35)
@@ -190,6 +194,14 @@ class ComputersTab(QWidget):
             self.computers_table.setItem(row, 4, status_item)
             self.computers_table.setItem(row, 5, QTableWidgetItem(str(last_online)))
         
+    def set_permissions(self, can_delete=True, can_add=True):
+        """Устанавливает права доступа: скрывает кнопки если нет прав"""
+        self._can_delete = can_delete
+        self._can_add = can_add
+        if hasattr(self, 'add_btn') and self.add_btn:
+            self.add_btn.setVisible(can_add)
+        if hasattr(self, 'delete_btn') and self.delete_btn:
+            self.delete_btn.setVisible(can_delete)
     
     def refresh_data(self):
         """Обновляет данные таблицы"""

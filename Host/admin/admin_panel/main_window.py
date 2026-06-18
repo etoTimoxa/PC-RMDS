@@ -42,6 +42,10 @@ class AdminPanelWindow(QMainWindow):
         self.background_agent = background_agent
         self.tray_icon = None
         
+        # Определяем роль: 1 - client, 2 - admin, 3 - superadmin
+        self.role_id = int(computer_data.get('role_id', 1))
+        self.is_superadmin = self.role_id == 3
+        
         settings = QSettings("RemoteAccess", "Agent")
         self.relay_server = relay_server or settings.value("server", "ws://localhost:9001")
         self.quality = int(settings.value("quality", 60))
@@ -231,10 +235,18 @@ class AdminPanelWindow(QMainWindow):
         self.groups_tab = GroupsTab(self)
         self.reports_tab = ReportsTab(self)
         
+        # Всегда показываем компьютеры и отчеты
         self.tab_widget.addTab(self.computers_tab, "Компьютеры")
-        self.tab_widget.addTab(self.users_tab, "Пользователи")
-        self.tab_widget.addTab(self.groups_tab, "Группы")
+        
+        # Пользователи и группы — только для суперадмина (role_id=3)
+        if self.is_superadmin:
+            self.tab_widget.addTab(self.users_tab, "Пользователи")
+            self.tab_widget.addTab(self.groups_tab, "Группы")
+        
         self.tab_widget.addTab(self.reports_tab, "Отчеты")
+        
+        # Передаём права вкладке компьютеров для скрытия кнопок
+        self.computers_tab.set_permissions(can_delete=self.is_superadmin, can_add=self.is_superadmin)
         
         main_layout.addWidget(self.tab_widget)
         
@@ -346,8 +358,9 @@ class AdminPanelWindow(QMainWindow):
     def refresh_all_data(self):
         try:
             self.computers_tab.refresh_data()
-            self.users_tab.refresh_data()
-            self.groups_tab.refresh_data()
+            if self.is_superadmin:
+                self.users_tab.refresh_data()
+                self.groups_tab.refresh_data()
         except Exception as e:
             print(f"Ошибка обновления данных: {e}")
     

@@ -232,7 +232,7 @@ class AIAnalysisTab(QWidget):
         # Верхняя панель с кнопкой
         top_panel = QHBoxLayout()
         
-        self.analyze_btn = QPushButton("🔍 Запустить AI-анализ")
+        self.analyze_btn = QPushButton("Запустить AI-анализ")
         self.analyze_btn.setMinimumHeight(40)
         self.analyze_btn.setMinimumWidth(200)
         self.analyze_btn.setStyleSheet("""

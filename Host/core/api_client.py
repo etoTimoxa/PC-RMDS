@@ -366,6 +366,22 @@ class APIClient:
             return None
     
     @classmethod
+    def delete_computer(cls, computer_id: int) -> bool:
+        """Удаление компьютера"""
+        try:
+            response = requests.delete(
+                f"{API_BASE_URL}/api/computers/{computer_id}",
+                headers=cls._headers(),
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get('success', False)
+        except Exception as e:
+            print(f"Ошибка удаления компьютера {computer_id}: {e}")
+            return False
+
+    @classmethod
     def get_computer(cls, computer_id: int) -> Optional[Dict[str, Any]]:
         try:
             response = requests.get(

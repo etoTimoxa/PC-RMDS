@@ -4,6 +4,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from io import BytesIO
 from email.utils import parsedate_to_datetime
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
                              QLabel, QComboBox, QPushButton, QScrollArea,
@@ -30,9 +31,9 @@ except ImportError:
 try:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.units import inch
+    from reportlab.lib.units import inch, mm
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     import reportlab.rl_config
@@ -50,6 +51,7 @@ class ReportsTab(QWidget):
         self.parent_window = parent
         self.all_computers = []
         self.groups = []
+        self._current_figure = None  # Храним текущую фигуру для экспорта
         self.init_ui()
         self.load_data()
         
@@ -84,12 +86,11 @@ class ReportsTab(QWidget):
         control_layout.addWidget(QLabel("Тип отчета:"), 0, 2)
         self.report_type = QComboBox()
         self.report_type.addItems([
-            "📊 Свободное место на дисках",
-            "📈 Средние показатели производительности",
-            "📊 Статус онлайн/оффлайн",
-            "📈 Статистика по операционным системам",
-            "📋 Отчет по железу",
-            "⏱️ Время работы компьютеров"
+            "Свободное место на дисках",
+            "Средние показатели производительности",
+            "Статистика по операционным системам",
+            "Отчет по железу",
+            "Время работы компьютеров"
         ])
         self.report_type.setMinimumWidth(300)
         control_layout.addWidget(self.report_type, 0, 3)
@@ -107,7 +108,7 @@ class ReportsTab(QWidget):
         # Кнопки
         button_layout = QHBoxLayout()
         
-        self.generate_btn = QPushButton("🔄 Сформировать отчет")
+        self.generate_btn = QPushButton("Сформировать отчет")
         self.generate_btn.setMinimumHeight(35)
         self.generate_btn.setMinimumWidth(180)
         self.generate_btn.setStyleSheet("""
@@ -122,7 +123,7 @@ class ReportsTab(QWidget):
         self.generate_btn.clicked.connect(self.generate_report)
         button_layout.addWidget(self.generate_btn)
         
-        self.export_pdf_btn = QPushButton("📄 Экспорт в PDF")
+        self.export_pdf_btn = QPushButton("Экспорт в PDF")
         self.export_pdf_btn.setMinimumHeight(35)
         self.export_pdf_btn.setMinimumWidth(180)
         self.export_pdf_btn.setStyleSheet("""
@@ -177,17 +178,10 @@ class ReportsTab(QWidget):
                 items.append("Гистограмма")
             self.report_view_type.addItems(items)
             
-        elif "Статус онлайн" in report_type:
-            items = ["Таблица"]
-            if MATPLOTLIB_AVAILABLE:
-                items.append("Круговая диаграмма")
-            self.report_view_type.addItems(items)
-            
         elif "операционным системам" in report_type:
-            items = ["Таблица"]
+            # Только круговая диаграмма для статистики по ОС
             if MATPLOTLIB_AVAILABLE:
-                items.append("Круговая диаграмма")
-            self.report_view_type.addItems(items)
+                self.report_view_type.addItems(["Круговая диаграмма"])
             
         elif "Отчет по железу" in report_type:
             items = ["Таблица"]
@@ -240,6 +234,7 @@ class ReportsTab(QWidget):
     def generate_report(self):
         """Формирует выбранный отчет"""
         self.clear_report_area()
+        self._current_figure = None
         
         computers = self.get_filtered_computers()
         report_type = self.report_type.currentText()
@@ -267,8 +262,6 @@ class ReportsTab(QWidget):
             self._generate_disk_space_report(computers, period)
         elif "Средние показатели" in report_type:
             self._generate_average_metrics_report(computers, period)
-        elif "Статус онлайн" in report_type:
-            self._generate_online_status_report(computers)
         elif "операционным системам" in report_type:
             self._generate_os_report(computers)
         elif "Отчет по железу" in report_type:
@@ -403,155 +396,226 @@ class ReportsTab(QWidget):
         else:
             return f"{seconds} с"
     
-    def _generate_disk_space_report(self, computers, period):
-        """Отчет по свободному месту на дисках"""
-        table = QTableWidget()
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(["Компьютер", "Всего, ГБ", "Использовано, ГБ", "Свободно, ГБ", "Статус"])
-        table.setRowCount(len(computers))
-        
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        
-        for row, comp in enumerate(computers):
+    def _prepare_disk_data(self, computers, period):
+        """Подготавливает данные по дискам для всех компьютеров.
+        Возвращает список словарей с ключами: hostname, total, used, free, status_key (0=ok, 1=warn, 2=critical)
+        """
+        result = []
+        for comp in computers:
             hostname = comp.get('hostname', 'Unknown')
             computer_id = comp.get('computer_id')
             
-            total = 0
+            total = 0.0
             used = None
             
             try:
-                # Пробуем получить из метрик
                 metrics = self._get_metrics_for_computer(computer_id, period)
                 if metrics and len(metrics) > 0:
                     last_metric = metrics[-1]
-                    total = float(last_metric.get('disk_total_gb', 0)) if last_metric.get('disk_total_gb') else 0
+                    total = float(last_metric.get('disk_total_gb', 0)) if last_metric.get('disk_total_gb') else 0.0
                     used = float(last_metric.get('disk_used_gb', 0)) if last_metric.get('disk_used_gb') else None
                 
-                # Если нет данных из метрик - берем статичные
                 if not total:
-                    total = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0
-                
+                    total = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0.0
             except Exception as e:
                 print(f"Ошибка загрузки данных диска для {hostname}: {e}")
-                total = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0
+                total = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0.0
             
-            free = total - used if total and used is not None else 0
+            total = total or 0.0
+            free = total - used if total and used is not None else 0.0
             
-            # Определяем статус
-            status = "✅ Нормально"
-            if total and used is not None and free / total < 0.1:
-                status = "⚠️ Нужно почистить!"
-            elif total and used is not None and free / total < 0.2:
-                status = "⚠️ Мало места"
+            status_key = 0
+            if total and used is not None and (total - used) / total < 0.1:
+                status_key = 2
+            elif total and used is not None and (total - used) / total < 0.2:
+                status_key = 1
             
-            status_item = QTableWidgetItem(status)
-            if "Нужно почистить" in status:
-                status_item.setBackground(QColor("#e74c3c"))
-                status_item.setForeground(QColor("white"))
-            elif "Мало места" in status:
-                status_item.setBackground(QColor("#f39c12"))
-            else:
-                status_item.setBackground(QColor("#27ae60"))
-            
-            table.setItem(row, 0, QTableWidgetItem(hostname))
-            table.setItem(row, 1, QTableWidgetItem(f"{total:.1f}" if total else "—"))
-            table.setItem(row, 2, QTableWidgetItem(f"{used:.1f}" if used is not None and used else "—"))
-            table.setItem(row, 3, QTableWidgetItem(f"{free:.1f}" if total and used is not None else "—"))
-            table.setItem(row, 4, status_item)
-        
+            result.append({
+                'hostname': hostname,
+                'total': total,
+                'used': used,
+                'free': free,
+                'status_key': status_key
+            })
+        return result
+    
+    def _generate_disk_space_report(self, computers, period):
+        """Отчет по свободному месту на дисках"""
         view_type = self.report_view_type.currentText()
         
         if view_type == "Таблица":
+            # Таблица отображается сразу, строки заполняются постепенно
+            table = QTableWidget()
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(["Компьютер", "Всего, ГБ", "Использовано, ГБ", "Свободно, ГБ", "Статус"])
+            table.setRowCount(len(computers))
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            table.setAlternatingRowColors(True)
+            
+            progress_widget = QWidget()
+            progress_layout = QVBoxLayout(progress_widget)
+            progress_label = QLabel("Загрузка данных о дисковом пространстве...")
+            progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, len(computers))
+            progress_bar.setValue(0)
+            progress_layout.addWidget(progress_label)
+            progress_layout.addWidget(progress_bar)
+            self.report_container_layout.addWidget(progress_widget)
             self.report_container_layout.addWidget(table)
+            
+            for row, comp in enumerate(computers):
+                data = self._prepare_disk_data([comp], period)
+                d = data[0] if data else {'hostname': comp.get('hostname', 'Unknown'), 'total': 0.0, 'used': None, 'free': 0.0, 'status_key': 0}
+                
+                status_text = "✅ Нормально"
+                if d['status_key'] == 2:
+                    status_text = "⚠️ Нужно почистить!"
+                elif d['status_key'] == 1:
+                    status_text = "⚠️ Мало места"
+                
+                status_item = QTableWidgetItem(status_text)
+                if d['status_key'] == 2:
+                    status_item.setBackground(QColor("#e74c3c"))
+                    status_item.setForeground(QColor("white"))
+                elif d['status_key'] == 1:
+                    status_item.setBackground(QColor("#f39c12"))
+                else:
+                    status_item.setBackground(QColor("#27ae60"))
+                
+                used_str = f"{d['used']:.1f}" if d['used'] is not None else "—"
+                free_str = f"{d['free']:.1f}" if d['total'] and d['used'] is not None else "—"
+                
+                table.setItem(row, 0, QTableWidgetItem(d['hostname']))
+                table.setItem(row, 1, QTableWidgetItem(f"{d['total']:.1f}" if d['total'] else "—"))
+                table.setItem(row, 2, QTableWidgetItem(used_str))
+                table.setItem(row, 3, QTableWidgetItem(free_str))
+                table.setItem(row, 4, status_item)
+                
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(computers)}")
+                QApplication.processEvents()
+            
+            progress_widget.deleteLater()
+            
         elif view_type == "Гистограмма" and MATPLOTLIB_AVAILABLE:
-            self._create_disk_space_chart(computers)
+            # Для графика собираем данные с прогресс-баром, потом строим график
+            progress_widget = QWidget()
+            progress_layout = QVBoxLayout(progress_widget)
+            progress_label = QLabel("Загрузка данных о дисковом пространстве...")
+            progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, len(computers))
+            progress_bar.setValue(0)
+            progress_layout.addWidget(progress_label)
+            progress_layout.addWidget(progress_bar)
+            self.report_container_layout.addWidget(progress_widget)
+            
+            disk_data = []
+            for row, comp in enumerate(computers):
+                data = self._prepare_disk_data([comp], period)
+                if data:
+                    disk_data.append(data[0])
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(computers)}")
+                QApplication.processEvents()
+            
+            progress_widget.deleteLater()
+            self._create_disk_space_chart(disk_data)
     
     def _generate_average_metrics_report(self, computers, period):
         """Отчет по средним показателям производительности"""
-        table = QTableWidget()
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(["Компьютер", "CPU среднее, %", "RAM среднее, %", "Disk среднее, %", "Network, МБ/с"])
-        table.setRowCount(len(computers))
-        
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        
-        for row, comp in enumerate(computers):
-            hostname = comp.get('hostname', 'Unknown')
-            computer_id = comp.get('computer_id')
-            
-            avg_data = self._get_average_metrics_for_computer(computer_id, period)
-            
-            if avg_data:
-                avg_cpu = avg_data.get('cpu_usage', 0) or 0
-                avg_ram = avg_data.get('ram_usage', 0) or 0
-                avg_disk = avg_data.get('disk_usage', 0) or 0
-                network_total = avg_data.get('network_sent_mb', 0) + avg_data.get('network_recv_mb', 0)
-            else:
-                avg_cpu = avg_ram = avg_disk = network_total = 0
-            
-            table.setItem(row, 0, QTableWidgetItem(hostname))
-            table.setItem(row, 1, QTableWidgetItem(f"{avg_cpu:.1f}" if avg_cpu else "—"))
-            table.setItem(row, 2, QTableWidgetItem(f"{avg_ram:.1f}" if avg_ram else "—"))
-            table.setItem(row, 3, QTableWidgetItem(f"{avg_disk:.1f}" if avg_disk else "—"))
-            table.setItem(row, 4, QTableWidgetItem(f"{network_total:.2f}" if network_total else "—"))
-        
         view_type = self.report_view_type.currentText()
+        
         if view_type == "Таблица":
+            # Таблица отображается сразу, строки заполняются постепенно
+            table = QTableWidget()
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(["Компьютер", "CPU среднее, %", "RAM среднее, %", "Disk среднее, %", "Network, МБ/с"])
+            table.setRowCount(len(computers))
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            table.setAlternatingRowColors(True)
+            
+            progress_widget = QWidget()
+            progress_layout = QVBoxLayout(progress_widget)
+            progress_label = QLabel("Загрузка средних показателей...")
+            progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, len(computers))
+            progress_bar.setValue(0)
+            progress_layout.addWidget(progress_label)
+            progress_layout.addWidget(progress_bar)
+            self.report_container_layout.addWidget(progress_widget)
             self.report_container_layout.addWidget(table)
+            
+            for row, comp in enumerate(computers):
+                hostname = comp.get('hostname', 'Unknown')
+                computer_id = comp.get('computer_id')
+                avg_data = self._get_average_metrics_for_computer(computer_id, period)
+                
+                if avg_data:
+                    avg_cpu = avg_data.get('cpu_usage', 0) or 0
+                    avg_ram = avg_data.get('ram_usage', 0) or 0
+                    avg_disk = avg_data.get('disk_usage', 0) or 0
+                    network_total = avg_data.get('network_sent_mb', 0) + avg_data.get('network_recv_mb', 0)
+                else:
+                    avg_cpu = avg_ram = avg_disk = network_total = 0
+                
+                table.setItem(row, 0, QTableWidgetItem(hostname))
+                table.setItem(row, 1, QTableWidgetItem(f"{avg_cpu:.1f}" if avg_cpu else "—"))
+                table.setItem(row, 2, QTableWidgetItem(f"{avg_ram:.1f}" if avg_ram else "—"))
+                table.setItem(row, 3, QTableWidgetItem(f"{avg_disk:.1f}" if avg_disk else "—"))
+                table.setItem(row, 4, QTableWidgetItem(f"{network_total:.2f}" if network_total else "—"))
+                
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(computers)}")
+                QApplication.processEvents()
+            
+            progress_widget.deleteLater()
+            
         elif view_type == "Гистограмма" and MATPLOTLIB_AVAILABLE:
-            self._create_average_metrics_chart(computers, period)
-    
-    def _generate_online_status_report(self, computers):
-        """Отчет по статусу онлайн/оффлайн"""
-        online = sum(1 for c in computers if c.get('is_online', False))
-        offline = len(computers) - online
-        
-        stats_label = QLabel(f"✅ Онлайн: {online} | ❌ Оффлайн: {offline}")
-        stats_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px;")
-        stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.report_container_layout.addWidget(stats_label)
-        
-        table = QTableWidget()
-        table.setColumnCount(4)
-        table.setHorizontalHeaderLabels(["Компьютер", "Статус", "Последний онлайн", "Пользователь"])
-        table.setRowCount(len(computers))
-        
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        
-        for row, comp in enumerate(computers):
-            hostname = comp.get('hostname', 'Unknown')
-            is_online = comp.get('is_online', False)
-            last_online = comp.get('last_online', 'Никогда')
-            user = comp.get('login', 'Не назначен')
-            full_name = comp.get('full_name', '')
+            progress_widget = QWidget()
+            progress_layout = QVBoxLayout(progress_widget)
+            progress_label = QLabel("Загрузка средних показателей...")
+            progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, len(computers))
+            progress_bar.setValue(0)
+            progress_layout.addWidget(progress_label)
+            progress_layout.addWidget(progress_bar)
+            self.report_container_layout.addWidget(progress_widget)
             
-            user_display = f"{user}" + (f" ({full_name})" if full_name else "")
+            metrics_data = []
+            for row, comp in enumerate(computers):
+                hostname = comp.get('hostname', 'Unknown')
+                computer_id = comp.get('computer_id')
+                avg_data = self._get_average_metrics_for_computer(computer_id, period)
+                
+                if avg_data:
+                    avg_cpu = avg_data.get('cpu_usage', 0) or 0
+                    avg_ram = avg_data.get('ram_usage', 0) or 0
+                    avg_disk = avg_data.get('disk_usage', 0) or 0
+                    network_total = avg_data.get('network_sent_mb', 0) + avg_data.get('network_recv_mb', 0)
+                else:
+                    avg_cpu = avg_ram = avg_disk = network_total = 0
+                
+                metrics_data.append({
+                    'hostname': hostname,
+                    'cpu': avg_cpu,
+                    'ram': avg_ram,
+                    'disk': avg_disk,
+                    'network': network_total
+                })
+                
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(computers)}")
+                QApplication.processEvents()
             
-            status_text = "✅ Онлайн" if is_online else "❌ Оффлайн"
-            
-            status_item = QTableWidgetItem(status_text)
-            if is_online:
-                status_item.setForeground(QColor("#27ae60"))
-            else:
-                status_item.setForeground(QColor("#e74c3c"))
-            
-            table.setItem(row, 0, QTableWidgetItem(hostname))
-            table.setItem(row, 1, status_item)
-            table.setItem(row, 2, QTableWidgetItem(str(last_online)[:19] if last_online and last_online != 'Никогда' else "Никогда"))
-            table.setItem(row, 3, QTableWidgetItem(user_display))
-        
-        view_type = self.report_view_type.currentText()
-        
-        if view_type == "Таблица":
-            self.report_container_layout.addWidget(table)
-        elif view_type == "Круговая диаграмма" and MATPLOTLIB_AVAILABLE:
-            self._create_online_pie_chart(online, offline)
+            progress_widget.deleteLater()
+            self._create_average_metrics_chart(metrics_data)
     
     def _generate_os_report(self, computers):
-        """Статистика по операционным системам"""
+        """Статистика по операционным системам (всегда круговая диаграмма)"""
         os_stats = {}
         for comp in computers:
             os_name = comp.get('os_name', 'Неизвестно')
@@ -559,78 +623,109 @@ class ReportsTab(QWidget):
                 os_name = 'Неизвестно'
             os_stats[os_name] = os_stats.get(os_name, 0) + 1
         
-        table = QTableWidget()
-        table.setColumnCount(2)
-        table.setHorizontalHeaderLabels(["Операционная система", "Количество компьютеров"])
-        table.setRowCount(len(os_stats))
-        
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        
-        for row, (os_name, count) in enumerate(os_stats.items()):
-            table.setItem(row, 0, QTableWidgetItem(os_name))
-            table.setItem(row, 1, QTableWidgetItem(str(count)))
-        
-        view_type = self.report_view_type.currentText()
-        
-        if view_type == "Таблица":
-            self.report_container_layout.addWidget(table)
-        elif view_type == "Круговая диаграмма" and MATPLOTLIB_AVAILABLE:
+        if MATPLOTLIB_AVAILABLE:
             self._create_os_pie_chart(os_stats)
+        else:
+            self._show_no_data_error("Matplotlib не установлен. Невозможно отобразить диаграмму.")
     
     def _generate_hardware_report(self, computers, period):
         """Отчет по конфигурациям железа (с данными GPU)"""
-        table = QTableWidget()
-        table.setColumnCount(6)
-        table.setHorizontalHeaderLabels(["Компьютер", "CPU", "Ядра", "RAM, ГБ", "GPU", "Диск, ГБ"])
-        table.setRowCount(len(computers))
-        
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        table.setAlternatingRowColors(True)
-        
-        # Сначала показываем прогресс
-        progress_label = QLabel("Загрузка данных о конфигурации компьютеров...")
-        progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.report_container_layout.addWidget(progress_label)
-        self.report_container_layout.addWidget(table)
-        
-        for row, comp in enumerate(computers):
-            hostname = comp.get('hostname', 'Unknown')
-            computer_id = comp.get('computer_id')
-            cpu = comp.get('cpu_model', 'Unknown')
-            cores = comp.get('cpu_cores', 0)
-            ram = float(comp.get('ram_total', 0)) if comp.get('ram_total') else 0
-            disk = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0
-            
-            # Получаем GPU из полной информации о компьютере
-            gpu = "—"
-            if computer_id:
-                full_info = self._get_computer_full_info(computer_id)
-                gpu = full_info.get('gpu_model', '')
-                if not gpu or gpu == 'Unknown' or gpu == '':
-                    gpu = "—"
-            
-            table.setItem(row, 0, QTableWidgetItem(hostname))
-            table.setItem(row, 1, QTableWidgetItem(cpu))
-            table.setItem(row, 2, QTableWidgetItem(str(cores) if cores else "—"))
-            table.setItem(row, 3, QTableWidgetItem(f"{ram:.1f}" if ram else "—"))
-            table.setItem(row, 4, QTableWidgetItem(gpu))
-            table.setItem(row, 5, QTableWidgetItem(f"{disk:.1f}" if disk else "—"))
-            
-            # Обновляем прогресс для длинных списков
-            if (row + 1) % 10 == 0:
-                progress_label.setText(f"Загрузка... {row + 1}/{len(computers)}")
-                QApplication.processEvents()
-        
-        # Удаляем прогресс-лейбл
-        progress_label.deleteLater()
-        
         view_type = self.report_view_type.currentText()
         
         if view_type == "Таблица":
-            pass  # Таблица уже добавлена
+            # Таблица отображается сразу, строки заполняются постепенно
+            table = QTableWidget()
+            table.setColumnCount(6)
+            table.setHorizontalHeaderLabels(["Компьютер", "CPU", "Ядра", "RAM, ГБ", "GPU", "Диск, ГБ"])
+            table.setRowCount(len(computers))
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            table.setAlternatingRowColors(True)
+            
+            progress_widget = QWidget()
+            progress_layout = QVBoxLayout(progress_widget)
+            progress_label = QLabel("Загрузка данных о конфигурации компьютеров...")
+            progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, len(computers))
+            progress_bar.setValue(0)
+            progress_layout.addWidget(progress_label)
+            progress_layout.addWidget(progress_bar)
+            self.report_container_layout.addWidget(progress_widget)
+            self.report_container_layout.addWidget(table)
+            
+            for row, comp in enumerate(computers):
+                hostname = comp.get('hostname', 'Unknown')
+                computer_id = comp.get('computer_id')
+                cpu = comp.get('cpu_model', 'Unknown') or 'Unknown'
+                cores = comp.get('cpu_cores', 0)
+                ram = float(comp.get('ram_total', 0)) if comp.get('ram_total') else 0.0
+                disk = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0.0
+                
+                # Получаем GPU из полной информации о компьютере
+                gpu = "—"
+                if computer_id:
+                    full_info = self._get_computer_full_info(computer_id)
+                    gpu = full_info.get('gpu_model', '')
+                    if not gpu or gpu == 'Unknown' or gpu == '':
+                        gpu = "—"
+                
+                table.setItem(row, 0, QTableWidgetItem(hostname))
+                table.setItem(row, 1, QTableWidgetItem(cpu))
+                table.setItem(row, 2, QTableWidgetItem(str(cores) if cores else "—"))
+                table.setItem(row, 3, QTableWidgetItem(f"{ram:.1f}" if ram else "—"))
+                table.setItem(row, 4, QTableWidgetItem(gpu))
+                table.setItem(row, 5, QTableWidgetItem(f"{disk:.1f}" if disk else "—"))
+                
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(computers)}")
+                QApplication.processEvents()
+            
+            progress_widget.deleteLater()
+            
         elif view_type == "Гистограмма" and MATPLOTLIB_AVAILABLE:
-            self._create_hardware_chart(computers)
+            progress_widget = QWidget()
+            progress_layout = QVBoxLayout(progress_widget)
+            progress_label = QLabel("Загрузка данных о конфигурации компьютеров...")
+            progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, len(computers))
+            progress_bar.setValue(0)
+            progress_layout.addWidget(progress_label)
+            progress_layout.addWidget(progress_bar)
+            self.report_container_layout.addWidget(progress_widget)
+            
+            hw_data = []
+            for row, comp in enumerate(computers):
+                hostname = comp.get('hostname', 'Unknown')
+                computer_id = comp.get('computer_id')
+                cpu = comp.get('cpu_model', 'Unknown') or 'Unknown'
+                cores = comp.get('cpu_cores', 0)
+                ram = float(comp.get('ram_total', 0)) if comp.get('ram_total') else 0.0
+                disk = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0.0
+                
+                # Получаем GPU из полной информации о компьютере
+                gpu = "—"
+                if computer_id:
+                    full_info = self._get_computer_full_info(computer_id)
+                    gpu = full_info.get('gpu_model', '')
+                    if not gpu or gpu == 'Unknown' or gpu == '':
+                        gpu = "—"
+                
+                hw_data.append({
+                    'hostname': hostname,
+                    'cpu': cpu,
+                    'cores': cores,
+                    'ram': ram,
+                    'gpu': gpu,
+                    'disk': disk
+                })
+                
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(computers)}")
+                QApplication.processEvents()
+            
+            progress_widget.deleteLater()
+            self._create_hardware_chart(hw_data)
     
     def _generate_uptime_report(self, computers, period):
         """Отчет по времени работы компьютеров (общее время из сессий)"""
@@ -684,36 +779,33 @@ class ReportsTab(QWidget):
         # Удаляем виджет прогресса
         progress_widget.deleteLater()
     
-    def _create_disk_space_chart(self, computers):
+    # ==================== ГРАФИКИ ====================
+    
+    def _create_disk_space_chart(self, disk_data):
         """Создает график свободного места"""
         if not MATPLOTLIB_AVAILABLE:
             return
         
         hostnames = []
         free_space = []
-        colors = []
+        bar_colors = []
         
-        for comp in computers[:20]:  # Ограничиваем 20 компов для графика
-            hostname = comp.get('hostname', 'Unknown')[:12]
-            total = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0
-            used = float(comp.get('storage_used', 0)) if comp.get('storage_used') else 0
-            free = total - used if total else 0
+        for d in disk_data[:20]:
+            hostnames.append(d['hostname'][:12])
+            free_space.append(d['free'])
             
-            hostnames.append(hostname)
-            free_space.append(free)
-            
-            if total and free / total < 0.1:
-                colors.append('#e74c3c')
-            elif total and free / total < 0.2:
-                colors.append('#f39c12')
+            if d['status_key'] == 2:
+                bar_colors.append('#e74c3c')
+            elif d['status_key'] == 1:
+                bar_colors.append('#f39c12')
             else:
-                colors.append('#27ae60')
+                bar_colors.append('#27ae60')
         
         figure = Figure(figsize=(10, 5), facecolor='white')
         canvas = FigureCanvas(figure)
         ax = figure.add_subplot(111)
         
-        bars = ax.bar(hostnames, free_space, color=colors, edgecolor='white')
+        ax.bar(hostnames, free_space, color=bar_colors, edgecolor='white')
         ax.set_title("Свободное место на дисках, ГБ", fontsize=14, fontweight='bold')
         ax.set_ylabel("Свободно, ГБ")
         ax.tick_params(axis='x', rotation=45)
@@ -722,31 +814,16 @@ class ReportsTab(QWidget):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
+        self._current_figure = figure
     
-    def _create_average_metrics_chart(self, computers, period):
+    def _create_average_metrics_chart(self, metrics_data):
         """Создает график средних показателей"""
         if not MATPLOTLIB_AVAILABLE:
             return
         
-        hostnames = []
-        cpu_values = []
-        ram_values = []
-        
-        for comp in computers[:15]:  # Ограничиваем 15 компов
-            hostname = comp.get('hostname', 'Unknown')[:12]
-            computer_id = comp.get('computer_id')
-            
-            avg_data = self._get_average_metrics_for_computer(computer_id, period)
-            
-            if avg_data:
-                cpu = avg_data.get('cpu_usage', 0) or 0
-                ram = avg_data.get('ram_usage', 0) or 0
-            else:
-                cpu = ram = 0
-            
-            hostnames.append(hostname)
-            cpu_values.append(cpu)
-            ram_values.append(ram)
+        hostnames = [d['hostname'][:12] for d in metrics_data[:15]]
+        cpu_values = [d['cpu'] for d in metrics_data[:15]]
+        ram_values = [d['ram'] for d in metrics_data[:15]]
         
         figure = Figure(figsize=(12, 6), facecolor='white')
         canvas = FigureCanvas(figure)
@@ -755,8 +832,8 @@ class ReportsTab(QWidget):
         x = range(len(hostnames))
         width = 0.35
         
-        bars1 = ax.bar([i - width/2 for i in x], cpu_values, width, label='CPU, %', color='#3498db')
-        bars2 = ax.bar([i + width/2 for i in x], ram_values, width, label='RAM, %', color='#2ecc71')
+        ax.bar([i - width/2 for i in x], cpu_values, width, label='CPU, %', color='#3498db')
+        ax.bar([i + width/2 for i in x], ram_values, width, label='RAM, %', color='#2ecc71')
         
         ax.set_title("Средние показатели CPU и RAM по компьютерам", fontsize=14, fontweight='bold')
         ax.set_ylabel("Процент, %")
@@ -768,20 +845,7 @@ class ReportsTab(QWidget):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
-    
-    def _create_online_pie_chart(self, online, offline):
-        """Круговая диаграмма статусов онлайн"""
-        figure = Figure(figsize=(6, 6), facecolor='white')
-        canvas = FigureCanvas(figure)
-        ax = figure.add_subplot(111)
-        
-        ax.pie([online, offline], labels=['Онлайн', 'Оффлайн'],
-               colors=['#27ae60', '#e74c3c'], autopct='%1.1f%%', startangle=90)
-        ax.set_title("Статус компьютеров", fontsize=14, fontweight='bold')
-        
-        figure.tight_layout()
-        canvas.draw()
-        self.report_container_layout.addWidget(canvas)
+        self._current_figure = figure
     
     def _create_os_pie_chart(self, os_stats):
         """Круговая диаграмма по ОС"""
@@ -791,33 +855,25 @@ class ReportsTab(QWidget):
         
         values = list(os_stats.values())
         labels = list(os_stats.keys())
-        colors = ['#3498db', '#2ecc71', '#9b59b6', '#e74c3c', '#f39c12', '#1abc9c']
+        pie_colors = ['#3498db', '#2ecc71', '#9b59b6', '#e74c3c', '#f39c12', '#1abc9c']
         
-        ax.pie(values, labels=labels, colors=colors[:len(values)],
+        ax.pie(values, labels=labels, colors=pie_colors[:len(values)],
                autopct='%1.1f%%', startangle=90)
         ax.set_title("Распределение по операционным системам", fontsize=14, fontweight='bold')
         
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
+        self._current_figure = figure
     
-    def _create_hardware_chart(self, computers):
+    def _create_hardware_chart(self, hw_data):
         """Создает график по RAM и дискам"""
         if not MATPLOTLIB_AVAILABLE:
             return
         
-        hostnames = []
-        ram_values = []
-        disk_values = []
-        
-        for comp in computers[:15]:  # Ограничиваем 15 компов
-            hostname = comp.get('hostname', 'Unknown')[:12]
-            ram = float(comp.get('ram_total', 0)) if comp.get('ram_total') else 0
-            disk = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0
-            
-            hostnames.append(hostname)
-            ram_values.append(ram)
-            disk_values.append(disk)
+        hostnames = [d['hostname'][:12] for d in hw_data[:15]]
+        ram_values = [d['ram'] for d in hw_data[:15]]
+        disk_values = [d['disk'] for d in hw_data[:15]]
         
         figure = Figure(figsize=(12, 6), facecolor='white')
         canvas = FigureCanvas(figure)
@@ -826,8 +882,8 @@ class ReportsTab(QWidget):
         x = range(len(hostnames))
         width = 0.35
         
-        bars1 = ax.bar([i - width/2 for i in x], ram_values, width, label='RAM, ГБ', color='#9b59b6')
-        bars2 = ax.bar([i + width/2 for i in x], disk_values, width, label='Диск, ГБ', color='#1abc9c')
+        ax.bar([i - width/2 for i in x], ram_values, width, label='RAM, ГБ', color='#9b59b6')
+        ax.bar([i + width/2 for i in x], disk_values, width, label='Диск, ГБ', color='#1abc9c')
         
         ax.set_title("Конфигурация RAM и дисков", fontsize=14, fontweight='bold')
         ax.set_ylabel("Объем, ГБ")
@@ -839,6 +895,7 @@ class ReportsTab(QWidget):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
+        self._current_figure = figure
     
     def clear_report_area(self):
         while self.report_container_layout.count():
@@ -852,6 +909,15 @@ class ReportsTab(QWidget):
         error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.report_container_layout.addWidget(error_label)
     
+    # ==================== ЭКСПОРТ В PDF ====================
+    
+    def _save_figure_to_bytes(self, figure):
+        """Сохраняет matplotlib фигуру в BytesIO как PNG"""
+        buf = BytesIO()
+        figure.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        return buf
+    
     def export_to_pdf(self):
         """Экспортирует сформированный отчет в PDF"""
         if not REPORTLAB_AVAILABLE:
@@ -864,6 +930,7 @@ class ReportsTab(QWidget):
         reports_path.mkdir(parents=True, exist_ok=True)
         
         report_type = self.report_type.currentText().replace("📊", "").replace("📈", "").replace("📋", "").replace("⏱️", "").strip()
+        view_type = self.report_view_type.currentText()
         
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Сохранить отчет", 
@@ -917,188 +984,191 @@ class ReportsTab(QWidget):
             
             computers = self.get_filtered_computers()
             
+            # Проверяем: если есть фигура и выбран вид графика — экспортируем как изображение
+            is_chart_view = view_type in ("Гистограмма", "Круговая диаграмма")
+            
             if "Свободное место на дисках" in report_type:
-                story.append(Paragraph("Отчет по свободному месту на дисках:", heading_style))
-                
-                table_data = [["Компьютер", "Всего, ГБ", "Использовано, ГБ", "Свободно, ГБ", "Статус"]]
-                for comp in computers[:50]:
-                    hostname = comp.get('hostname', 'Unknown')
-                    total = float(comp.get('storage_total', 0)) if comp.get('storage_total') else 0
-                    used = float(comp.get('storage_used', 0)) if comp.get('storage_used') else 0
-                    free = total - used if total else 0
+                if is_chart_view and self._current_figure:
+                    img_buf = self._save_figure_to_bytes(self._current_figure)
+                    img = Image(img_buf, width=6*inch, height=3*inch)
+                    story.append(Paragraph("Отчет по свободному месту на дисках:", heading_style))
+                    story.append(img)
+                else:
+                    story.append(Paragraph("Отчет по свободному месту на дисках:", heading_style))
                     
-                    status = "Нормально"
-                    if total and free / total < 0.1:
-                        status = "Нужно почистить!"
-                    elif total and free / total < 0.2:
-                        status = "Мало места"
+                    disk_data = self._prepare_disk_data(computers, period)
+                    table_data = [["Компьютер", "Всего, ГБ", "Использовано, ГБ", "Свободно, ГБ", "Статус"]]
+                    for d in disk_data[:50]:
+                        status = "Нормально"
+                        if d['status_key'] == 2:
+                            status = "Нужно почистить!"
+                        elif d['status_key'] == 1:
+                            status = "Мало места"
+                        
+                        used_str = f"{d['used']:.1f}" if d['used'] is not None else "—"
+                        free_str = f"{d['free']:.1f}" if d['total'] and d['used'] is not None else "—"
+                        
+                        table_data.append([
+                            d['hostname'],
+                            f"{d['total']:.1f}" if d['total'] else "—",
+                            used_str,
+                            free_str,
+                            status
+                        ])
                     
-                    table_data.append([
-                        hostname,
-                        f"{total:.1f}" if total else "—",
-                        f"{used:.1f}" if used else "—",
-                        f"{free:.1f}" if total else "—",
-                        status
-                    ])
-                
-                table = Table(table_data, repeatRows=1)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ]))
-                story.append(table)
+                    table = Table(table_data, repeatRows=1)
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 8),
+                    ]))
+                    story.append(table)
             
             elif "Средние показатели" in report_type:
-                story.append(Paragraph("Отчет по средним показателям производительности:", heading_style))
-                
-                table_data = [["Компьютер", "CPU среднее, %", "RAM среднее, %", "Disk среднее, %", "Network, МБ/с"]]
-                for comp in computers[:50]:
-                    hostname = comp.get('hostname', 'Unknown')
-                    computer_id = comp.get('computer_id')
+                if is_chart_view and self._current_figure:
+                    img_buf = self._save_figure_to_bytes(self._current_figure)
+                    img = Image(img_buf, width=6*inch, height=3*inch)
+                    story.append(Paragraph("Отчет по средним показателям производительности:", heading_style))
+                    story.append(img)
+                else:
+                    story.append(Paragraph("Отчет по средним показателям производительности:", heading_style))
                     
-                    avg_data = self._get_average_metrics_for_computer(computer_id, period)
+                    table_data = [["Компьютер", "CPU среднее, %", "RAM среднее, %", "Disk среднее, %", "Network, МБ/с"]]
+                    for comp in computers[:50]:
+                        hostname = comp.get('hostname', 'Unknown')
+                        computer_id = comp.get('computer_id')
+                        
+                        avg_data = self._get_average_metrics_for_computer(computer_id, period)
+                        
+                        if avg_data:
+                            avg_cpu = f"{avg_data.get('cpu_usage', 0):.1f}" if avg_data.get('cpu_usage') else "—"
+                            avg_ram = f"{avg_data.get('ram_usage', 0):.1f}" if avg_data.get('ram_usage') else "—"
+                            avg_disk = f"{avg_data.get('disk_usage', 0):.1f}" if avg_data.get('disk_usage') else "—"
+                            network_total = avg_data.get('network_sent_mb', 0) + avg_data.get('network_recv_mb', 0)
+                            network_str = f"{network_total:.2f}" if network_total else "—"
+                        else:
+                            avg_cpu = avg_ram = avg_disk = network_str = "—"
+                        
+                        table_data.append([hostname, avg_cpu, avg_ram, avg_disk, network_str])
                     
-                    if avg_data:
-                        avg_cpu = f"{avg_data.get('cpu_usage', 0):.1f}" if avg_data.get('cpu_usage') else "—"
-                        avg_ram = f"{avg_data.get('ram_usage', 0):.1f}" if avg_data.get('ram_usage') else "—"
-                        avg_disk = f"{avg_data.get('disk_usage', 0):.1f}" if avg_data.get('disk_usage') else "—"
-                        network_total = avg_data.get('network_sent_mb', 0) + avg_data.get('network_recv_mb', 0)
-                        network_str = f"{network_total:.2f}" if network_total else "—"
-                    else:
-                        avg_cpu = avg_ram = avg_disk = network_str = "—"
-                    
-                    table_data.append([hostname, avg_cpu, avg_ram, avg_disk, network_str])
-                
-                table = Table(table_data, repeatRows=1)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ]))
-                story.append(table)
-            
-            elif "Статус онлайн" in report_type:
-                online = sum(1 for c in computers if c.get('is_online', False))
-                offline = len(computers) - online
-                
-                story.append(Paragraph(f"Онлайн: {online} | Оффлайн: {offline}", normal_style))
-                story.append(Spacer(1, 0.2*inch))
-                
-                table_data = [["Компьютер", "Статус", "Последний онлайн", "Пользователь"]]
-                for comp in computers[:50]:
-                    hostname = comp.get('hostname', 'Unknown')
-                    is_online = comp.get('is_online', False)
-                    last_online = comp.get('last_online', 'Никогда')
-                    user = comp.get('login', 'Не назначен')
-                    
-                    status_text = "Онлайн" if is_online else "Оффлайн"
-                    table_data.append([
-                        hostname,
-                        status_text,
-                        str(last_online)[:19] if last_online and last_online != 'Никогда' else "Никогда",
-                        user
-                    ])
-                
-                table = Table(table_data, repeatRows=1)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27ae60')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ]))
-                story.append(table)
+                    table = Table(table_data, repeatRows=1)
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 8),
+                    ]))
+                    story.append(table)
             
             elif "операционным системам" in report_type:
-                os_stats = {}
-                for comp in computers:
-                    os_name = comp.get('os_name', 'Неизвестно')
-                    if not os_name or os_name == 'Unknown':
-                        os_name = 'Неизвестно'
-                    os_stats[os_name] = os_stats.get(os_name, 0) + 1
-                
-                table_data = [["Операционная система", "Количество компьютеров"]]
-                for os_name, count in os_stats.items():
-                    table_data.append([os_name, str(count)])
-                
-                table = Table(table_data, repeatRows=1)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9b59b6')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 9),
-                ]))
-                story.append(table)
+                # Всегда экспортируем круговую диаграмму
+                if self._current_figure:
+                    img_buf = self._save_figure_to_bytes(self._current_figure)
+                    img = Image(img_buf, width=5*inch, height=3.75*inch)
+                    story.append(Paragraph("Статистика по операционным системам:", heading_style))
+                    story.append(img)
+                else:
+                    # Fallback: генерируем таблицу если нет фигуры
+                    os_stats = {}
+                    for comp in computers:
+                        os_name = comp.get('os_name', 'Неизвестно')
+                        if not os_name or os_name == 'Unknown':
+                            os_name = 'Неизвестно'
+                        os_stats[os_name] = os_stats.get(os_name, 0) + 1
+                    
+                    table_data = [["Операционная система", "Количество компьютеров"]]
+                    for os_name, count in os_stats.items():
+                        table_data.append([os_name, str(count)])
+                    
+                    table = Table(table_data, repeatRows=1)
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9b59b6')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 9),
+                    ]))
+                    story.append(table)
             
             elif "Отчет по железу" in report_type:
-                story.append(Paragraph("Отчет по конфигурации железа:", heading_style))
-                
-                table_data = [["Компьютер", "CPU", "Ядра", "RAM, ГБ", "GPU", "Диск, ГБ"]]
-                for comp in computers[:50]:
-                    hostname = comp.get('hostname', 'Unknown')
-                    computer_id = comp.get('computer_id')
-                    cpu = comp.get('cpu_model', 'Unknown')
-                    cores = comp.get('cpu_cores', 0)
-                    ram = comp.get('ram_total', 0)
-                    disk = comp.get('storage_total', 0)
+                if is_chart_view and self._current_figure:
+                    img_buf = self._save_figure_to_bytes(self._current_figure)
+                    img = Image(img_buf, width=6*inch, height=3*inch)
+                    story.append(Paragraph("Отчет по конфигурации железа:", heading_style))
+                    story.append(img)
+                else:
+                    story.append(Paragraph("Отчет по конфигурации железа:", heading_style))
                     
-                    # Получаем GPU
-                    gpu = "—"
-                    if computer_id:
-                        full_info = self._get_computer_full_info(computer_id)
-                        gpu = full_info.get('gpu_model', '')
-                        if not gpu or gpu == 'Unknown':
-                            gpu = "—"
+                    table_data = [["Компьютер", "CPU", "Ядра", "RAM, ГБ", "GPU", "Диск, ГБ"]]
+                    for comp in computers[:50]:
+                        hostname = comp.get('hostname', 'Unknown')
+                        computer_id = comp.get('computer_id')
+                        cpu = comp.get('cpu_model', 'Unknown') or 'Unknown'
+                        cores = comp.get('cpu_cores', 0)
+                        ram_val = comp.get('ram_total', 0)
+                        disk_val = comp.get('storage_total', 0)
+                        # Безопасное приведение к float для форматирования
+                        try:
+                            ram_f = float(ram_val) if ram_val else 0.0
+                        except (ValueError, TypeError):
+                            ram_f = 0.0
+                        try:
+                            disk_f = float(disk_val) if disk_val else 0.0
+                        except (ValueError, TypeError):
+                            disk_f = 0.0
+                        
+                        # Получаем GPU
+                        gpu = "—"
+                        if computer_id:
+                            full_info = self._get_computer_full_info(computer_id)
+                            gpu = full_info.get('gpu_model', '')
+                            if not gpu or gpu == 'Unknown':
+                                gpu = "—"
+                        
+                        ram_str = f"{ram_f:.1f}" if ram_f else "—"
+                        disk_str = f"{disk_f:.1f}" if disk_f else "—"
+                        
+                        table_data.append([
+                            hostname,
+                            cpu,
+                            str(cores) if cores else "—",
+                            ram_str,
+                            gpu,
+                            disk_str
+                        ])
                     
-                    table_data.append([
-                        hostname,
-                        cpu,
-                        str(cores) if cores else "—",
-                        f"{ram:.1f}" if ram else "—",
-                        gpu,
-                        f"{disk:.1f}" if disk else "—"
-                    ])
-                
-                table = Table(table_data, repeatRows=1)
-                table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9b59b6')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 10),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                    ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                    ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                ]))
-                story.append(table)
+                    table = Table(table_data, repeatRows=1)
+                    table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9b59b6')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
+                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                        ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ]))
+                    story.append(table)
             
             elif "Время работы" in report_type:
                 story.append(Paragraph("Отчет по времени работы компьютеров:", heading_style))

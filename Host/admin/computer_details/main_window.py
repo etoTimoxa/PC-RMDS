@@ -426,7 +426,7 @@ class RemoteScreenWindow(QMainWindow):
         status_layout.addWidget(self.resolution_label)
         
         # Кнопка закрытия
-        close_btn = QPushButton("✕ Закрыть")
+        close_btn = QPushButton("Закрыть")
         close_btn.setFixedSize(80, 25)
         close_btn.setStyleSheet("""
             QPushButton {

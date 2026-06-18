@@ -16,6 +16,7 @@ from ..styles import get_main_window_stylesheet
 from .tabs.computers_tab import ComputersTab
 from .tabs.users_tab import UsersTab
 from .tabs.reports_tab import ReportsTab
+from .tabs.groups_tab import GroupsTab
 from ..notifications_dialog import NotificationsPopover, NotificationBadge
 
 
@@ -227,10 +228,12 @@ class AdminPanelWindow(QMainWindow):
         
         self.computers_tab = ComputersTab(self)
         self.users_tab = UsersTab(self)
+        self.groups_tab = GroupsTab(self)
         self.reports_tab = ReportsTab(self)
         
         self.tab_widget.addTab(self.computers_tab, "Компьютеры")
         self.tab_widget.addTab(self.users_tab, "Пользователи")
+        self.tab_widget.addTab(self.groups_tab, "Группы")
         self.tab_widget.addTab(self.reports_tab, "Отчеты")
         
         main_layout.addWidget(self.tab_widget)
@@ -271,7 +274,7 @@ class AdminPanelWindow(QMainWindow):
         right_layout = QHBoxLayout()
         right_layout.setSpacing(10)
         
-        settings_btn = QPushButton("⚙ Настройки")
+        settings_btn = QPushButton("Настройки")
         settings_btn.setMinimumHeight(32)
         settings_btn.setMinimumWidth(100)
         settings_btn.setStyleSheet("""
@@ -288,7 +291,7 @@ class AdminPanelWindow(QMainWindow):
         settings_btn.clicked.connect(self.open_settings)
         right_layout.addWidget(settings_btn)
         
-        logout_btn = QPushButton("🚪 Выйти")
+        logout_btn = QPushButton("Выйти")
         logout_btn.setMinimumHeight(32)
         logout_btn.setMinimumWidth(100)
         logout_btn.setStyleSheet("""
@@ -344,6 +347,7 @@ class AdminPanelWindow(QMainWindow):
         try:
             self.computers_tab.refresh_data()
             self.users_tab.refresh_data()
+            self.groups_tab.refresh_data()
         except Exception as e:
             print(f"Ошибка обновления данных: {e}")
     
@@ -353,18 +357,18 @@ class AdminPanelWindow(QMainWindow):
         self.tray_icon.setToolTip("PC-RMDS | Администратор | Агент активен")
         
         tray_menu = QMenu()
-        show_action = QAction("👁 Показать панель", self)
+        show_action = QAction("Показать панель", self)
         show_action.triggered.connect(self.show)
         tray_menu.addAction(show_action)
         tray_menu.addSeparator()
-        settings_action = QAction("⚙ Настройки", self)
+        settings_action = QAction("Настройки", self)
         settings_action.triggered.connect(self.open_settings)
         tray_menu.addAction(settings_action)
-        agent_status_action = QAction("🤖 Статус агента", self)
+        agent_status_action = QAction("Статус агента", self)
         agent_status_action.triggered.connect(self.show_agent_status)
         tray_menu.addAction(agent_status_action)
         tray_menu.addSeparator()
-        quit_action = QAction("✖ Выйти", self)
+        quit_action = QAction("Выйти", self)
         quit_action.triggered.connect(self.logout)
         tray_menu.addAction(quit_action)
         
@@ -505,10 +509,10 @@ class AdminPanelWindow(QMainWindow):
         """Проверяет наличие новых уведомлений и обновляет бейдж"""
         try:
             data = DatabaseManager.get_recent_notifications(
-                hours=2,
+                hours=24,
                 cpu_threshold=85.0,
                 ram_threshold=85.0,
-                limit=10
+                limit=100
             )
             
             if data:

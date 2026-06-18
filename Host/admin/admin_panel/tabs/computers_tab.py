@@ -59,19 +59,19 @@ class ComputersTab(QWidget):
         filter_layout.addStretch()
         
         # Кнопки действий
-        add_btn = QPushButton("➕ Добавить компьютер")
+        add_btn = QPushButton("Добавить компьютер")
         add_btn.setMinimumHeight(35)
         add_btn.clicked.connect(self.add_computer)
         filter_layout.addWidget(add_btn)
         
         
-        delete_btn = QPushButton("🗑️ Удалить")
+        delete_btn = QPushButton("Удалить")
         delete_btn.setMinimumHeight(35)
         delete_btn.setStyleSheet("background-color: #e74c3c; color: white;")
         delete_btn.clicked.connect(self.delete_selected_computer)
         filter_layout.addWidget(delete_btn)
         
-        refresh_btn = QPushButton("🔄 Обновить")
+        refresh_btn = QPushButton("Обновить")
         refresh_btn.setMinimumHeight(35)
         refresh_btn.clicked.connect(self.refresh_data)
         filter_layout.addWidget(refresh_btn)
@@ -164,9 +164,6 @@ class ComputersTab(QWidget):
         """Обновляет отображение таблицы"""
         self.computers_table.setRowCount(len(computers))
         
-        online_count = 0
-        offline_count = 0
-        
         for row, comp in enumerate(computers):
             if not isinstance(comp, dict):
                 continue
@@ -177,11 +174,6 @@ class ComputersTab(QWidget):
             user_login = comp.get('login', comp.get('user_login', 'Не назначен'))
             
             is_online = comp.get('is_online', 0) == 1
-            if is_online:
-                online_count += 1
-            else:
-                offline_count += 1
-            
             status_text = "Онлайн" if is_online else "Офлайн"
             status_color = "#27ae60" if is_online else "#e74c3c"
             status_item = QTableWidgetItem(status_text)
@@ -198,8 +190,6 @@ class ComputersTab(QWidget):
             self.computers_table.setItem(row, 4, status_item)
             self.computers_table.setItem(row, 5, QTableWidgetItem(str(last_online)))
         
-        if self.parent_window:
-            self.parent_window.statusBar().showMessage(f"Онлайн: {online_count}, Офлайн: {offline_count} | {datetime.now().strftime('%H:%M:%S')}")
     
     def refresh_data(self):
         """Обновляет данные таблицы"""
@@ -253,7 +243,20 @@ class ComputersTab(QWidget):
             print(f"Ошибка открытия деталей компьютера: {e}")
     
     def add_computer(self):
-        """Открывает диалог добавления нового компьютера"""
+        """Открывает диалог добавления нового компьютера (только если авто-регистрация не сработала)"""
+        reply = QMessageBox.question(
+            self,
+            "Внимание",
+            "Данная функция предназначена только для ручного добавления компьютера,\n"
+            "если по какой-то причине не удалось зарегистрировать ПК при обычной регистрации.\n"
+            "Обычно компьютер регистрируется автоматически при входе в систему.\n\n"
+            "Продолжить?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
         dialog = AddComputerDialog(self)
         if dialog.exec():
             self.refresh_data()

@@ -38,37 +38,37 @@ class UsersTab(QWidget):
         
         filter_layout.addWidget(QLabel("Поиск:"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Логин, имя, email...")
+        self.search_input.setPlaceholderText("Логин, имя...")
         self.search_input.setMinimumWidth(200)
         self.search_input.textChanged.connect(self.apply_filters)
         filter_layout.addWidget(self.search_input)
         
         filter_layout.addStretch()
         
-        add_btn = QPushButton("➕ Добавить пользователя")
+        add_btn = QPushButton("Добавить пользователя")
         add_btn.setMinimumHeight(35)
         add_btn.clicked.connect(self.add_user)
         filter_layout.addWidget(add_btn)
         
         
-        reset_pass_btn = QPushButton("🔑 Сброс пароля")
+        reset_pass_btn = QPushButton("Сброс пароля")
         reset_pass_btn.setMinimumHeight(35)
         reset_pass_btn.clicked.connect(self.reset_user_password)
         filter_layout.addWidget(reset_pass_btn)
         
-        self.block_btn = QPushButton("🔒 Блокировать / Разблокировать")
+        self.block_btn = QPushButton("Блокировать / Разблокировать")
         self.block_btn.setMinimumHeight(35)
         self.block_btn.setStyleSheet("background-color: #f39c12; color: white;")
         self.block_btn.clicked.connect(self.toggle_block_user)
         filter_layout.addWidget(self.block_btn)
 
-        delete_btn = QPushButton("🗑️ Удалить")
+        delete_btn = QPushButton("Удалить")
         delete_btn.setMinimumHeight(35)
         delete_btn.setStyleSheet("background-color: #e74c3c; color: white;")
         delete_btn.clicked.connect(self.delete_selected_user)
         filter_layout.addWidget(delete_btn)
         
-        refresh_btn = QPushButton("🔄 Обновить")
+        refresh_btn = QPushButton("Обновить")
         refresh_btn.setMinimumHeight(35)
         refresh_btn.clicked.connect(self.refresh_data)
         filter_layout.addWidget(refresh_btn)
@@ -104,9 +104,9 @@ class UsersTab(QWidget):
         table_layout.addLayout(table_header_layout)
         
         self.users_table = QTableWidget()
-        self.users_table.setColumnCount(7)
+        self.users_table.setColumnCount(6)
         self.users_table.setHorizontalHeaderLabels([
-            "ID", "Логин", "Полное имя", "Email", "Роль", "Активен", "Последний вход"
+            "ID", "Логин", "Полное имя", "Роль", "Активен", "Последний вход"
         ])
         
         header = self.users_table.horizontalHeader()
@@ -115,8 +115,7 @@ class UsersTab(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         
         self.users_table.setAlternatingRowColors(True)
         self.users_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -177,10 +176,9 @@ class UsersTab(QWidget):
             self.users_table.setItem(row, 0, QTableWidgetItem(str(user_id)))
             self.users_table.setItem(row, 1, QTableWidgetItem(str(login)))
             self.users_table.setItem(row, 2, QTableWidgetItem(str(full_name)))
-            self.users_table.setItem(row, 3, QTableWidgetItem(str(email)))
-            self.users_table.setItem(row, 4, QTableWidgetItem(str(role_name)))
-            self.users_table.setItem(row, 5, active_item)
-            self.users_table.setItem(row, 6, QTableWidgetItem(str(last_login)))
+            self.users_table.setItem(row, 3, QTableWidgetItem(str(role_name)))
+            self.users_table.setItem(row, 4, active_item)
+            self.users_table.setItem(row, 5, QTableWidgetItem(str(last_login)))
     
     def refresh_data(self):
         """Обновляет данные таблицы"""
@@ -233,16 +231,16 @@ class UsersTab(QWidget):
         """Обновляет текст кнопки блокировки в зависимости от статуса выбранного пользователя"""
         selected_rows = self.users_table.selectedItems()
         if not selected_rows:
-            self.block_btn.setText("🔒 Блокировать / Разблокировать")
+            self.block_btn.setText("Блокировать / Разблокировать")
             return
         
         row = selected_rows[0].row()
         active_item = self.users_table.item(row, 5)
         
         if active_item and active_item.text() == "Да":
-            self.block_btn.setText("🔒 Заблокировать")
+            self.block_btn.setText("Заблокировать")
         else:
-            self.block_btn.setText("🔓 Разблокировать")
+            self.block_btn.setText("Разблокировать")
     
     def reset_user_password(self):
         """Сбрасывает пароль пользователя"""

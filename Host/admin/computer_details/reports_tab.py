@@ -1,13 +1,13 @@
 """Вкладка "Отчеты" - формирование отчетов и экспорт в PDF"""
 
 import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
+from io import BytesIO
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-                            QLabel, QComboBox, QPushButton, QScrollArea,
-                            QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
-                            QFileDialog, QMessageBox)
+                             QLabel, QComboBox, QPushButton, QScrollArea,
+                             QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
+                             QFileDialog, QMessageBox, QProgressBar, QApplication)
 from qtpy.QtCore import Qt
 
 from core.api_client import APIClient
@@ -46,6 +46,7 @@ class ReportsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
+        self._current_figure = None  # Храним текущую фигуру для экспорта
         self.init_ui()
     
     def init_ui(self):
@@ -96,7 +97,7 @@ class ReportsTab(QWidget):
         self.generate_btn.clicked.connect(self.generate_report)
         button_layout.addWidget(self.generate_btn)
         
-        self.export_pdf_btn = QPushButton("📄 Экспорт в PDF")
+        self.export_pdf_btn = QPushButton("Экспорт в PDF")
         self.export_pdf_btn.setMinimumHeight(35)
         self.export_pdf_btn.setMinimumWidth(150)
         self.export_pdf_btn.setStyleSheet("""
@@ -135,15 +136,20 @@ class ReportsTab(QWidget):
     def on_data_type_changed(self, data_type):
         self.report_metric.setVisible(data_type == "Метрики")
         
+        self.report_view_type.clear()
         if data_type == "События":
-            self.report_view_type.clear()
-            self.report_view_type.addItems(["Таблица", "Круговая диаграмма"])
+            self.report_view_type.addItems(["Таблица"])
         elif data_type == "Аномалии":
-            self.report_view_type.clear()
-            self.report_view_type.addItems(["Таблица", "Гистограмма"])
+            if MATPLOTLIB_AVAILABLE:
+                self.report_view_type.addItems(["Таблица", "Гистограмма"])
+            else:
+                self.report_view_type.addItems(["Таблица"])
         else:
-            self.report_view_type.clear()
-            self.report_view_type.addItems(["Таблица", "Гистограмма", "Линейный график"])
+            items = ["Таблица"]
+            if MATPLOTLIB_AVAILABLE:
+                items.append("Гистограмма")
+                items.append("Линейный график")
+            self.report_view_type.addItems(items)
     
     def generate_report(self):
         """Формирует отчет на основе текущих данных"""
@@ -151,6 +157,7 @@ class ReportsTab(QWidget):
         view_type = self.report_view_type.currentText()
         
         self.clear_report_area()
+        self._current_figure = None
         
         period = self.parent_window.date_range.get_period() if self.parent_window else {}
         hostname = self.parent_window.hostname if self.parent_window else "Unknown"
@@ -196,10 +203,8 @@ class ReportsTab(QWidget):
             self._show_no_data_error()
             return
         
-        if view_type == "Таблица":
-            self._create_events_table(statistics)
-        elif view_type == "Круговая диаграмма":
-            self._create_events_pie_chart(statistics)
+        # Только таблица
+        self._create_events_table(statistics)
     
     def _generate_anomalies_report(self, view_type):
         anomalies = self.parent_window.anomalies_tab.anomalies if self.parent_window else []
@@ -214,27 +219,41 @@ class ReportsTab(QWidget):
             self._create_anomalies_histogram(anomalies)
     
     def _create_metrics_table(self, metrics, selected_metric):
+        """Создает таблицу метрик с постепенной загрузкой"""
         if selected_metric == "Все метрики":
-            table = QTableWidget()
-            table.setColumnCount(6)
-            table.setHorizontalHeaderLabels(["Время", "CPU, %", "RAM, %", "RAM, GB", "Disk, %", "Network, MB/s"])
-            table.setRowCount(len(metrics))
+            col_count = 6
+            headers = ["Время", "CPU, %", "RAM, %", "RAM, GB", "Disk, %", "Network, MB/s"]
         else:
-            metric_map = {
-                "CPU, %": "cpu_usage",
-                "RAM, %": "ram_usage", 
-                "Disk, %": "disk_usage",
-                "Network, MB/s": "network"
-            }
-            metric_key = metric_map.get(selected_metric, "cpu_usage")
-            
-            table = QTableWidget()
-            table.setColumnCount(2)
-            table.setHorizontalHeaderLabels(["Время", selected_metric])
-            table.setRowCount(len(metrics))
+            col_count = 2
+            headers = ["Время", selected_metric]
         
+        table = QTableWidget()
+        table.setColumnCount(col_count)
+        table.setHorizontalHeaderLabels(headers)
+        table.setRowCount(len(metrics))
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         table.setAlternatingRowColors(True)
+        
+        # Прогресс-бар
+        progress_widget = QWidget()
+        progress_layout = QVBoxLayout(progress_widget)
+        progress_label = QLabel("Загрузка данных метрик...")
+        progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, len(metrics))
+        progress_bar.setValue(0)
+        progress_layout.addWidget(progress_label)
+        progress_layout.addWidget(progress_bar)
+        self.report_container_layout.addWidget(progress_widget)
+        self.report_container_layout.addWidget(table)
+        
+        metric_map = {
+            "CPU, %": "cpu_usage",
+            "RAM, %": "ram_usage", 
+            "Disk, %": "disk_usage",
+            "Network, MB/s": "network"
+        }
+        metric_key = metric_map.get(selected_metric, "cpu_usage")
         
         for row, metric in enumerate(metrics):
             timestamp = metric.get('timestamp', '')[:19]
@@ -255,24 +274,40 @@ class ReportsTab(QWidget):
             else:
                 if selected_metric == "Network, MB/s":
                     value = metric.get('network_sent_mb', 0) + metric.get('network_recv_mb', 0)
-                    value_str = f"{value:.2f}"
+                    value_str = f"{value:.2f}" if value else "—"
                 else:
                     value = metric.get(metric_key, 0)
                     value_str = f"{value:.1f}" if value else "—"
                 
                 table.setItem(row, 0, QTableWidgetItem(timestamp))
                 table.setItem(row, 1, QTableWidgetItem(value_str))
+            
+            progress_bar.setValue(row + 1)
+            progress_label.setText(f"Загрузка... {row + 1}/{len(metrics)}")
+            QApplication.processEvents()
         
-        self.report_container_layout.addWidget(table)
+        progress_widget.deleteLater()
     
     def _create_metrics_histogram(self, metrics, selected_metric):
         if not MATPLOTLIB_AVAILABLE:
             self._show_matplotlib_error()
             return
         
+        # Показываем прогресс
+        progress_widget = QWidget()
+        progress_layout = QVBoxLayout(progress_widget)
+        progress_label = QLabel("Загрузка данных...")
+        progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, len(metrics))
+        progress_bar.setValue(0)
+        progress_layout.addWidget(progress_label)
+        progress_layout.addWidget(progress_bar)
+        self.report_container_layout.addWidget(progress_widget)
+        
         # Группируем по дням
         daily_data = {}
-        for m in metrics:
+        for row, m in enumerate(metrics):
             date_str = m.get('timestamp', '')[:10]
             if selected_metric == "Network, MB/s":
                 value = m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0)
@@ -285,6 +320,15 @@ class ReportsTab(QWidget):
             if date_str not in daily_data:
                 daily_data[date_str] = []
             daily_data[date_str].append(value)
+            
+            if (row + 1) % 10 == 0:
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(metrics)}")
+                QApplication.processEvents()
+        
+        progress_bar.setValue(len(metrics))
+        QApplication.processEvents()
+        progress_widget.deleteLater()
         
         categories = []
         values = []
@@ -309,19 +353,36 @@ class ReportsTab(QWidget):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
+        self._current_figure = figure
     
     def _create_metrics_line_chart(self, metrics, selected_metric):
         if not MATPLOTLIB_AVAILABLE:
             self._show_matplotlib_error()
             return
         
-        timestamps = [m.get('timestamp', '')[:16] for m in metrics[:100]]
+        # Показываем прогресс
+        progress_widget = QWidget()
+        progress_layout = QVBoxLayout(progress_widget)
+        progress_label = QLabel("Построение графика...")
+        progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, min(len(metrics), 100))
+        progress_bar.setValue(0)
+        progress_layout.addWidget(progress_label)
+        progress_layout.addWidget(progress_bar)
+        self.report_container_layout.addWidget(progress_widget)
+        
+        progress_bar.setValue(50)
+        QApplication.processEvents()
+        
+        selected_metrics = metrics[:100]
+        timestamps = [m.get('timestamp', '')[:16] for m in selected_metrics]
         
         if selected_metric == "Все метрики":
-            cpu_vals = [m.get('cpu_usage', 0) for m in metrics[:100]]
-            ram_vals = [m.get('ram_usage', 0) for m in metrics[:100]]
-            disk_vals = [m.get('disk_usage', 0) for m in metrics[:100]]
-            network_vals = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) for m in metrics[:100]]
+            cpu_vals = [m.get('cpu_usage', 0) for m in selected_metrics]
+            ram_vals = [m.get('ram_usage', 0) for m in selected_metrics]
+            disk_vals = [m.get('disk_usage', 0) for m in selected_metrics]
+            network_vals = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) for m in selected_metrics]
             
             figure = Figure(figsize=(10, 5), facecolor='white')
             canvas = FigureCanvas(figure)
@@ -345,9 +406,9 @@ class ReportsTab(QWidget):
         else:
             metric_map = {"CPU, %": "cpu_usage", "RAM, %": "ram_usage", "Disk, %": "disk_usage"}
             if selected_metric == "Network, MB/s":
-                values = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) for m in metrics[:100]]
+                values = [m.get('network_sent_mb', 0) + m.get('network_recv_mb', 0) for m in selected_metrics]
             else:
-                values = [m.get(metric_map.get(selected_metric, "cpu_usage"), 0) for m in metrics[:100]]
+                values = [m.get(metric_map.get(selected_metric, "cpu_usage"), 0) for m in selected_metrics]
             
             figure = Figure(figsize=(10, 5), facecolor='white')
             canvas = FigureCanvas(figure)
@@ -358,11 +419,20 @@ class ReportsTab(QWidget):
             ax.tick_params(axis='x', rotation=45)
             ax.grid(True, alpha=0.3)
         
+        progress_bar.setRange(0, 100)
+        progress_bar.setValue(100)
+        progress_label.setText("График построен")
+        QApplication.processEvents()
+        
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
+        self._current_figure = figure
+        
+        progress_widget.deleteLater()
     
     def _create_events_table(self, statistics):
+        """Создает таблицу событий"""
         table = QTableWidget()
         table.setColumnCount(2)
         table.setHorizontalHeaderLabels(["Тип события", "Количество"])
@@ -376,38 +446,27 @@ class ReportsTab(QWidget):
         
         self.report_container_layout.addWidget(table)
     
-    def _create_events_pie_chart(self, statistics):
-        if not MATPLOTLIB_AVAILABLE:
-            self._show_matplotlib_error()
-            return
-        
-        figure = Figure(figsize=(8, 6), facecolor='white')
-        canvas = FigureCanvas(figure)
-        ax = figure.add_subplot(111)
-        
-        categories = list(statistics.keys())
-        values = list(statistics.values())
-        colors = ['#ff8c42', '#2ecc71', '#3498db', '#9b59b6', '#e74c3c', '#1abc9c', '#f39c12']
-        
-        wedges, texts, autotexts = ax.pie(values, labels=categories, autopct='%1.1f%%',
-                                          colors=colors[:len(categories)], startangle=90)
-        ax.set_title("Распределение событий по типам", fontsize=14, fontweight='bold')
-        
-        for autotext in autotexts:
-            autotext.set_color('white')
-            autotext.set_fontweight('bold')
-        
-        figure.tight_layout()
-        canvas.draw()
-        self.report_container_layout.addWidget(canvas)
-    
     def _create_anomalies_table(self, anomalies):
+        """Создает таблицу аномалий с постепенной загрузкой"""
         table = QTableWidget()
         table.setColumnCount(4)
         table.setHorizontalHeaderLabels(["Время", "CPU, %", "RAM, %", "Тип"])
         table.setRowCount(len(anomalies))
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         table.setAlternatingRowColors(True)
+        
+        # Прогресс-бар
+        progress_widget = QWidget()
+        progress_layout = QVBoxLayout(progress_widget)
+        progress_label = QLabel("Загрузка данных об аномалиях...")
+        progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, len(anomalies))
+        progress_bar.setValue(0)
+        progress_layout.addWidget(progress_label)
+        progress_layout.addWidget(progress_bar)
+        self.report_container_layout.addWidget(progress_widget)
+        self.report_container_layout.addWidget(table)
         
         cpu_thresh, ram_thresh = self.parent_window.anomalies_tab.get_thresholds() if self.parent_window else (90, 90)
         
@@ -426,19 +485,44 @@ class ReportsTab(QWidget):
             table.setItem(row, 1, QTableWidgetItem(f"{cpu:.1f}" if cpu else "—"))
             table.setItem(row, 2, QTableWidgetItem(f"{ram:.1f}" if ram else "—"))
             table.setItem(row, 3, QTableWidgetItem(", ".join(anomaly_type) if anomaly_type else "Высокая нагрузка"))
+            
+            progress_bar.setValue(row + 1)
+            progress_label.setText(f"Загрузка... {row + 1}/{len(anomalies)}")
+            QApplication.processEvents()
         
-        self.report_container_layout.addWidget(table)
+        progress_widget.deleteLater()
     
     def _create_anomalies_histogram(self, anomalies):
         if not MATPLOTLIB_AVAILABLE:
             self._show_matplotlib_error()
             return
         
+        # Показываем прогресс
+        progress_widget = QWidget()
+        progress_layout = QVBoxLayout(progress_widget)
+        progress_label = QLabel("Загрузка данных...")
+        progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        progress_bar = QProgressBar()
+        progress_bar.setRange(0, len(anomalies))
+        progress_bar.setValue(0)
+        progress_layout.addWidget(progress_label)
+        progress_layout.addWidget(progress_bar)
+        self.report_container_layout.addWidget(progress_widget)
+        
         daily_anomalies = {}
-        for anomaly in anomalies:
+        for row, anomaly in enumerate(anomalies):
             date_str = anomaly.get('timestamp', '')[:10]
             if date_str:
                 daily_anomalies[date_str] = daily_anomalies.get(date_str, 0) + 1
+            
+            if (row + 1) % 10 == 0:
+                progress_bar.setValue(row + 1)
+                progress_label.setText(f"Загрузка... {row + 1}/{len(anomalies)}")
+                QApplication.processEvents()
+        
+        progress_bar.setValue(len(anomalies))
+        QApplication.processEvents()
+        progress_widget.deleteLater()
         
         figure = Figure(figsize=(10, 5), facecolor='white')
         canvas = FigureCanvas(figure)
@@ -460,6 +544,16 @@ class ReportsTab(QWidget):
         figure.tight_layout()
         canvas.draw()
         self.report_container_layout.addWidget(canvas)
+        self._current_figure = figure
+    
+    # ==================== ЭКСПОРТ В PDF ====================
+    
+    def _save_figure_to_bytes(self, figure):
+        """Сохраняет matplotlib фигуру в BytesIO как PNG"""
+        buf = BytesIO()
+        figure.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        return buf
     
     def export_to_pdf(self):
         """Экспортирует сформированный отчет в PDF"""
@@ -474,6 +568,7 @@ class ReportsTab(QWidget):
         
         hostname = self.parent_window.hostname if self.parent_window else "Unknown"
         data_type = self.report_data_type.currentText()
+        view_type = self.report_view_type.currentText()
         
         file_path, _ = QFileDialog.getSaveFileName(
             self, "Сохранить отчет", 
@@ -524,39 +619,47 @@ class ReportsTab(QWidget):
             story.append(Paragraph(f"Период: {period.get('from', '')} — {period.get('to', '')}", normal_style))
             story.append(Spacer(1, 0.3*inch))
             
+            is_chart_view = view_type in ("Гистограмма", "Линейный график")
+            
             # Добавляем данные в отчет
             if data_type == "Метрики":
-                metrics = self.parent_window.metrics_tab.get_current_metrics() if self.parent_window else []
-                if metrics:
-                    story.append(Paragraph("Таблица метрик:", heading_style))
-                    
-                    table_data = [["Время", "CPU, %", "RAM, %", "RAM, GB", "Disk, %", "Network, MB/s"]]
-                    for metric in metrics[:50]:  # Ограничиваем 50 записей для PDF
-                        timestamp = metric.get('timestamp', '')[:19]
-                        cpu = f"{metric.get('cpu_usage', 0):.1f}" if metric.get('cpu_usage') else "—"
-                        ram_percent = f"{metric.get('ram_usage', 0):.1f}" if metric.get('ram_usage') else "—"
-                        ram_gb = f"{metric.get('ram_used_gb', 0):.1f}" if metric.get('ram_used_gb') else "—"
-                        disk = f"{metric.get('disk_usage', 0):.1f}" if metric.get('disk_usage') else "—"
-                        network = metric.get('network_sent_mb', 0) + metric.get('network_recv_mb', 0)
-                        network_str = f"{network:.2f}" if network else "—"
+                if is_chart_view and self._current_figure:
+                    img_buf = self._save_figure_to_bytes(self._current_figure)
+                    img = RLImage(img_buf, width=6*inch, height=3*inch)
+                    story.append(Paragraph("График метрик:", heading_style))
+                    story.append(img)
+                else:
+                    metrics = self.parent_window.metrics_tab.get_current_metrics() if self.parent_window else []
+                    if metrics:
+                        story.append(Paragraph("Таблица метрик:", heading_style))
                         
-                        table_data.append([timestamp, cpu, ram_percent, ram_gb, disk, network_str])
-                    
-                    table = Table(table_data, repeatRows=1)
-                    table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 10),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                        ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                        ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ]))
-                    story.append(table)
-                    story.append(Spacer(1, 0.2*inch))
+                        table_data = [["Время", "CPU, %", "RAM, %", "RAM, GB", "Disk, %", "Network, MB/s"]]
+                        for metric in metrics[:50]:
+                            timestamp = metric.get('timestamp', '')[:19]
+                            cpu = f"{metric.get('cpu_usage', 0):.1f}" if metric.get('cpu_usage') else "—"
+                            ram_percent = f"{metric.get('ram_usage', 0):.1f}" if metric.get('ram_usage') else "—"
+                            ram_gb = f"{metric.get('ram_used_gb', 0):.1f}" if metric.get('ram_used_gb') else "—"
+                            disk = f"{metric.get('disk_usage', 0):.1f}" if metric.get('disk_usage') else "—"
+                            network = metric.get('network_sent_mb', 0) + metric.get('network_recv_mb', 0)
+                            network_str = f"{network:.2f}" if network else "—"
+                            
+                            table_data.append([timestamp, cpu, ram_percent, ram_gb, disk, network_str])
+                        
+                        table = Table(table_data, repeatRows=1)
+                        table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#ff8c42')),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 10),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                            ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
+                            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                            ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                            ('FONTSIZE', (0, 1), (-1, -1), 8),
+                        ]))
+                        story.append(table)
+                        story.append(Spacer(1, 0.2*inch))
             
             elif data_type == "События":
                 statistics = self.parent_window.events_tab.get_event_statistics() if self.parent_window else {}
@@ -584,43 +687,49 @@ class ReportsTab(QWidget):
                     story.append(Spacer(1, 0.2*inch))
             
             elif data_type == "Аномалии":
-                anomalies = self.parent_window.anomalies_tab.anomalies if self.parent_window else []
-                cpu_thresh, ram_thresh = self.parent_window.anomalies_tab.get_thresholds() if self.parent_window else (90, 90)
-                
-                if anomalies:
-                    story.append(Paragraph("Обнаруженные аномалии:", heading_style))
+                if is_chart_view and self._current_figure:
+                    img_buf = self._save_figure_to_bytes(self._current_figure)
+                    img = RLImage(img_buf, width=6*inch, height=3*inch)
+                    story.append(Paragraph("График аномалий:", heading_style))
+                    story.append(img)
+                else:
+                    anomalies = self.parent_window.anomalies_tab.anomalies if self.parent_window else []
+                    cpu_thresh, ram_thresh = self.parent_window.anomalies_tab.get_thresholds() if self.parent_window else (90, 90)
                     
-                    table_data = [["Время", "CPU, %", "RAM, %", "Тип аномалии"]]
-                    for anomaly in anomalies[:50]:  # Ограничиваем 50 записей
-                        timestamp = anomaly.get('timestamp', '')[:19]
-                        cpu = f"{anomaly.get('cpu_usage', 0):.1f}" if anomaly.get('cpu_usage') else "—"
-                        ram = f"{anomaly.get('ram_usage', 0):.1f}" if anomaly.get('ram_usage') else "—"
+                    if anomalies:
+                        story.append(Paragraph("Обнаруженные аномалии:", heading_style))
                         
-                        anomaly_type = []
-                        cpu_val = anomaly.get('cpu_usage', 0)
-                        ram_val = anomaly.get('ram_usage', 0)
-                        if cpu_val and isinstance(cpu_val, (int, float)) and cpu_val > cpu_thresh:
-                            anomaly_type.append(f"CPU > {cpu_thresh}%")
-                        if ram_val and isinstance(ram_val, (int, float)) and ram_val > ram_thresh:
-                            anomaly_type.append(f"RAM > {ram_thresh}%")
+                        table_data = [["Время", "CPU, %", "RAM, %", "Тип аномалии"]]
+                        for anomaly in anomalies[:50]:
+                            timestamp = anomaly.get('timestamp', '')[:19]
+                            cpu = f"{anomaly.get('cpu_usage', 0):.1f}" if anomaly.get('cpu_usage') else "—"
+                            ram = f"{anomaly.get('ram_usage', 0):.1f}" if anomaly.get('ram_usage') else "—"
+                            
+                            anomaly_type = []
+                            cpu_val = anomaly.get('cpu_usage', 0)
+                            ram_val = anomaly.get('ram_usage', 0)
+                            if cpu_val and isinstance(cpu_val, (int, float)) and cpu_val > cpu_thresh:
+                                anomaly_type.append(f"CPU > {cpu_thresh}%")
+                            if ram_val and isinstance(ram_val, (int, float)) and ram_val > ram_thresh:
+                                anomaly_type.append(f"RAM > {ram_thresh}%")
+                            
+                            type_str = ", ".join(anomaly_type) if anomaly_type else "Высокая нагрузка"
+                            table_data.append([timestamp, cpu, ram, type_str])
                         
-                        type_str = ", ".join(anomaly_type) if anomaly_type else "Высокая нагрузка"
-                        table_data.append([timestamp, cpu, ram, type_str])
-                    
-                    table = Table(table_data, repeatRows=1)
-                    table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 10),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                        ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
-                        ('GRID', (0, 0), (-1, -1), 1, colors.black),
-                        ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ]))
-                    story.append(table)
+                        table = Table(table_data, repeatRows=1)
+                        table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e74c3c')),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'RussianFont'),
+                            ('FONTSIZE', (0, 0), (-1, 0), 10),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                            ('BACKGROUND', (0, 1), (-1, -1), colors.whitesmoke),
+                            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                            ('FONTNAME', (0, 1), (-1, -1), 'RussianFont'),
+                            ('FONTSIZE', (0, 1), (-1, -1), 8),
+                        ]))
+                        story.append(table)
             
             doc.build(story)
             QMessageBox.information(self, "Успех", f"Отчет сохранен в:\n{file_path}")

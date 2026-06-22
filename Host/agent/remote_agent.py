@@ -1179,12 +1179,8 @@ class RemoteAgentThread(QThread):
                             audio_task.cancel()
                             self.log_message.emit(f"🔇 Остановка аудио трансляции")
                         
-                        # Сбрасываем регистрацию компьютера на сервере
-                        try:
-                            APIClient.update_computer_status(self.computer_id, False, self.session_id)
-                            self.log_message.emit(f"✅ Регистрация на сервере сброшена, компьютер помечен как не в трансляции")
-                        except Exception as e:
-                            self.log_message.emit(f"⚠️ Ошибка сброса регистрации на сервере: {e}")
+                    # Компьютер остается в сети, так как WebSocket подключение активно
+                    self.log_message.emit(f"ℹ️ Все клиенты остановили трансляцию, но компьютер остается онлайн")
                 
                 elif cmd_type == "start_audio":
                     self.log_message.emit(f"🎧 Запрос на запуск аудио от клиента {client_id}")
@@ -1222,11 +1218,8 @@ class RemoteAgentThread(QThread):
                         if audio_task and not audio_task.done():
                             audio_task.cancel()
                         
-                        try:
-                            APIClient.update_computer_status(self.computer_id, False, self.session_id)
-                            self.log_message.emit(f"✅ Регистрация на сервере сброшена")
-                        except Exception as e:
-                            self.log_message.emit(f"⚠️ Ошибка сброса регистрации: {e}")
+                        # Компьютер остается в сети, так как WebSocket подключение активно
+                        self.log_message.emit(f"ℹ️ Все клиенты отключились, но компьютер остается онлайн")
                 
                 elif cmd_type == "mouse_move":
                     command_data = data.get("data", {})

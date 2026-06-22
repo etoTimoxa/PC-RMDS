@@ -12,6 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from api_server import create_app
 from config import API_CONFIG
+from services.mysql_service import MySQLService
 
 # Импортируем подсистему диагностики
 from diagnostics import DiagnosticsManager
@@ -396,6 +397,17 @@ async def handler(websocket):
         # Очистка при отключении
         for computer_id, ws in list(hosts.items()):
             if ws == websocket:
+                # Обновляем статус компьютера на офлайн в БД при отключении агента
+                try:
+                    mysql = MySQLService()
+                    mysql.execute(
+                        "UPDATE computer SET is_online = 0, last_online = NOW() WHERE computer_id = %s",
+                        (computer_id,)
+                    )
+                    log(f"✅ Статус computer_id={computer_id} обновлен на офлайн в БД")
+                except Exception as e:
+                    log(f"❌ Ошибка обновления статуса computer_id={computer_id}: {e}")
+                
                 del hosts[computer_id]
                 if computer_id in active_sessions:
                     del active_sessions[computer_id]

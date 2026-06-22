@@ -6,16 +6,16 @@ import asyncio
 import multiprocessing
 from datetime import datetime
 
-os.environ['QT_API'] = 'pyqt5'
+os.environ['QT_API'] = 'pyqt6'
 
-# Указываем путь к плагинам PyQt5
+# Указываем путь к плагинам PyQt6
 if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
     # В виртуальном окружении
-    import PyQt5
-    qt_plugin_path = os.path.join(os.path.dirname(PyQt5.__file__), 'Qt5', 'plugins')
+    import PyQt6
+    qt_plugin_path = os.path.join(os.path.dirname(PyQt6.__file__), 'Qt6', 'plugins')
 else:
     # В глобальном окружении
-    qt_plugin_path = os.path.join(sys.prefix, 'Lib', 'site-packages', 'PyQt5', 'Qt5', 'plugins')
+    qt_plugin_path = os.path.join(sys.prefix, 'Lib', 'site-packages', 'PyQt6', 'Qt6', 'plugins')
 
 os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = os.path.join(qt_plugin_path, 'platforms')
 

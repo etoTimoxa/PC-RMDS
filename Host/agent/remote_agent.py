@@ -164,6 +164,46 @@ class RemoteAgentThread(QThread):
         except Exception:
             return False
 
+    def _reset_state(self):
+        """Полный сброс состояния агента перед переподключением"""
+        # Останавливаем все задачи
+        self.sending_screenshots = False
+        self.sending_audio = False
+        
+        # Очищаем списки клиентов
+        self.streaming_clients.clear()
+        self.connected_clients_list.clear()
+        self.connected_clients = 0
+        
+        # Отменяем все диагностические задачи
+        if hasattr(self, 'diagnostics_tasks'):
+            for task in self.diagnostics_tasks:
+                if task and not task.done():
+                    task.cancel()
+            self.diagnostics_tasks.clear()
+        
+        # Сбрасываем счетчики ошибок
+        self._consecutive_errors = 0
+        
+        # Сбрасываем Watchdog
+        if hasattr(self, 'watchdog'):
+            self.watchdog.stop_streaming()
+        
+        # Закрываем старый WebSocket если есть
+        if self.ws:
+            try:
+                if hasattr(self.ws, 'closed') and not self.ws.closed:
+                    asyncio.create_task(self.ws.close())
+                elif hasattr(self.ws, 'open') and self.ws.open:
+                    asyncio.create_task(self.ws.close())
+            except Exception:
+                pass
+            self.ws = None
+        
+        self.is_connected = False
+        
+        self.log_message.emit("🔄 Состояние агента сброшено")
+
     def _init_diagnostics(self) -> None:
         """Initialize all diagnostics subsystem components."""
         agent_id = self.hostname
@@ -655,14 +695,12 @@ class RemoteAgentThread(QThread):
     # ─── Recovery pipeline (self-healing) ────────────────────────────
 
     async def _recovery_pipeline(self) -> bool:
-        """Full recovery pipeline after disconnect.
-
-        Recovery flow:
-            RECOVERING -> reconnect websocket -> restore session
-            -> restart stream -> restart tasks -> STREAMING/REGISTERED
-        """
+        """Full recovery pipeline after disconnect."""
         self.fsm.transition(AgentState.RECOVERING)
         self.diag_logger.info("recovery_pipeline_started", "Starting full recovery pipeline")
+
+        # ✅ Сначала сбрасываем состояние
+        self._reset_state()
 
         pipeline_actions = [
             RecoveryAction.RECONNECT_WEBSOCKET,
@@ -748,11 +786,15 @@ class RemoteAgentThread(QThread):
                 self.log_message.emit(f"🔄 Подключение к серверу: {self.relay_server}")
                 self.diag_logger.info("connecting", f"Connecting to {self.relay_server}")
 
+                # ✅ Сбрасываем состояние перед подключением
+                self._reset_state()
+
                 async with websockets.connect(
                     self.relay_server,
                     ping_interval=20,
                     ping_timeout=10,
                     close_timeout=5,
+                    max_size=2**26,  # 64 MB для больших сообщений
                 ) as ws:
                     self.ws = ws
                     self.is_connected = True
@@ -1411,14 +1453,19 @@ class RemoteAgentThread(QThread):
             close_session: Закрывать ли сессию (True - при выходе, False - при переподключении)
         """
         self.log_message.emit("🛑 Остановка агента...")
+        
+        # Останавливаем все процессы
         self.is_running = False
         self.is_connected = False
         self.sending_screenshots = False
         self.sending_audio = False
+        
+        # Очищаем списки
         self.streaming_clients.clear()
         self.connected_clients_list.clear()
+        self.connected_clients = 0
         
-        # Stop diagnostics subsystems
+        # Отменяем диагностические задачи
         if hasattr(self, 'loop') and self.loop and self.loop.is_running():
             try:
                 asyncio.run_coroutine_threadsafe(
@@ -1428,7 +1475,18 @@ class RemoteAgentThread(QThread):
             except Exception:
                 self.diag_logger.error("stop_error", "Failed to stop diagnostics tasks during shutdown")
         
-        # Закрываем сессию и обновляем статус только если явно указано
+        # Закрываем WebSocket
+        if self.ws:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.ws.close(),
+                    self.loop
+                )
+            except Exception:
+                pass
+            self.ws = None
+        
+        # Закрываем сессию только если явно указано
         if close_session:
             self.close_session()
             # Обновляем статус компьютера на офлайн ТОЛЬКО при полном закрытии

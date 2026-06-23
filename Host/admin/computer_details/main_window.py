@@ -1185,6 +1185,7 @@ class ComputerDetailsWindow(QMainWindow):
             if self.remote_client_thread.is_connected:
                 self.remote_client_thread.stop_stream()
             self.remote_client_thread.stop()
+            self.remote_client_thread.wait(2000)  # Ждем завершения потока
             self.remote_client_thread = None
         
         if self.remote_window:

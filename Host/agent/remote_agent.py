@@ -1143,59 +1143,42 @@ class RemoteAgentThread(QThread):
                         self.connected_clients_list.append(client_id)
                         self.connection_status_changed.emit(True, self.connected_clients)
                         self.client_connected.emit(client_id)
-                        self.log_message.emit(f"👤 Клиент {client_id} подключен (всего: {self.connected_clients})")
+                        self.log_message.emit(f"👤 Клиент {client_id} подключен")
                 
                 elif cmd_type == "start_stream":
                     self.streaming_clients.add(client_id)
-                    self.log_message.emit(f"🎬 Клиент {client_id} начал трансляцию (активных: {len(self.streaming_clients)})")
+                    self.log_message.emit(f"🎬 Трансляция для {client_id} запущена")
                     
-                    # Запускаем видео трансляцию
+                    # Запускаем только видео трансляцию
                     if not self.sending_screenshots and len(self.streaming_clients) > 0:
                         if screenshot_task is None or screenshot_task.done():
                             screenshot_task = asyncio.create_task(self.screenshot_loop(ws))
-                            self.log_message.emit(f"✅ Запуск видео трансляции")
-                    
-                    # Запускаем аудио трансляцию
-                    if (audio_task is None or audio_task.done()) and len(self.streaming_clients) > 0:
-                        audio_task = asyncio.create_task(self.audio_capture_loop(ws))
-                        self.log_message.emit(f"🎧 Запуск аудио трансляции")
                 
                 elif cmd_type == "stop_stream":
                     if client_id in self.streaming_clients:
                         self.streaming_clients.remove(client_id)
-                        self.log_message.emit(f"⏹️ Клиент {client_id} остановил трансляцию (активных: {len(self.streaming_clients)})")
+                        self.log_message.emit(f"⏹️ Трансляция для {client_id} остановлена")
                     
-                    # Останавливаем всё, если нет клиентов
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
                         self.sending_audio = False
                         
-                        # Останавливаем задачи
                         if screenshot_task and not screenshot_task.done():
                             screenshot_task.cancel()
-                            self.log_message.emit(f"⏹️ Остановка видео трансляции")
                         
                         if audio_task and not audio_task.done():
                             audio_task.cancel()
-                            self.log_message.emit(f"🔇 Остановка аудио трансляции")
-                        
-                    # Компьютер остается в сети, так как WebSocket подключение активно
-                    self.log_message.emit(f"ℹ️ Все клиенты остановили трансляцию, но компьютер остается онлайн")
                 
                 elif cmd_type == "start_audio":
-                    self.log_message.emit(f"🎧 Запрос на запуск аудио от клиента {client_id}")
                     if (audio_task is None or audio_task.done()):
                         audio_task = asyncio.create_task(self.audio_capture_loop(ws))
-                        self.log_message.emit(f"✅ Аудио запущено по запросу")
-                    else:
-                        self.log_message.emit(f"ℹ️ Аудио уже запущено")
+                        self.log_message.emit(f"🎧 Аудио запущено")
                 
                 elif cmd_type == "stop_audio":
-                    self.log_message.emit(f"🔇 Запрос на остановку аудио от клиента {client_id}")
                     self.sending_audio = False
                     if audio_task and not audio_task.done():
                         audio_task.cancel()
-                        self.log_message.emit(f"✅ Аудио остановлено по запросу")
+                        self.log_message.emit(f"🔇 Аудио остановлено")
                 
                 elif cmd_type == "unregister_client":
                     if client_id in self.connected_clients_list:
@@ -1203,11 +1186,10 @@ class RemoteAgentThread(QThread):
                         self.connected_clients = max(0, self.connected_clients - 1)
                         self.connection_status_changed.emit(True, self.connected_clients)
                         self.client_disconnected.emit(client_id)
-                        self.log_message.emit(f"👋 Клиент {client_id} отключен (осталось: {self.connected_clients})")
+                        self.log_message.emit(f"👋 Клиент {client_id} отключен")
                     
                     if client_id in self.streaming_clients:
                         self.streaming_clients.remove(client_id)
-                        self.log_message.emit(f"⏹️ Клиент {client_id} удален из стриминга")
                     
                     if len(self.streaming_clients) == 0:
                         self.sending_screenshots = False
@@ -1217,9 +1199,6 @@ class RemoteAgentThread(QThread):
                             screenshot_task.cancel()
                         if audio_task and not audio_task.done():
                             audio_task.cancel()
-                        
-                        # Компьютер остается в сети, так как WebSocket подключение активно
-                        self.log_message.emit(f"ℹ️ Все клиенты отключились, но компьютер остается онлайн")
                 
                 elif cmd_type == "mouse_move":
                     command_data = data.get("data", {})

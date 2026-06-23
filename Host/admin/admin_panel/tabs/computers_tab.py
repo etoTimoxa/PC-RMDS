@@ -111,9 +111,9 @@ class ComputersTab(QWidget):
         table_layout.addLayout(table_header_layout)
         
         self.computers_table = QTableWidget()
-        self.computers_table.setColumnCount(6)
+        self.computers_table.setColumnCount(7)
         self.computers_table.setHorizontalHeaderLabels([
-            "ID", "Hostname", "IP адрес", "Пользователь", "Статус", "Последний вход"
+            "ID", "Hostname", "IP адрес", "Пользователь", "Статус", "Описание", "Последний вход"
         ])
         
         header = self.computers_table.horizontalHeader()
@@ -123,6 +123,7 @@ class ComputersTab(QWidget):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
         
         self.computers_table.setAlternatingRowColors(True)
         self.computers_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -145,7 +146,11 @@ class ComputersTab(QWidget):
                 hostname = comp.get('hostname', '').lower()
                 ip = comp.get('ip_address', comp.get('current_ip', '')).lower()
                 user = comp.get('login', comp.get('user_login', '')).lower()
-                if search_text not in hostname and search_text not in ip and search_text not in user:
+                description = comp.get('description', comp.get('notes', '')).lower()
+                if (search_text not in hostname and 
+                    search_text not in ip and 
+                    search_text not in user and
+                    search_text not in description):
                     continue
             
             is_online = comp.get('is_online', 0) == 1
@@ -176,6 +181,7 @@ class ComputersTab(QWidget):
             hostname = comp.get('hostname', 'Unknown')
             ip_address = comp.get('ip_address', comp.get('current_ip', 'Unknown'))
             user_login = comp.get('login', comp.get('user_login', 'Не назначен'))
+            description = comp.get('description', comp.get('notes', '')) or ''
             
             is_online = comp.get('is_online', 0) == 1
             status_text = "Онлайн" if is_online else "Офлайн"
@@ -192,7 +198,8 @@ class ComputersTab(QWidget):
             self.computers_table.setItem(row, 2, QTableWidgetItem(str(ip_address)))
             self.computers_table.setItem(row, 3, QTableWidgetItem(str(user_login)))
             self.computers_table.setItem(row, 4, status_item)
-            self.computers_table.setItem(row, 5, QTableWidgetItem(str(last_online)))
+            self.computers_table.setItem(row, 5, QTableWidgetItem(str(description)))
+            self.computers_table.setItem(row, 6, QTableWidgetItem(str(last_online)))
         
     def set_permissions(self, can_delete=True, can_add=True):
         """Устанавливает права доступа: скрывает кнопки если нет прав"""

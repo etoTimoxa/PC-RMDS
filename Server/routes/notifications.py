@@ -18,6 +18,13 @@ CRITICAL_EVENT_TYPES = {
 
 MOST_CRITICAL_EVENT_TYPES = {'shutdown', 'restart', 'windows_restart'}
 
+CRITICAL_ERROR_KEYWORDS = [
+    'driver', 'драйвер', 'error', 'ошибка', 'critical', 'критич',
+    'fail', 'сбой', 'crash', 'авария', 'fatal', 'не удалось', 'failed',
+    'exception', 'исключение', 'abort', 'прерывание', 'corrupt', 'поврежден',
+    'blue screen', 'синий экран', 'bsod', 'kernel panic'
+]
+
 
 @notifications_bp.route('/recent', methods=['GET'])
 def get_recent_notifications():
@@ -99,7 +106,53 @@ def get_recent_notifications():
             except Exception as e:
                 print(f"[NOTIFICATIONS] Ошибка получения событий для {hostname}: {e}")
             
-            # 2. Получаем аномалии за период
+            # 2. Сканируем события на критические ошибки (драйверы, BSOD, crash и т.д.)
+            try:
+                events_data = cloud.get_all_events(hostname, from_str, to_str)
+                if events_data and events_data.get('success', True):
+                    events = events_data.get('events', [])
+                    for event in events:
+                        event_type = event.get('type', '')
+                        data = event.get('data', {})
+                        timestamp = event.get('timestamp', '')
+                        msg = data.get('message', '') or data.get('description', '') or ''
+                        msg_lower = msg.lower()
+                        
+                        if not msg:
+                            continue
+                        
+                        is_critical = any(kw in msg_lower for kw in CRITICAL_ERROR_KEYWORDS)
+                        if not is_critical:
+                            continue
+                        
+                        try:
+                            ev_time = datetime.fromisoformat(timestamp)
+                            if ev_time < from_time:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                        
+                        severity = 'critical' if any(kw in msg_lower for kw in [
+                            'bsod', 'blue screen', 'синий экран', 'kernel panic',
+                            'fatal', 'фатальн', 'critical', 'критич'
+                        ]) else 'high'
+                        
+                        notifications.append({
+                            'computer_id': computer_id,
+                            'hostname': hostname,
+                            'user_login': comp.get('login', ''),
+                            'is_online': comp.get('is_online', 0),
+                            'type': 'critical_error',
+                            'event_type': event_type,
+                            'event_label': _get_error_label(msg),
+                            'timestamp': timestamp,
+                            'description': msg[:200],
+                            'severity': severity
+                        })
+            except Exception as e:
+                print(f"[NOTIFICATIONS] Ошибка сканирования ошибок для {hostname}: {e}")
+            
+            # 3. Получаем аномалии за период
             try:
                 anomalies_data = cloud.get_anomalies(hostname, from_str, to_str, cpu_threshold, ram_threshold)
                 if anomalies_data and anomalies_data.get('success', True):
@@ -154,6 +207,7 @@ def get_recent_notifications():
         critical_count = sum(1 for n in notifications if n.get('severity') == 'critical')
         high_count = sum(1 for n in notifications if n.get('severity') == 'high')
         event_count = sum(1 for n in notifications if n.get('type') == 'critical_event')
+        error_count = sum(1 for n in notifications if n.get('type') == 'critical_error')
         anomaly_count = sum(1 for n in notifications if n.get('type') == 'anomaly_spike')
         
         return jsonify({
@@ -164,6 +218,7 @@ def get_recent_notifications():
                 'critical_count': critical_count,
                 'high_count': high_count,
                 'event_count': event_count,
+                'error_count': error_count,
                 'anomaly_count': anomaly_count,
                 'period_hours': hours,
                 'from': from_iso,
@@ -196,3 +251,22 @@ def _get_event_description(event):
     }
     
     return descriptions.get(event_type, str(event_type))
+
+
+def _get_error_label(msg):
+    """Формирует краткий label для критической ошибки"""
+    msg_lower = msg.lower()
+    if any(kw in msg_lower for kw in ['bsod', 'blue screen', 'синий экран', 'kernel panic']):
+        return 'Критическая ошибка: Синий экран'
+    elif any(kw in msg_lower for kw in ['fatal', 'фатальн']):
+        return 'Фатальная ошибка'
+    elif any(kw in msg_lower for kw in ['driver', 'драйвер']):
+        return 'Ошибка драйвера'
+    elif any(kw in msg_lower for kw in ['critical', 'критич']):
+        return 'Критическая ошибка'
+    elif any(kw in msg_lower for kw in ['crash', 'авария']):
+        return 'Сбой системы'
+    elif any(kw in msg_lower for kw in ['error', 'ошибка']):
+        return 'Ошибка'
+    else:
+        return 'Критическое событие'

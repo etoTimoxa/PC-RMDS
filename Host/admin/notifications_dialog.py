@@ -357,27 +357,9 @@ class NotificationsPopover(QFrame):
         self.hide()
     
     def mark_all_read(self):
-        """Помечает все уведомления как прочитанные (сохраняет timestamp последнего)"""
-        if self.all_notifications:
-            # Берем самый свежий timestamp из загруженных уведомлений
-            newest_ts = max(
-                (n.get('timestamp', '') for n in self.all_notifications),
-                default=''
-            )
-            if newest_ts:
-                import datetime
-                # Добавляем 1 секунду чтобы при повторной загрузке те же самые не считались новыми
-                try:
-                    dt = datetime.datetime.fromisoformat(newest_ts)
-                    dt = dt + datetime.timedelta(seconds=1)
-                    newest_ts = dt.isoformat()
-                except (ValueError, TypeError):
-                    pass
-                settings = QSettings("PC-RMDS", "Notifications")
-                settings.setValue("read_until_time", newest_ts)
-                settings.sync()
-        
-        # Скрываем бейдж
+        """Помечает все уведомления как прочитанные (только в текущем сеансе)"""
+        # Просто очищаем список и скрываем бейдж
+        # Не сохраняем timestamp, чтобы при следующей загрузке уведомления снова появились
         parent = self.parent()
         if parent and hasattr(parent, 'notif_badge'):
             parent.notif_badge.hide()
@@ -389,6 +371,12 @@ class NotificationsPopover(QFrame):
     def load_notifications(self):
         """Загружает уведомления из облачного хранилища за последние 24 часа"""
         try:
+            # Очищаем старый кэш read_until_time, который мог блокировать уведомления
+            settings = QSettings("PC-RMDS", "Notifications")
+            if settings.contains("read_until_time"):
+                settings.remove("read_until_time")
+                settings.sync()
+            
             data = DatabaseManager.get_recent_notifications(
                 hours=24,
                 cpu_threshold=85.0,
@@ -399,19 +387,8 @@ class NotificationsPopover(QFrame):
             if data:
                 all_items = data.get('notifications', [])
                 
-                # Проверяем время последней отметки "прочитано"
-                settings = QSettings("PC-RMDS", "Notifications")
-                read_until_time = settings.value("read_until_time", "")
-                
-                if read_until_time:
-                    # Показываем только уведомления новее read_until_time
-                    self.all_notifications = [
-                        n for n in all_items
-                        if n.get('timestamp', '') > read_until_time
-                    ]
-                else:
-                    # Первый раз - показываем всё
-                    self.all_notifications = all_items
+                # Показываем все уведомления за последние 24 часа
+                self.all_notifications = all_items
                 
                 anomaly_count = sum(1 for n in self.all_notifications if n.get('type') == 'anomaly_spike')
                 event_count = sum(1 for n in self.all_notifications if n.get('type') == 'critical_event')

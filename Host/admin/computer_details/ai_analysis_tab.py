@@ -99,120 +99,59 @@ class AIAnalysisThread(QThread):
             self.error_occurred.emit(f"Ошибка: {str(e)}")
     
     def _build_prompt(self):
-        """Формирует промпт с данными о компьютере"""
+        """Формирует компактный промпт только из критичных данных"""
         
-        # Базовая информация о компьютере
-        computer_info = f"""
-=== ИНФОРМАЦИЯ О КОМПЬЮТЕРЕ ===
-Hostname: {self.computer_data.get('hostname', 'Unknown')}
+        # 1. Базовая информация о компьютере
+        computer_info = f"""Хост: {self.computer_data.get('hostname', 'Unknown')}
 ОС: {self.computer_data.get('os_name', 'Unknown')} {self.computer_data.get('os_version', '')}
 CPU: {self.computer_data.get('cpu_model', 'Unknown')} ({self.computer_data.get('cpu_cores', '?')} ядер)
 RAM: {self.computer_data.get('ram_total', '?')} GB
 Диск: {self.computer_data.get('storage_total', '?')} GB
-Тип: {self.computer_data.get('computer_type', 'client')}
-Группа: {self.computer_data.get('group_name', '—')}
-Инв. номер: {self.computer_data.get('inventory_number', '—')}
-Статус: {"В сети" if self.computer_data.get('is_online') else "Не в сети"}
-"""
+Статус: {"В сети" if self.computer_data.get('is_online') else "Не в сети"}"""
         
-        # Метрики производительности
-        metrics_info = "\n=== МЕТРИКИ ПРОИЗВОДИТЕЛЬНОСТИ ===\n"
-        if self.metrics:
-            # Расчет средних значений
-            cpu_values = [m.get('cpu_usage', 0) for m in self.metrics if m.get('cpu_usage')]
-            ram_values = [m.get('ram_usage', 0) for m in self.metrics if m.get('ram_usage')]
-            disk_values = [m.get('disk_usage', 0) for m in self.metrics if m.get('disk_usage')]
-            
-            if cpu_values:
-                metrics_info += f"Средний CPU: {sum(cpu_values)/len(cpu_values):.1f}%\n"
-                metrics_info += f"Макс CPU: {max(cpu_values):.1f}%\n"
-                metrics_info += f"Мин CPU: {min(cpu_values):.1f}%\n"
-            
-            if ram_values:
-                metrics_info += f"Средняя RAM: {sum(ram_values)/len(ram_values):.1f}%\n"
-                metrics_info += f"Макс RAM: {max(ram_values):.1f}%\n"
-            
-            if disk_values:
-                metrics_info += f"Средний Disk: {sum(disk_values)/len(disk_values):.1f}%\n"
-            
-            # Последние метрики
-            last = self.metrics[-1] if self.metrics else {}
-            metrics_info += f"\n--- ПОСЛЕДНИЕ ЗНАЧЕНИЯ ---\n"
-            metrics_info += f"CPU: {last.get('cpu_usage', '—')}%\n"
-            metrics_info += f"RAM: {last.get('ram_usage', '—')}% ({last.get('ram_used_gb', '—')} GB из {last.get('ram_total_gb', '—')} GB)\n"
-            metrics_info += f"Disk: {last.get('disk_usage', '—')}%\n"
-            metrics_info += f"Network отправлено: {last.get('network_sent_mb', 0):.2f} MB\n"
-            metrics_info += f"Network получено: {last.get('network_recv_mb', 0):.2f} MB\n"
-        
-        # События и ошибки
-        events_info = "\n=== СОБЫТИЯ И ОШИБКИ ===\n"
-        if self.events:
-            # Группируем по типам
-            event_counts = {}
-            error_events = []
-            
-            for event in self.events:
-                event_type = event.get('type', 'unknown')
-                event_counts[event_type] = event_counts.get(event_type, 0) + 1
-                
-                # Собираем ошибки Windows
-                if event_type == 'windows_event' or event_type == 'system_error':
-                    data = event.get('data', {})
-                    msg = data.get('message', '') or data.get('description', '')
-                    if msg:
-                        error_events.append(f"  - {msg[:200]}")
-            
-            events_info += f"Всего событий: {len(self.events)}\n"
-            events_info += "Распределение по типам:\n"
-            for ev_type, count in sorted(event_counts.items(), key=lambda x: x[1], reverse=True):
-                events_info += f"  - {ev_type}: {count}\n"
-            
-            if error_events:
-                events_info += f"\nОШИБКИ (первые 10):\n"
-                for err in error_events[:10]:
-                    events_info += f"{err}\n"
-        else:
-            events_info += "Событий за период не обнаружено\n"
-        
-        # Аномалии
-        anomalies_info = "\n=== АНОМАЛИИ ===\n"
+        # 2. Аномалии (только последние 10)
+        anomalies_info = ""
         if self.anomalies:
-            anomalies_info += f"Обнаружено аномалий: {len(self.anomalies)}\n"
-            anomalies_info += "Детали аномалий:\n"
-            for anomaly in self.anomalies[:20]:  # Ограничиваем 20
-                timestamp = anomaly.get('timestamp', '')[:19]
-                cpu = anomaly.get('cpu_usage', '—')
-                ram = anomaly.get('ram_usage', '—')
-                anomalies_info += f"  - {timestamp}: CPU={cpu}%, RAM={ram}%\n"
-        else:
-            anomalies_info += "Аномалий не обнаружено\n"
+            anomalies_info = "\n\nАНОМАЛИИ (последние 10):\n"
+            for a in self.anomalies[-10:]:
+                ts = a.get('timestamp', '')[:19]
+                cpu = a.get('cpu_usage', '—')
+                ram = a.get('ram_usage', '—')
+                anomalies_info += f"- {ts}: CPU={cpu}%, RAM={ram}%\n"
         
-        # Информация о сессиях
-        sessions_info = "\n=== СЕССИИ ===\n"
-        if self.session_info:
-            active = [s for s in self.session_info if s.get('status_name') == 'active']
-            closed = [s for s in self.session_info if s.get('status_name') != 'active']
-            sessions_info += f"Активных сессий: {len(active)}\n"
-            sessions_info += f"Завершенных сессий: {len(closed)}\n"
+        # 3. Критические ошибки и ошибки драйверов (только последние 10)
+        errors_info = ""
+        if self.events:
+            critical_errors = []
+            for event in self.events:
+                event_type = event.get('type', '')
+                data = event.get('data', {})
+                msg = data.get('message', '') or data.get('description', '')
+                if not msg:
+                    continue
+                msg_lower = msg.lower()
+                # Берем только критические: драйверы, система, ошибки
+                is_critical = any(kw in msg_lower for kw in [
+                    'driver', 'драйвер', 'error', 'ошибка', 'critical', 'критич',
+                    'fail', 'сбой', 'crash', 'авария', 'fatal', 'не удалось', 'failed'
+                ])
+                if is_critical:
+                    critical_errors.append(msg[:150])
+            
+            if critical_errors:
+                errors_info = "\n\nКРИТИЧЕСКИЕ ОШИБКИ (последние 10):\n"
+                for err in critical_errors[-10:]:
+                    errors_info += f"- {err}\n"
         
-        # Период анализа
-        period_info = f"\n=== ПЕРИОД АНАЛИЗА ===\n"
-        period_info += f"С: {self.period.get('from', '—')}\n"
-        period_info += f"По: {self.period.get('to', '—')}\n"
-        
-        # Итоговый промпт
-        full_prompt = f"""
-Пожалуйста, проанализируй состояние компьютера на основе следующих данных:
+        # Итоговый промпт (минимальный)
+        full_prompt = f"""Проанализируй состояние компьютера и дай рекомендации.
 
 {computer_info}
-{metrics_info}
-{events_info}
 {anomalies_info}
-{sessions_info}
-{period_info}
+{errors_info}
 
-Дай развернутый анализ и конкретные рекомендации по улучшению работы системы.
-"""
+Дай краткий анализ: что не так, какие ошибки нужно исправить, что рекомендуется улучшить."""
+        
         return full_prompt
 
 
@@ -223,16 +162,18 @@ class AIAnalysisTab(QWidget):
         super().__init__(parent)
         self.parent_window = parent
         self.analysis_thread = None
+        self._cached_result = None
+        self._analysis_started = False
         self.init_ui()
     
     def init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         
-        # Верхняя панель с кнопкой
+        # Верхняя панель с кнопкой и статусом
         top_panel = QHBoxLayout()
         
-        self.analyze_btn = QPushButton("Запустить AI-анализ")
+        self.analyze_btn = QPushButton("🔍 Запустить AI-анализ")
         self.analyze_btn.setMinimumHeight(40)
         self.analyze_btn.setMinimumWidth(200)
         self.analyze_btn.setStyleSheet("""
@@ -249,7 +190,7 @@ class AIAnalysisTab(QWidget):
                 background-color: #95a5a6;
             }
         """)
-        self.analyze_btn.clicked.connect(self.start_analysis)
+        self.analyze_btn.clicked.connect(self._on_analyze_clicked)
         top_panel.addWidget(self.analyze_btn)
         
         self.status_label = QLabel("Готов к анализу")
@@ -290,54 +231,131 @@ class AIAnalysisTab(QWidget):
         self.result_layout = QVBoxLayout(self.result_widget)
         self.result_layout.setSpacing(15)
         
-        # Приветственное сообщение
-        welcome_label = QLabel("👋 Нажмите «Запустить AI-анализ» для получения рекомендаций")
-        welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        welcome_label.setStyleSheet("""
-            font-size: 16px;
+        # Приветствие (пока нет анализа)
+        self.placeholder = QLabel("👋 Нажмите «Запустить AI-анализ» для получения рекомендаций")
+        self.placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.placeholder.setStyleSheet("""
+            font-size: 14px;
             color: #7f8c8d;
             padding: 50px;
         """)
-        self.result_layout.addWidget(welcome_label)
+        self.result_layout.addWidget(self.placeholder)
         
         self.result_area.setWidget(self.result_widget)
         layout.addWidget(self.result_area)
     
-    def start_analysis(self):
-        """Запускает анализ через LLM"""
-        if not self.parent_window or not self.parent_window.computer_id:
-            QMessageBox.warning(self, "Ошибка", "ID компьютера не определен")
+    def _on_analyze_clicked(self):
+        """Обработчик клика по кнопке анализа"""
+        if self._analysis_started:
+            return
+        self._analysis_started = True
+        self.analyze_btn.setEnabled(False)
+        self._do_analysis()
+    
+    def run_analysis(self):
+        """Запускает AI-анализ при открытии окна после загрузки данных"""
+        if self._cached_result:
+            self._show_result(self._cached_result)
             return
         
-        # Проверяем наличие данных
-        metrics = self.parent_window.metrics_tab.get_current_metrics()
-        events = self.parent_window.events_tab.get_all_events()
-        anomalies = self.parent_window.anomalies_tab.anomalies
-        sessions = self.parent_window.sessions_tab.get_sessions()
+        if self._analysis_started:
+            return
         
-        if not metrics and not events and not anomalies:
-            reply = QMessageBox.question(
-                self,
-                "Нет данных",
-                "За выбранный период нет данных для анализа.\n"
-                "Продолжить анализ с имеющимися данными?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
+        self._analysis_started = True
+        self._do_analysis()
+    
+    def _do_analysis(self):
+        """Запускает анализ в фоне"""
+        if not self.parent_window or not self.parent_window.computer_id:
+            self.placeholder.setText("❌ Невозможно выполнить анализ")
+            self.placeholder.setStyleSheet("font-size: 14px; color: #e74c3c; padding: 50px;")
+            return
         
-        # Блокируем кнопку и показываем прогресс
-        self.analyze_btn.setEnabled(False)
-        self.analyze_btn.setText("⏳ Анализирую...")
+        # Проверяем скорость LLM простым запросом
+        self.placeholder.setText("⏳ Проверка подключения к нейросети...")
+        self.placeholder.setStyleSheet("font-size: 14px; color: #8e44ad; padding: 50px;")
+        
+        # Запускаем тестовый запрос к LLM в отдельном потоке
+        self._run_llm_test()
+    
+    def _run_llm_test(self):
+        """Быстрый тест LLM (простой запрос), затем основной анализ"""
+        import requests
+        from qtpy.QtCore import QTimer
+        
+        try:
+            url = f"{LLM_CONFIG['base_url']}/chat/completions"
+            headers = {
+                "Authorization": f"Bearer {LLM_CONFIG['api_key']}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": LLM_CONFIG["model"],
+                "messages": [
+                    {"role": "user", "content": "Привет! Ответь одним словом: все ли работает?"}
+                ],
+                "temperature": 0.1,
+                "max_tokens": 10
+            }
+            
+            import time
+            start = time.time()
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            elapsed = time.time() - start
+            
+            if response.status_code == 200:
+                print(f"[AI] Тест LLM: {elapsed:.1f}с - OK")
+                # LLM работает - запускаем реальный анализ
+                self._run_real_analysis()
+            else:
+                self._on_analysis_error(f"Ошибка API ({response.status_code})\nПроверьте настройки LLM в constants.py")
+        except requests.exceptions.Timeout:
+            self._on_analysis_error("Превышено время ожидания LLM (15с)\nПроверьте подключение к нейросети")
+        except requests.exceptions.ConnectionError:
+            self._on_analysis_error("Нет подключения к серверу LLM\nПроверьте URL в constants.py")
+        except Exception as e:
+            self._on_analysis_error(f"Ошибка подключения к LLM: {e}")
+    
+    def _run_real_analysis(self):
+        """Запускает реальный анализ с оптимизированными данными"""
         self.progress_bar.setVisible(True)
-        self.status_label.setText("Отправка данных на анализ...")
+        self.status_label.setText("⏳ Загрузка данных...")
         self.status_label.setStyleSheet("color: #8e44ad; font-size: 12px;")
         
-        # Очищаем область результатов
-        self._clear_result_area()
+        # Загружаем данные
+        metrics = self.parent_window.metrics_tab.get_current_metrics() if hasattr(self.parent_window, 'metrics_tab') else []
+        events = self.parent_window.events_tab.get_all_events() if hasattr(self.parent_window, 'events_tab') else []
+        anomalies = self.parent_window.anomalies_tab.anomalies if hasattr(self.parent_window, 'anomalies_tab') else []
+        sessions = self.parent_window.sessions_tab.get_sessions() if hasattr(self.parent_window, 'sessions_tab') else []
         
-        # Запускаем поток анализа
-        period = self.parent_window.date_range.get_period()
+        # Логируем объем данных для диагностики
+        import json
+        metrics_size = len(json.dumps(metrics)) if metrics else 0
+        events_size = len(json.dumps(events)) if events else 0
+        anomalies_size = len(json.dumps(anomalies)) if anomalies else 0
+        
+        print(f"[AI] === ОБЪЕМ ДАННЫХ ===")
+        print(f"[AI] Metrics: {len(metrics)} записей, {metrics_size/1024:.1f} KB")
+        print(f"[AI] Events: {len(events)} записей, {events_size/1024:.1f} KB")
+        print(f"[AI] Anomalies: {len(anomalies)} записей, {anomalies_size/1024:.1f} KB")
+        print(f"[AI] Всего: {(metrics_size + events_size + anomalies_size)/1024:.1f} KB")
+        
+        if metrics:
+            print(f"[AI] Пример метрики: {metrics[0]}")
+        if events:
+            print(f"[AI] Пример события (первые 100 символов): {str(events[0])[:100]}")
+        
+        # ОГРАНИЧИВАЕМ ДАННЫЕ для ускорения
+        if len(metrics) > 100:
+            metrics = metrics[-100:]  # Последние 100 метрик
+        if len(events) > 50:
+            events = events[-50:]  # Последние 50 событий
+        if len(anomalies) > 20:
+            anomalies = anomalies[-20:]  # Последние 20 аномалий
+        
+        print(f"[AI] После ограничения: metrics={len(metrics)}, events={len(events)}, anomalies={len(anomalies)}")
+        
+        period = self.parent_window.date_range.get_period() if hasattr(self.parent_window, 'date_range') else {'from': '', 'to': ''}
         computer_data = self.parent_window.current_data or {}
         
         self.analysis_thread = AIAnalysisThread(
@@ -349,10 +367,8 @@ class AIAnalysisTab(QWidget):
             period=period
         )
         
-        self.analysis_thread.started_analysis.connect(self._on_analysis_started)
         self.analysis_thread.finished_analysis.connect(self._on_analysis_finished)
         self.analysis_thread.error_occurred.connect(self._on_analysis_error)
-        
         self.analysis_thread.start()
     
     def _clear_result_area(self):
@@ -362,27 +378,28 @@ class AIAnalysisTab(QWidget):
             if child.widget():
                 child.widget().deleteLater()
     
-    def _on_analysis_started(self):
-        self.status_label.setText("Анализ данных...")
+    def _show_result(self, result):
+        """Показывает кешированный результат"""
+        self._clear_result_area()
+        self._display_analysis_result(result)
     
     def _on_analysis_finished(self, result):
-        """Отображает результат анализа"""
+        """Отображает результат анализа и кеширует его"""
+        self._cached_result = result  # Кешируем
         self.progress_bar.setVisible(False)
         self.analyze_btn.setEnabled(True)
-        self.analyze_btn.setText("🔍 Запустить AI-анализ")
-        self.status_label.setText("Анализ завершен")
+        self.status_label.setText("✅ Анализ завершен")
         self.status_label.setStyleSheet("color: #27ae60; font-size: 12px;")
-        
-        # Парсим и отображаем результат
+        self._clear_result_area()
         self._display_analysis_result(result)
     
     def _on_analysis_error(self, error_msg):
         """Обрабатывает ошибку анализа"""
         self.progress_bar.setVisible(False)
         self.analyze_btn.setEnabled(True)
-        self.analyze_btn.setText("🔍 Запустить AI-анализ")
-        self.status_label.setText("Ошибка анализа")
+        self.status_label.setText("❌ Ошибка анализа")
         self.status_label.setStyleSheet("color: #e74c3c; font-size: 12px;")
+        self._clear_result_area()
         
         # Отображаем ошибку
         error_frame = QFrame()
@@ -538,11 +555,3 @@ class AIAnalysisTab(QWidget):
         from qtpy.QtWidgets import QApplication
         clipboard = QApplication.clipboard()
         clipboard.setText(text)
-        
-        # Показываем временное уведомление
-        self.status_label.setText("Анализ скопирован в буфер обмена")
-        self.status_label.setStyleSheet("color: #27ae60; font-size: 12px;")
-        
-        # Возвращаем статус через 2 секунды
-        from qtpy.QtCore import QTimer
-        QTimer.singleShot(2000, lambda: self.status_label.setText("Готов к анализу") if self.status_label.text() == "Анализ скопирован в буфер обмена" else None)

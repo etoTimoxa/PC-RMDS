@@ -1,12 +1,9 @@
 """
 Всплывающая шторка уведомлений о критических событиях и аномалиях
 """
-from datetime import datetime
 from qtpy.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
-                             QPushButton, QScrollArea, QWidget, QMessageBox,
-                             QApplication, QLineEdit, QComboBox)
-from qtpy.QtCore import Qt, QTimer, QPoint, QSettings
-from qtpy.QtGui import QColor, QFont
+                             QPushButton, QScrollArea, QWidget, QApplication)
+from qtpy.QtCore import Qt, QPoint, QSettings
 
 from core.api_client import APIClient as DatabaseManager
 
@@ -83,7 +80,12 @@ class NotificationItem(QFrame):
         top_layout = QHBoxLayout()
         top_layout.setSpacing(6)
         
-        type_icon = "🔴" if notif_type == 'critical_event' else "📈"
+        if notif_type == 'critical_event':
+            type_icon = "🔴"
+        elif notif_type == 'critical_error':
+            type_icon = "⚠️"
+        else:
+            type_icon = "📈"
         
         computer_label = QLabel(f"{type_icon} {computer}")
         computer_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #2c3e50; border: none;")
@@ -128,8 +130,6 @@ class NotificationsPopover(QFrame):
         super().__init__(parent)
         self.parent_window = parent
         self.all_notifications = []
-        self._computer_filter = ''
-        self._last_all = 0  # сколько всего было до отметки "прочитано"
         
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Popup)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -174,54 +174,7 @@ class NotificationsPopover(QFrame):
         
         header_layout.addStretch()
         
-        self.stats_label = QLabel("")
-        self.stats_label.setStyleSheet("color: rgba(255,255,255,0.8); font-size: 10px; border: none;")
-        header_layout.addWidget(self.stats_label)
-        
         main_layout.addWidget(header_frame)
-        
-        # Фильтры
-        filter_frame = QFrame()
-        filter_frame.setStyleSheet("""
-            QFrame {
-                background-color: #f8f9fa;
-                padding: 6px 10px;
-                border-bottom: 1px solid #ecf0f1;
-            }
-        """)
-        filter_layout = QHBoxLayout(filter_frame)
-        filter_layout.setContentsMargins(10, 5, 10, 5)
-        filter_layout.setSpacing(6)
-        
-        self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("🔍 Фильтр по компьютеру...")
-        self.filter_input.setStyleSheet("""
-            QLineEdit {
-                border: 1px solid #dcdde1;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-                background: white;
-            }
-        """)
-        self.filter_input.textChanged.connect(self.apply_filters)
-        filter_layout.addWidget(self.filter_input, 1)
-        
-        self.type_filter = QComboBox()
-        self.type_filter.addItems(["Все", "🔴 События", "📈 Аномалии"])
-        self.type_filter.setStyleSheet("""
-            QComboBox {
-                border: 1px solid #dcdde1;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-                background: white;
-            }
-        """)
-        self.type_filter.currentTextChanged.connect(self.apply_filters)
-        filter_layout.addWidget(self.type_filter)
-        
-        main_layout.addWidget(filter_frame)
         
         # Область прокрутки
         scroll = QScrollArea()
@@ -286,10 +239,6 @@ class NotificationsPopover(QFrame):
         
         bottom_layout.addStretch()
         
-        info_label = QLabel("💡 Нажмите на уведомление")
-        info_label.setStyleSheet("color: #95a5a6; font-size: 10px; border: none;")
-        bottom_layout.addWidget(info_label)
-        
         close_btn = QPushButton("✕")
         close_btn.setFixedSize(22, 22)
         close_btn.setStyleSheet("""
@@ -311,27 +260,6 @@ class NotificationsPopover(QFrame):
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(8, 8, 8, 8)
         outer_layout.addWidget(main_frame)
-    
-    def apply_filters(self):
-        self._computer_filter = self.filter_input.text().strip().lower()
-        self.display_notifications()
-    
-    def get_filtered_notifications(self):
-        filtered = self.all_notifications
-        
-        type_text = self.type_filter.currentText()
-        if type_text == "🔴 События":
-            filtered = [n for n in filtered if n.get('type') == 'critical_event']
-        elif type_text == "📈 Аномалии":
-            filtered = [n for n in filtered if n.get('type') == 'anomaly_spike']
-        
-        if self._computer_filter:
-            filtered = [
-                n for n in filtered
-                if self._computer_filter in n.get('hostname', '').lower()
-            ]
-        
-        return filtered
     
     def show_popover(self, button_pos, button_height=34):
         pos = self.parentWidget().mapToGlobal(
@@ -390,10 +318,6 @@ class NotificationsPopover(QFrame):
                 # Показываем все уведомления за последние 24 часа
                 self.all_notifications = all_items
                 
-                anomaly_count = sum(1 for n in self.all_notifications if n.get('type') == 'anomaly_spike')
-                event_count = sum(1 for n in self.all_notifications if n.get('type') == 'critical_event')
-                self.stats_label.setText(f"{len(self.all_notifications)} | 🔴{event_count} 📈{anomaly_count}")
-                
                 # Обновляем бейдж
                 parent = self.parent()
                 if parent and hasattr(parent, 'notif_badge'):
@@ -404,7 +328,6 @@ class NotificationsPopover(QFrame):
                     )
             else:
                 self.all_notifications = []
-                self.stats_label.setText("Нет данных")
             
             self.display_notifications()
             
@@ -419,22 +342,13 @@ class NotificationsPopover(QFrame):
             if item.widget():
                 item.widget().deleteLater()
         
-        filtered = self.get_filtered_notifications()
-        
-        if not filtered:
-            if self.all_notifications and self._computer_filter:
-                msg = f"Ничего не найдено по фильтру \"{self.filter_input.text()}\""
-            elif self.all_notifications:
-                msg = "Нет уведомлений по выбранному фильтру"
-            else:
-                msg = "Нет уведомлений"
-            
-            empty_label = QLabel(msg)
+        if not self.all_notifications:
+            empty_label = QLabel("Нет уведомлений")
             empty_label.setStyleSheet("color: #95a5a6; font-size: 12px; padding: 20px; border: none;")
             empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.content_layout.addWidget(empty_label)
         else:
-            for notif in filtered[:20]:
+            for notif in self.all_notifications[:20]:
                 item = NotificationItem(notif)
                 self.content_layout.addWidget(item)
         

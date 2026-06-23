@@ -129,6 +129,41 @@ class RemoteAgentThread(QThread):
         # ─── Diagnostics subsystem initialization ───────────────────
         self._init_diagnostics()
 
+    def _is_ws_open(self, ws) -> bool:
+        """
+        Универсальная проверка состояния WebSocket соединения.
+        Работает с разными версиями библиотеки websockets.
+        """
+        if ws is None:
+            return False
+        
+        try:
+            # Для websockets >= 10.0
+            if hasattr(ws, 'closed'):
+                return not ws.closed
+            
+            # Для websockets < 10.0
+            elif hasattr(ws, 'open'):
+                return ws.open
+            
+            # Для websockets с другим API
+            elif hasattr(ws, 'state'):
+                return ws.state.name == 'OPEN'
+            
+            # Если ничего не подошло, пробуем отправить ping
+            else:
+                try:
+                    # Пробуем проверить через ping
+                    if hasattr(ws, 'ping'):
+                        asyncio.create_task(ws.ping())
+                        return True
+                    return True  # Предполагаем, что соединение открыто
+                except Exception:
+                    return False
+                    
+        except Exception:
+            return False
+
     def _init_diagnostics(self) -> None:
         """Initialize all diagnostics subsystem components."""
         agent_id = self.hostname
@@ -210,10 +245,9 @@ class RemoteAgentThread(QThread):
     async def _reconnect_websocket_handler(self) -> bool:
         """Reconnect WebSocket and restore session."""
         self.diag_logger.info("reconnect_started", "Starting WebSocket reconnection")
-        close_code = 1000
-        if self.ws and hasattr(self.ws, 'open') and self.ws.open:
+        if self._is_ws_open(self.ws):
             try:
-                await self.ws.close(code=close_code, reason="reconnecting")
+                await self.ws.close(code=1000, reason="reconnecting")
             except Exception:
                 pass
         self.ws = None
@@ -223,7 +257,7 @@ class RemoteAgentThread(QThread):
 
     async def _validate_websocket(self) -> bool:
         """Validate that WebSocket is properly connected."""
-        return self.ws is not None and hasattr(self.ws, 'open') and self.ws.open
+        return self._is_ws_open(self.ws)
 
     async def _restart_stream_handler(self) -> bool:
         """Restart screenshot stream."""
@@ -244,7 +278,7 @@ class RemoteAgentThread(QThread):
 
     async def _restore_session_handler(self) -> bool:
         """Re-register agent on server after reconnect."""
-        if not self.ws or not hasattr(self.ws, 'open') or not self.ws.open:
+        if not self._is_ws_open(self.ws):
             return False
         try:
             register_msg = {
@@ -345,7 +379,7 @@ class RemoteAgentThread(QThread):
 
     async def _ws_safe_send(self, payload: str) -> None:
         """Thread-safe ws.send wrapper."""
-        if self.ws and hasattr(self.ws, 'open') and self.ws.open:
+        if self._is_ws_open(self.ws):
             try:
                 await self.ws.send(payload)
             except Exception as exc:
@@ -362,7 +396,7 @@ class RemoteAgentThread(QThread):
                 if not self.is_running:
                     break
                 events = self.event_store.get_pending(since=last_sent)
-                if events and self.ws and hasattr(self.ws, 'open') and self.ws.open:
+                if events and self._is_ws_open(self.ws):
                     for ev in events:
                         msg = ev.to_ws_message()
                         await self._ws_safe_send(json.dumps(msg))
@@ -1023,7 +1057,7 @@ class RemoteAgentThread(QThread):
             ):
                 self.log_message.emit("✅ AUDIO LOOPBACK STARTED")
 
-                while self.sending_audio and len(self.streaming_clients) > 0:
+                while self.sending_audio and len(self.streaming_clients) > 0 and self._is_ws_open(ws):
                     await asyncio.sleep(0.1)
 
         except Exception as e:
@@ -1040,7 +1074,8 @@ class RemoteAgentThread(QThread):
         # Notify watchdog that streaming has started
         self.watchdog.start_streaming()
         
-        while self.sending_screenshots and self.is_connected and self.is_running and len(self.streaming_clients) > 0:
+        while (self.sending_screenshots and self.is_connected and self.is_running and 
+               len(self.streaming_clients) > 0 and self._is_ws_open(ws)):
             try:
                 start_time = time.time()
                 
@@ -1168,6 +1203,21 @@ class RemoteAgentThread(QThread):
                         
                         if audio_task and not audio_task.done():
                             audio_task.cancel()
+                        
+                        # Сохраняем соединение, НЕ закрываем его
+                        self.log_message.emit("⏸️ Трансляция остановлена, соединение с сервером активно")
+                        
+                        # Отправляем подтверждение серверу
+                        if self._is_ws_open(self.ws):
+                            try:
+                                await self.ws.send(json.dumps({
+                                    "type": "stream_stopped",
+                                    "data": {"status": "success", "message": "Stream stopped"},
+                                    "computer_id": self.computer_id,
+                                    "agent_id": self.hostname
+                                }))
+                            except Exception as e:
+                                self.log_message.emit(f"⚠️ Ошибка отправки подтверждения: {e}")
                 
                 elif cmd_type == "start_audio":
                     if (audio_task is None or audio_task.done()):
@@ -1378,16 +1428,15 @@ class RemoteAgentThread(QThread):
             except Exception:
                 self.diag_logger.error("stop_error", "Failed to stop diagnostics tasks during shutdown")
         
-        # Закрываем сессию только если явно указано
+        # Закрываем сессию и обновляем статус только если явно указано
         if close_session:
             self.close_session()
-        
-        # Обновляем статус компьютера на офлайн
-        try:
-            APIClient.update_computer_status(self.computer_id, False, self.session_id)
-            self.log_message.emit(f"✅ Статус компьютера обновлен на офлайн")
-        except Exception as e:
-            self.log_message.emit(f"⚠️ Ошибка обновления статуса: {e}")
+            # Обновляем статус компьютера на офлайн ТОЛЬКО при полном закрытии
+            try:
+                APIClient.update_computer_status(self.computer_id, False, self.session_id)
+                self.log_message.emit(f"✅ Статус компьютера обновлен на офлайн")
+            except Exception as e:
+                self.log_message.emit(f"⚠️ Ошибка обновления статуса: {e}")
         
         self.log_message.emit(f"✅ Агент остановлен")
 
